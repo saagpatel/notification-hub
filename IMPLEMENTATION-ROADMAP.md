@@ -85,15 +85,15 @@
 
 ### Tasks
 
-- [ ] **3.1** Modify `~/.claude/hooks/notify.sh` — add curl POST to localhost:9199 alongside existing terminal-notifier
-- [ ] **3.2** Modify `~/.codex/hooks/notify_local.py` — add httpx/urllib POST to localhost:9199 alongside existing osascript
-- [ ] **3.3** Both hooks: fire-and-forget POST (timeout 2s, ignore failures — existing behavior preserved)
-- [ ] **3.4** LaunchAgent plist at `~/Library/LaunchAgents/com.saagar.notification-hub.plist`
-- [ ] **3.5** LaunchAgent config: start on login, restart on crash, stdout/stderr to log files
-- [ ] **3.6** Install script or instructions for `launchctl load`
-- [ ] **3.7** Tests: hook POST payload format matches Event schema
-- [ ] **3.8** Integration test: full flow from hook → server → classification → delivery channel
-- [ ] **3.9** Manual test: trigger Claude Code stop hook, confirm event flows through hub
+- [x] **3.1** Modify `~/.claude/hooks/notify.sh` — add curl POST to localhost:9199 alongside existing terminal-notifier
+- [x] **3.2** Modify `~/.codex/hooks/notify_local.py` — add urllib POST to localhost:9199 alongside existing osascript
+- [x] **3.3** Both hooks: fire-and-forget POST (timeout 2s, ignore failures — existing behavior preserved)
+- [x] **3.4** LaunchAgent plist at `~/Library/LaunchAgents/com.saagar.notification-hub.plist`
+- [x] **3.5** LaunchAgent config: start on login, restart on crash, stdout/stderr to log files
+- [x] **3.6** Install script or instructions for `launchctl load`
+- [x] **3.7** Tests: hook POST payload format matches Event schema
+- [x] **3.8** Integration test: full flow from hook → server → classification → delivery channel
+- [x] **3.9** Manual test: trigger Claude Code stop hook, confirm event flows through hub
 
 ### Acceptance Criteria
 
