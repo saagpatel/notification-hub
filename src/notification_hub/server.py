@@ -1,0 +1,83 @@
+"""FastAPI server — event intake, health check, bridge file watcher lifecycle."""
+
+from __future__ import annotations
+
+import logging
+import time
+from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator
+
+from fastapi import FastAPI
+
+from notification_hub.channels import write_jsonl
+from notification_hub.config import BRIDGE_FILE
+from notification_hub.models import Event, EventResponse, StoredEvent
+from notification_hub.watcher import start_watcher
+
+logger = logging.getLogger(__name__)
+
+_start_time: float = 0.0
+_event_count: int = 0
+_observer = None
+
+
+def _handle_bridge_event(event: Event) -> None:
+    """Callback for bridge file watcher — logs events through the same pipeline."""
+    global _event_count
+    stored = StoredEvent(**event.model_dump())
+    write_jsonl(stored)
+    _event_count += 1
+    logger.info("Bridge event: %s [%s]", stored.title, stored.level)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Start bridge watcher on startup, stop on shutdown."""
+    global _start_time, _observer
+    _start_time = time.monotonic()
+
+    if BRIDGE_FILE.parent.exists():
+        _observer = start_watcher(_handle_bridge_event)
+        logger.info("Bridge file watcher active")
+    else:
+        logger.warning("Bridge file directory not found, watcher disabled")
+
+    yield
+
+    if _observer is not None:
+        _observer.stop()
+        _observer.join(timeout=5)
+        logger.info("Bridge file watcher stopped")
+
+
+app = FastAPI(
+    title="Notification Hub",
+    description="Unified notification daemon for AI systems",
+    version="0.1.0",
+    lifespan=lifespan,
+)
+
+
+@app.post("/events", response_model=EventResponse)
+async def create_event(event: Event) -> EventResponse:
+    """Accept a notification event, log it, and return confirmation."""
+    global _event_count
+    stored = StoredEvent(**event.model_dump())
+    write_jsonl(stored)
+    _event_count += 1
+    logger.info(
+        "Event %s: %s [%s] from %s", stored.event_id, stored.title, stored.level, stored.source
+    )
+    return EventResponse(event_id=stored.event_id, level=stored.level)
+
+
+@app.get("/health")
+async def health() -> dict[str, object]:
+    """Server health check."""
+    uptime = time.monotonic() - _start_time if _start_time else 0
+    return {
+        "status": "ok",
+        "uptime_seconds": round(uptime, 1),
+        "events_processed": _event_count,
+        "watcher_active": _observer is not None,
+    }
