@@ -54,7 +54,7 @@ async def test_create_event_valid(client: AsyncClient) -> None:
     }
     with _mock_channels():
         resp = await client.post("/events", json=payload)
-    assert resp.status_code == 200
+    assert resp.status_code == 201
     data = resp.json()
     assert data["accepted"] is True
     assert data["level"] == "info"
@@ -70,7 +70,7 @@ async def test_create_event_classified_level_in_response(client: AsyncClient) ->
     }
     with _mock_channels():
         resp = await client.post("/events", json=payload)
-    assert resp.status_code == 200
+    assert resp.status_code == 201
     data = resp.json()
     assert data["level"] == "urgent"
 
@@ -84,7 +84,7 @@ async def test_create_event_minimal(client: AsyncClient) -> None:
     }
     with _mock_channels():
         resp = await client.post("/events", json=payload)
-    assert resp.status_code == 200
+    assert resp.status_code == 201
     data = resp.json()
     assert data["level"] == "urgent"
 
@@ -143,4 +143,4 @@ async def test_create_event_all_sources(client: AsyncClient) -> None:
         }
         with _mock_channels():
             resp = await client.post("/events", json=payload)
-        assert resp.status_code == 200, f"Failed for source: {source}"
+        assert resp.status_code == 201, f"Failed for source: {source}"

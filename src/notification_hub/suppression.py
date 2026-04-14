@@ -16,6 +16,8 @@ QUIET_END_HOUR = 7  # 7 AM
 DEDUP_WINDOW = timedelta(minutes=30)
 MAX_PUSH_PER_HOUR = 5
 MAX_SLACK_PER_HOUR = 20
+MAX_OVERFLOW_BUFFER = 500
+MAX_QUIET_QUEUE = 200
 
 
 class SuppressionEngine:
@@ -33,12 +35,13 @@ class SuppressionEngine:
         self._overflow_buffer: list[StoredEvent] = []
 
     def is_duplicate(self, event: StoredEvent) -> bool:
-        """Check if this (project, level) combo was seen within the dedup window."""
-        key = (event.project, event.level)
+        """Check if this (project, classified_level) combo was seen within the dedup window."""
+        effective_level = event.classified_level or event.level
+        key = (event.project, effective_level)
         now = datetime.now(timezone.utc)
         last_seen = self._dedup_log.get(key)
         if last_seen and (now - last_seen) < DEDUP_WINDOW:
-            logger.debug("Dedup suppressed: %s/%s", event.project, event.level)
+            logger.debug("Dedup suppressed: %s/%s", event.project, effective_level)
             return True
         self._dedup_log[key] = now
         return False
@@ -51,6 +54,11 @@ class SuppressionEngine:
 
     def queue_for_morning(self, event: StoredEvent) -> None:
         """Queue an event for delivery when quiet hours end."""
+        if len(self._quiet_queue) >= MAX_QUIET_QUEUE:
+            logger.warning(
+                "Quiet queue full (%d), dropping event %s", MAX_QUIET_QUEUE, event.event_id
+            )
+            return
         self._quiet_queue.append(event)
         logger.info("Queued event %s for morning delivery", event.event_id)
 
@@ -91,6 +99,11 @@ class SuppressionEngine:
 
     def add_to_overflow(self, event: StoredEvent) -> None:
         """Add an event to the overflow buffer for later digest delivery."""
+        if len(self._overflow_buffer) >= MAX_OVERFLOW_BUFFER:
+            logger.warning(
+                "Overflow buffer full (%d), dropping event %s", MAX_OVERFLOW_BUFFER, event.event_id
+            )
+            return
         self._overflow_buffer.append(event)
         logger.debug(
             "Event %s added to overflow buffer (%d total)",

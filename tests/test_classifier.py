@@ -86,3 +86,11 @@ class TestFallback:
     def test_urgent_overrides_source_level(self) -> None:
         event = _event(body="Verification failed in tests", level="info")
         assert classify(event) == "urgent"
+
+    def test_keyword_in_title_only(self) -> None:
+        event = _event(title="Approval needed for draft", body="No keywords here")
+        assert classify(event) == "urgent"
+
+    def test_normal_keyword_in_title_only(self) -> None:
+        event = _event(title="Session complete", body="No keywords here")
+        assert classify(event) == "normal"

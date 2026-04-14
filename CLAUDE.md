@@ -61,8 +61,8 @@ tests/
 ## Key Design Decisions
 
 - Slack webhook URL from macOS Keychain (`security find-generic-password`), never hardcoded
-- Quiet hours: 11 PM - 7 AM Pacific, urgent events queued for morning
-- Dedup: same project + same level within 30 min = merge
+- Quiet hours: 11 PM - 7 AM Pacific, push notifications suppressed and queued for morning delivery. Slack messages still deliver during quiet hours
+- Dedup: same project + same classified level within 30 min = merge
 - Rate limit: max 5 push/hour, max 20 Slack/hour, overflow batched into digest
 - Bridge file watcher generates events from Recent Activity section diffs
 - LaunchAgent at ~/Library/LaunchAgents/com.saagar.notification-hub.plist

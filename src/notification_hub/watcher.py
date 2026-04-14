@@ -8,7 +8,7 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 
-from watchdog.events import FileModifiedEvent, FileSystemEventHandler
+from watchdog.events import DirModifiedEvent, FileModifiedEvent, FileSystemEventHandler
 from watchdog.observers import Observer
 
 from notification_hub.config import BRIDGE_FILE, WATCHED_SECTIONS
@@ -92,10 +92,11 @@ class BridgeFileHandler(FileSystemEventHandler):
         except FileNotFoundError:
             return ""
 
-    def on_modified(self, event: FileModifiedEvent) -> None:  # type: ignore[override]
+    def on_modified(self, event: DirModifiedEvent | FileModifiedEvent) -> None:
         if not isinstance(event, FileModifiedEvent):
             return
-        if Path(event.src_path).resolve() != BRIDGE_FILE.resolve():
+        src = event.src_path.decode() if isinstance(event.src_path, bytes) else event.src_path
+        if Path(src).resolve() != BRIDGE_FILE.resolve():
             return
         new_content = self._read_file()
         new_lines = diff_sections(self._last_content, new_content)

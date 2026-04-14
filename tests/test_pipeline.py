@@ -155,6 +155,29 @@ class TestQuietHours:
         # Slack still fires during quiet hours
         mock_slack.assert_called_once()
 
+    def test_queued_events_drain_on_next_daytime_event(self, tmp_log: Path) -> None:
+        engine = get_suppression_engine()
+        quiet_flag = [True]  # mutable so we can toggle mid-test
+
+        def mock_quiet(at: object = None) -> bool:
+            return quiet_flag[0]
+
+        # 1. Queue an urgent event during quiet hours
+        p1, p2, p3 = _patch_channels()
+        with p1 as mock_push_q, p2, p3:
+            with patch.object(engine, "is_quiet_hours", side_effect=mock_quiet):
+                process_event(_event(body="Approval needed", project="q1"))
+        mock_push_q.assert_not_called()
+
+        # 2. Transition to daytime — next event should drain the queue
+        quiet_flag[0] = False
+        p1, p2, p3 = _patch_channels()
+        with p1 as mock_push_d, p2, p3:
+            with patch.object(engine, "is_quiet_hours", side_effect=mock_quiet):
+                process_event(_event(body="Some info event", project="q2"))
+        # The queued event from step 1 should have been delivered via push
+        mock_push_d.assert_called_once()
+
     def test_slack_not_affected_by_quiet_hours(self, tmp_log: Path) -> None:
         p1, p2, p3 = _patch_channels()
         with p1, p2 as mock_slack, p3:

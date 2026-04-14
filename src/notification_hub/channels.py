@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -11,7 +12,7 @@ from pathlib import Path
 import httpx
 
 from notification_hub.config import EVENTS_DIR, EVENTS_LOG, get_slack_webhook_url
-from notification_hub.models import Level, StoredEvent
+from notification_hub.models import StoredEvent
 
 logger = logging.getLogger(__name__)
 
@@ -40,16 +41,19 @@ _SOURCE_EMOJI: dict[str, str] = {
 
 
 def ensure_log_dir() -> None:
-    """Create the events log directory if it doesn't exist."""
-    EVENTS_DIR.mkdir(parents=True, exist_ok=True)
+    """Create the events log directory with restricted permissions."""
+    EVENTS_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
 
 
 def write_jsonl(event: StoredEvent) -> None:
     """Append an event to the JSONL log file."""
     ensure_log_dir()
     line = event.model_dump_json() + "\n"
-    with open(EVENTS_LOG, "a", encoding="utf-8") as f:
-        f.write(line)
+    fd = os.open(str(EVENTS_LOG), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    try:
+        os.write(fd, line.encode("utf-8"))
+    finally:
+        os.close(fd)
     logger.debug("Logged event %s to JSONL", event.event_id)
 
 

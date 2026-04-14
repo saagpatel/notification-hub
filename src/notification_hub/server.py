@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
 
 from fastapi import FastAPI
+from watchdog.observers import Observer
 
 from notification_hub.config import BRIDGE_FILE
 from notification_hub.models import Event, EventResponse
@@ -18,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 _start_time: float = 0.0
 _event_count: int = 0
-_observer = None
+_observer: Observer | None = None
 
 
 def _handle_bridge_event(event: Event) -> None:
@@ -50,13 +51,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(
     title="Notification Hub",
-    description="Unified notification daemon for AI systems",
     version="0.1.0",
     lifespan=lifespan,
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
 )
 
 
-@app.post("/events", response_model=EventResponse)
+@app.post("/events", response_model=EventResponse, status_code=201)
 async def create_event(event: Event) -> EventResponse:
     """Accept a notification event, classify it, route to channels, and confirm."""
     global _event_count

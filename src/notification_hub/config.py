@@ -26,14 +26,15 @@ WATCHED_SECTIONS = (
 KEYCHAIN_SERVICE = "slack-webhook"
 KEYCHAIN_ACCOUNT = "notification-hub"
 
-_cached_webhook_url: str | None = None
+_UNSET = object()
+_cached_webhook_url: str | None | object = _UNSET
 
 
 def get_slack_webhook_url() -> str | None:
-    """Read Slack webhook URL from macOS Keychain. Cached after first successful read."""
+    """Read Slack webhook URL from macOS Keychain. Cached after first read (including failures)."""
     global _cached_webhook_url
-    if _cached_webhook_url is not None:
-        return _cached_webhook_url
+    if _cached_webhook_url is not _UNSET:
+        return _cached_webhook_url  # type: ignore[return-value]
 
     try:
         result = subprocess.run(
@@ -53,19 +54,21 @@ def get_slack_webhook_url() -> str | None:
         if result.returncode == 0 and result.stdout.strip():
             _cached_webhook_url = result.stdout.strip()
             logger.info("Slack webhook URL loaded from Keychain")
-            return _cached_webhook_url
+            return _cached_webhook_url  # type: ignore[return-value]
         logger.warning(
             "Slack webhook not found in Keychain (service=%s, account=%s)",
             KEYCHAIN_SERVICE,
             KEYCHAIN_ACCOUNT,
         )
+        _cached_webhook_url = None
         return None
     except (subprocess.TimeoutExpired, OSError) as exc:
         logger.warning("Failed to read Keychain: %s", exc)
+        _cached_webhook_url = None
         return None
 
 
 def clear_webhook_cache() -> None:
     """Clear cached webhook URL. Used for testing."""
     global _cached_webhook_url
-    _cached_webhook_url = None
+    _cached_webhook_url = _UNSET

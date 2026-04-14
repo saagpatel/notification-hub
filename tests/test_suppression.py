@@ -18,6 +18,7 @@ def _stored(
     level: str = "info",
     title: str = "Test",
     body: str = "Test body",
+    classified_level: str | None = None,
 ) -> StoredEvent:
     return StoredEvent(
         source="cc",
@@ -25,6 +26,7 @@ def _stored(
         title=title,
         body=body,
         project=project,
+        classified_level=classified_level,  # type: ignore[arg-type]
     )
 
 
@@ -54,6 +56,29 @@ class TestDedup:
         engine.is_duplicate(_stored(project=None))
         assert engine.is_duplicate(_stored(project=None)) is True
         assert engine.is_duplicate(_stored(project="some-proj")) is False
+
+    def test_dedup_uses_classified_level_not_source_level(self) -> None:
+        """Events with same source level but different classified levels should NOT dedup."""
+        engine = SuppressionEngine()
+        e1 = _stored(project="ink", level="info", classified_level="urgent")
+        e2 = _stored(project="ink", level="info", classified_level="normal")
+        engine.is_duplicate(e1)
+        assert engine.is_duplicate(e2) is False
+
+    def test_dedup_matches_on_classified_level(self) -> None:
+        """Events with same classified level should dedup even if source levels differ."""
+        engine = SuppressionEngine()
+        e1 = _stored(project="ink", level="info", classified_level="urgent")
+        e2 = _stored(project="ink", level="normal", classified_level="urgent")
+        engine.is_duplicate(e1)
+        assert engine.is_duplicate(e2) is True
+
+    def test_dedup_falls_back_to_source_level_when_no_classified(self) -> None:
+        engine = SuppressionEngine()
+        e1 = _stored(project="ink", level="info", classified_level=None)
+        engine.is_duplicate(e1)
+        e2 = _stored(project="ink", level="info", classified_level=None)
+        assert engine.is_duplicate(e2) is True
 
 
 class TestQuietHours:
@@ -85,6 +110,21 @@ class TestQuietHours:
             2026, 4, 16, 6, 0, tzinfo=timezone.utc
         )  # 11 PM PT = 6 UTC next day
         assert engine.is_quiet_hours(eleven_pm_pacific) is True
+
+    def test_boundary_7am_is_not_quiet(self) -> None:
+        engine = SuppressionEngine()
+        seven_am_pacific = datetime(2026, 4, 15, 14, 0, tzinfo=timezone.utc)  # 7 AM PT = 14 UTC
+        assert engine.is_quiet_hours(seven_am_pacific) is False
+
+    def test_boundary_659am_is_quiet(self) -> None:
+        engine = SuppressionEngine()
+        six_59_am = datetime(2026, 4, 15, 13, 59, tzinfo=timezone.utc)  # 6:59 AM PT = 13:59 UTC
+        assert engine.is_quiet_hours(six_59_am) is True
+
+    def test_boundary_1059pm_is_not_quiet(self) -> None:
+        engine = SuppressionEngine()
+        ten_59_pm = datetime(2026, 4, 16, 5, 59, tzinfo=timezone.utc)  # 10:59 PM PT = 5:59 UTC
+        assert engine.is_quiet_hours(ten_59_pm) is False
 
     def test_queue_and_drain(self) -> None:
         engine = SuppressionEngine()
@@ -120,6 +160,18 @@ class TestRateLimiting:
         for _ in range(20):
             engine.record_slack()
         assert engine.check_slack_rate() is False
+
+    def test_push_rate_resets_after_window(self) -> None:
+        engine = SuppressionEngine()
+        old = datetime.now(timezone.utc) - timedelta(hours=1, minutes=1)
+        engine._push_times = [old] * 5
+        assert engine.check_push_rate() is True
+
+    def test_slack_rate_resets_after_window(self) -> None:
+        engine = SuppressionEngine()
+        old = datetime.now(timezone.utc) - timedelta(hours=1, minutes=1)
+        engine._slack_times = [old] * 20
+        assert engine.check_slack_rate() is True
 
 
 class TestOverflowBuffer:

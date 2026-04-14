@@ -86,21 +86,31 @@ class TestCodexHookPayload:
         assert event.source == "codex"
         assert event.level == "normal"
 
-    def test_waiting_level_maps_to_urgent(self) -> None:
-        """Verify the level mapping logic from notify_local.py."""
-        codex_level = "waiting"
+    @pytest.mark.parametrize(
+        "codex_level,expected_hub_level",
+        [
+            ("waiting", "urgent"),
+            ("attention", "normal"),
+            ("complete", "normal"),
+        ],
+    )
+    def test_codex_level_mapping_produces_valid_event(
+        self, codex_level: str, expected_hub_level: str
+    ) -> None:
+        """Verify the mapping logic from notify_local.py produces valid Event payloads."""
+        # Replicate the actual mapping from notify_local.py post_to_hub()
         hub_level = "urgent" if codex_level == "waiting" else "normal"
-        assert hub_level == "urgent"
-
-    def test_attention_level_maps_to_normal(self) -> None:
-        codex_level = "attention"
-        hub_level = "urgent" if codex_level == "waiting" else "normal"
-        assert hub_level == "normal"
-
-    def test_complete_level_maps_to_normal(self) -> None:
-        codex_level = "complete"
-        hub_level = "urgent" if codex_level == "waiting" else "normal"
-        assert hub_level == "normal"
+        assert hub_level == expected_hub_level
+        # Validate the mapped level is accepted by the Event model
+        event = Event.model_validate(
+            {
+                "source": "codex",
+                "level": hub_level,
+                "title": f"Codex {codex_level}",
+                "body": f"Codex event at level {codex_level}",
+            }
+        )
+        assert event.level == expected_hub_level
 
 
 class TestPayloadEdgeCases:
