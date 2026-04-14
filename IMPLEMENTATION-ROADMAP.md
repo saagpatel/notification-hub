@@ -57,15 +57,15 @@
 
 ### Tasks
 
-- [ ] **2.1** Slack webhook channel — POST formatted message to webhook URL
-- [ ] **2.2** Keychain integration — read Slack webhook URL from macOS Keychain via `security find-generic-password`
-- [ ] **2.3** Slack message formatting — source icon, level badge, project name, body, timestamp
-- [ ] **2.4** Dedup engine — track (project, level) pairs, merge if same combo within 30 min window
-- [ ] **2.5** Quiet hours — 11 PM to 7 AM Pacific, queue urgent events, deliver at 7 AM
-- [ ] **2.6** Rate limiter — 5 push/hour, 20 Slack/hour, overflow into batched digest
-- [ ] **2.7** Digest formatter — combine overflow events into single summary message
-- [ ] **2.8** Tests: dedup windowing, quiet hours boundary cases, rate limit overflow, Slack formatting
-- [ ] **2.9** Manual test: rapid-fire events to confirm dedup and rate limiting work
+- [x] **2.1** Slack webhook channel — POST formatted message to webhook URL
+- [x] **2.2** Keychain integration — read Slack webhook URL from macOS Keychain via `security find-generic-password`
+- [x] **2.3** Slack message formatting — source icon, level badge, project name, body, timestamp
+- [x] **2.4** Dedup engine — track (project, level) pairs, merge if same combo within 30 min window
+- [x] **2.5** Quiet hours — 11 PM to 7 AM Pacific, queue urgent events, deliver at 7 AM
+- [x] **2.6** Rate limiter — 5 push/hour, 20 Slack/hour, overflow into batched digest
+- [x] **2.7** Digest formatter — combine overflow events into single summary message
+- [x] **2.8** Tests: dedup windowing, quiet hours boundary cases, rate limit overflow, Slack formatting
+- [x] **2.9** Manual test: rapid-fire events to confirm dedup and rate limiting work
 
 ### Acceptance Criteria
 

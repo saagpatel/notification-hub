@@ -2,12 +2,25 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from unittest.mock import patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from notification_hub.pipeline import reset_suppression_engine
 from notification_hub.server import app
+
+
+@contextmanager
+def _mock_channels():
+    """Mock all delivery channels so server tests don't fire real notifications."""
+    with (
+        patch("notification_hub.pipeline.send_push", return_value=True),
+        patch("notification_hub.pipeline.send_slack", return_value=True),
+        patch("notification_hub.pipeline.send_slack_digest", return_value=True),
+    ):
+        yield
 
 
 @pytest.fixture
@@ -15,6 +28,11 @@ async def client() -> AsyncClient:
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
+
+
+@pytest.fixture(autouse=True)
+def fresh_suppression() -> None:
+    reset_suppression_engine()
 
 
 async def test_health_endpoint(client: AsyncClient) -> None:
@@ -34,7 +52,7 @@ async def test_create_event_valid(client: AsyncClient) -> None:
         "body": "This is a test notification",
         "project": "notification-hub",
     }
-    with patch("notification_hub.pipeline.send_push", return_value=True):
+    with _mock_channels():
         resp = await client.post("/events", json=payload)
     assert resp.status_code == 200
     data = resp.json()
@@ -50,7 +68,7 @@ async def test_create_event_classified_level_in_response(client: AsyncClient) ->
         "title": "Security alert",
         "body": "Security finding in auth module",
     }
-    with patch("notification_hub.pipeline.send_push", return_value=True):
+    with _mock_channels():
         resp = await client.post("/events", json=payload)
     assert resp.status_code == 200
     data = resp.json()
@@ -64,7 +82,7 @@ async def test_create_event_minimal(client: AsyncClient) -> None:
         "title": "Alert",
         "body": "Something needs attention",
     }
-    with patch("notification_hub.pipeline.send_push", return_value=True):
+    with _mock_channels():
         resp = await client.post("/events", json=payload)
     assert resp.status_code == 200
     data = resp.json()
@@ -123,6 +141,6 @@ async def test_create_event_all_sources(client: AsyncClient) -> None:
             "title": f"Test from {source}",
             "body": "Source validation check",
         }
-        with patch("notification_hub.pipeline.send_push", return_value=True):
+        with _mock_channels():
             resp = await client.post("/events", json=payload)
         assert resp.status_code == 200, f"Failed for source: {source}"

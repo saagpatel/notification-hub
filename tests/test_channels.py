@@ -1,14 +1,23 @@
-"""Tests for delivery channels: JSONL logging and terminal-notifier push."""
+"""Tests for delivery channels: JSONL logging, terminal-notifier push, and Slack."""
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
+import httpx
 import pytest
 
-from notification_hub.channels import read_jsonl, send_push, write_jsonl
+from notification_hub.channels import (
+    _format_slack_digest,
+    _format_slack_message,
+    read_jsonl,
+    send_push,
+    send_slack,
+    send_slack_digest,
+    write_jsonl,
+)
 from notification_hub.models import StoredEvent
 import notification_hub.channels as channels_mod
 
@@ -158,3 +167,141 @@ class TestSendPush:
         msg_idx = cmd.index("-message") + 1
         assert len(cmd[msg_idx]) == 200
         assert cmd[msg_idx].endswith("...")
+
+
+class TestSlackFormatting:
+    def test_message_includes_level_emoji(self) -> None:
+        event = _make_event(classified_level="urgent")
+        payload = _format_slack_message(event)
+        text = payload["blocks"][0]["text"]["text"]  # type: ignore[index]
+        assert ":red_circle:" in text
+
+    def test_message_includes_project(self) -> None:
+        event = _make_event(project="ink", classified_level="normal")
+        payload = _format_slack_message(event)
+        text = payload["blocks"][0]["text"]["text"]  # type: ignore[index]
+        assert "`ink`" in text
+
+    def test_message_includes_source_label(self) -> None:
+        event = _make_event(source="codex", classified_level="info")
+        payload = _format_slack_message(event)
+        text = payload["blocks"][0]["text"]["text"]  # type: ignore[index]
+        assert "Codex" in text
+        assert ":gear:" in text
+
+    def test_message_has_fallback_text(self) -> None:
+        event = _make_event(title="Test Alert", classified_level="urgent")
+        payload = _format_slack_message(event)
+        assert "Test Alert" in payload["text"]  # type: ignore[operator]
+        assert "URGENT" in payload["text"]  # type: ignore[operator]
+
+    def test_message_without_project(self) -> None:
+        event = _make_event(project=None, classified_level="info")
+        payload = _format_slack_message(event)
+        text = payload["blocks"][0]["text"]["text"]  # type: ignore[index]
+        assert "` —" not in text  # no project tag
+
+    def test_digest_format(self) -> None:
+        events = [
+            _make_event(title="Event 1", project="ink", classified_level="urgent"),
+            _make_event(title="Event 2", project="codec", classified_level="normal"),
+        ]
+        payload = _format_slack_digest(events)
+        text = payload["blocks"][0]["text"]["text"]  # type: ignore[index]
+        assert "Notification Digest" in text
+        assert "2 events" in text
+        assert "`ink`" in text
+        assert "`codec`" in text
+
+    def test_digest_empty_list(self) -> None:
+        payload = _format_slack_digest([])
+        text = payload["blocks"][0]["text"]["text"]  # type: ignore[index]
+        assert "0 events" in text
+
+
+class TestSendSlack:
+    def test_sends_when_webhook_configured(self) -> None:
+        event = _make_event(classified_level="urgent")
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        with (
+            patch(
+                "notification_hub.channels.get_slack_webhook_url",
+                return_value="https://hooks.slack.com/test",
+            ),
+            patch("notification_hub.channels.httpx.post", return_value=mock_resp) as mock_post,
+        ):
+            result = send_slack(event)
+        assert result is True
+        mock_post.assert_called_once()
+        call_args = mock_post.call_args
+        assert call_args[0][0] == "https://hooks.slack.com/test"
+        assert "blocks" in call_args[1]["json"]
+
+    def test_returns_false_when_no_webhook(self) -> None:
+        event = _make_event()
+        with patch("notification_hub.channels.get_slack_webhook_url", return_value=None):
+            result = send_slack(event)
+        assert result is False
+
+    def test_returns_false_on_non_200(self) -> None:
+        event = _make_event()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 500
+        with (
+            patch(
+                "notification_hub.channels.get_slack_webhook_url",
+                return_value="https://hooks.slack.com/test",
+            ),
+            patch("notification_hub.channels.httpx.post", return_value=mock_resp),
+        ):
+            result = send_slack(event)
+        assert result is False
+
+    def test_returns_false_on_http_error(self) -> None:
+        event = _make_event()
+        with (
+            patch(
+                "notification_hub.channels.get_slack_webhook_url",
+                return_value="https://hooks.slack.com/test",
+            ),
+            patch(
+                "notification_hub.channels.httpx.post", side_effect=httpx.ConnectError("refused")
+            ),
+        ):
+            result = send_slack(event)
+        assert result is False
+
+    def test_digest_sends_when_webhook_configured(self) -> None:
+        events = [_make_event(title="E1"), _make_event(title="E2")]
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        with (
+            patch(
+                "notification_hub.channels.get_slack_webhook_url",
+                return_value="https://hooks.slack.com/test",
+            ),
+            patch("notification_hub.channels.httpx.post", return_value=mock_resp),
+        ):
+            result = send_slack_digest(events)
+        assert result is True
+
+    def test_digest_empty_returns_true(self) -> None:
+        result = send_slack_digest([])
+        assert result is True
+
+    def test_webhook_url_never_in_payload(self) -> None:
+        event = _make_event(classified_level="urgent")
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        with (
+            patch(
+                "notification_hub.channels.get_slack_webhook_url",
+                return_value="https://hooks.slack.com/secret",
+            ),
+            patch("notification_hub.channels.httpx.post", return_value=mock_resp) as mock_post,
+        ):
+            send_slack(event)
+        payload_str = json.dumps(mock_post.call_args[1]["json"])
+        assert "secret" not in payload_str
+        assert "hooks.slack.com" not in payload_str

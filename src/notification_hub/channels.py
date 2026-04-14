@@ -8,8 +8,10 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from notification_hub.config import EVENTS_DIR, EVENTS_LOG
-from notification_hub.models import StoredEvent
+import httpx
+
+from notification_hub.config import EVENTS_DIR, EVENTS_LOG, get_slack_webhook_url
+from notification_hub.models import Level, StoredEvent
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +21,21 @@ _SOURCE_LABELS: dict[str, str] = {
     "codex": "Codex",
     "claude_ai": "Claude.ai",
     "bridge_watcher": "Bridge",
+}
+
+# Slack emoji for level badges
+_LEVEL_EMOJI: dict[str, str] = {
+    "urgent": ":red_circle:",
+    "normal": ":large_blue_circle:",
+    "info": ":white_circle:",
+}
+
+# Slack emoji for source icons
+_SOURCE_EMOJI: dict[str, str] = {
+    "cc": ":robot_face:",
+    "codex": ":gear:",
+    "claude_ai": ":brain:",
+    "bridge_watcher": ":bridge_at_night:",
 }
 
 
@@ -94,4 +111,96 @@ def send_push(event: StoredEvent) -> bool:
         return False
     except OSError as exc:
         logger.warning("Push failed for %s: %s", event.event_id, exc)
+        return False
+
+
+def _format_slack_message(event: StoredEvent) -> dict[str, object]:
+    """Build a Slack Block Kit message payload for an event."""
+    level = event.classified_level or event.level
+    level_emoji = _LEVEL_EMOJI.get(level, ":white_circle:")
+    source_emoji = _SOURCE_EMOJI.get(event.source, ":question:")
+    source_label = _SOURCE_LABELS.get(event.source, event.source)
+
+    project_tag = f" — `{event.project}`" if event.project else ""
+    ts = event.timestamp.strftime("%Y-%m-%d %H:%M UTC")
+
+    text = (
+        f"{level_emoji} *{event.title}*{project_tag}\n"
+        f"{event.body}\n"
+        f"_{source_emoji} {source_label} • {ts}_"
+    )
+
+    return {
+        "blocks": [
+            {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": text},
+            }
+        ],
+        "text": f"[{level.upper()}] {event.title}",  # fallback for plain-text clients
+    }
+
+
+def _format_slack_digest(events: list[StoredEvent]) -> dict[str, object]:
+    """Build a Slack digest message for multiple batched events."""
+    lines: list[str] = []
+    for event in events:
+        level = event.classified_level or event.level
+        emoji = _LEVEL_EMOJI.get(level, ":white_circle:")
+        project = f"`{event.project}` " if event.project else ""
+        lines.append(f"{emoji} {project}*{event.title}*: {event.body[:80]}")
+
+    text = f":package: *Notification Digest* ({len(events)} events)\n\n" + "\n".join(lines)
+
+    return {
+        "blocks": [
+            {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": text},
+            }
+        ],
+        "text": f"Notification digest: {len(events)} events",
+    }
+
+
+def send_slack(event: StoredEvent) -> bool:
+    """Send a single event to Slack via webhook. Returns True if sent."""
+    webhook_url = get_slack_webhook_url()
+    if webhook_url is None:
+        logger.warning("No Slack webhook configured, skipping event %s", event.event_id)
+        return False
+
+    payload = _format_slack_message(event)
+    try:
+        resp = httpx.post(webhook_url, json=payload, timeout=10)
+        if resp.status_code == 200:
+            logger.info("Slack message sent for event %s", event.event_id)
+            return True
+        logger.warning("Slack webhook returned %d for %s", resp.status_code, event.event_id)
+        return False
+    except httpx.HTTPError as exc:
+        logger.warning("Slack send failed for %s: %s", event.event_id, exc)
+        return False
+
+
+def send_slack_digest(events: list[StoredEvent]) -> bool:
+    """Send a digest of multiple events to Slack. Returns True if sent."""
+    if not events:
+        return True
+
+    webhook_url = get_slack_webhook_url()
+    if webhook_url is None:
+        logger.warning("No Slack webhook configured, skipping digest of %d events", len(events))
+        return False
+
+    payload = _format_slack_digest(events)
+    try:
+        resp = httpx.post(webhook_url, json=payload, timeout=10)
+        if resp.status_code == 200:
+            logger.info("Slack digest sent: %d events", len(events))
+            return True
+        logger.warning("Slack digest webhook returned %d", resp.status_code)
+        return False
+    except httpx.HTTPError as exc:
+        logger.warning("Slack digest failed: %s", exc)
         return False

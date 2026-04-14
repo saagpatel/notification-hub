@@ -29,6 +29,8 @@ class SuppressionEngine:
         self._slack_times: list[datetime] = []
         # Quiet hours queue
         self._quiet_queue: list[StoredEvent] = []
+        # Rate limit overflow buffer
+        self._overflow_buffer: list[StoredEvent] = []
 
     def is_duplicate(self, event: StoredEvent) -> bool:
         """Check if this (project, level) combo was seen within the dedup window."""
@@ -86,3 +88,22 @@ class SuppressionEngine:
     def record_slack(self) -> None:
         """Record a Slack message send."""
         self._slack_times.append(datetime.now(timezone.utc))
+
+    def add_to_overflow(self, event: StoredEvent) -> None:
+        """Add an event to the overflow buffer for later digest delivery."""
+        self._overflow_buffer.append(event)
+        logger.debug(
+            "Event %s added to overflow buffer (%d total)",
+            event.event_id,
+            len(self._overflow_buffer),
+        )
+
+    def drain_overflow(self) -> list[StoredEvent]:
+        """Return and clear the overflow buffer."""
+        events = list(self._overflow_buffer)
+        self._overflow_buffer.clear()
+        return events
+
+    def has_overflow(self) -> bool:
+        """Check if there are events waiting in the overflow buffer."""
+        return len(self._overflow_buffer) > 0

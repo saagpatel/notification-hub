@@ -1,23 +1,89 @@
-"""Event processing pipeline: classify → route → deliver."""
+"""Event processing pipeline: classify → suppress → route → deliver."""
 
 from __future__ import annotations
 
 import logging
 
-from notification_hub.channels import send_push, write_jsonl
+from notification_hub.channels import send_push, send_slack, send_slack_digest, write_jsonl
 from notification_hub.classifier import classify
 from notification_hub.models import Event, StoredEvent
+from notification_hub.suppression import SuppressionEngine
 
 logger = logging.getLogger(__name__)
 
+# Module-level singleton — lives for the server's lifetime
+_suppression = SuppressionEngine()
+
+
+def get_suppression_engine() -> SuppressionEngine:
+    """Access the suppression engine. Exposed for testing."""
+    return _suppression
+
+
+def reset_suppression_engine() -> None:
+    """Replace the suppression engine with a fresh instance. Used in tests."""
+    global _suppression
+    _suppression = SuppressionEngine()
+
+
+def _flush_overflow() -> None:
+    """If the overflow buffer has events and Slack rate allows, send a digest."""
+    if not _suppression.has_overflow():
+        return
+    if not _suppression.check_slack_rate():
+        return
+    overflow = _suppression.drain_overflow()
+    if overflow:
+        send_slack_digest(overflow)
+        _suppression.record_slack()
+        logger.info("Flushed overflow digest: %d events", len(overflow))
+
+
+def _drain_quiet_queue_if_needed() -> None:
+    """If quiet hours just ended and there are queued events, deliver them."""
+    if _suppression.is_quiet_hours():
+        return
+    queued = _suppression.drain_quiet_queue()
+    for event in queued:
+        _deliver_push(event)
+        logger.info("Morning delivery: push for %s", event.event_id)
+
+
+def _deliver_push(event: StoredEvent) -> None:
+    """Send a push notification with rate limiting. Overflow goes to buffer."""
+    if _suppression.check_push_rate():
+        send_push(event)
+        _suppression.record_push()
+    else:
+        _suppression.add_to_overflow(event)
+        logger.debug("Push rate-limited, event %s added to overflow", event.event_id)
+
+
+def _deliver_slack(event: StoredEvent) -> None:
+    """Send a Slack message with rate limiting. Overflow goes to buffer."""
+    # Try to flush any pending overflow first
+    _flush_overflow()
+
+    if _suppression.check_slack_rate():
+        send_slack(event)
+        _suppression.record_slack()
+    else:
+        _suppression.add_to_overflow(event)
+        logger.debug("Slack rate-limited, event %s added to overflow", event.event_id)
+
 
 def process_event(event: Event) -> StoredEvent:
-    """Full pipeline: create stored event, classify, log, and route to channels.
+    """Full pipeline: classify, log, suppress, and route to channels.
 
     All events are written to JSONL. Routing by classified level:
-    - urgent: JSONL + terminal-notifier push with sound
-    - normal: JSONL only (Slack added in Phase 2)
+    - urgent: JSONL + push (with sound) + Slack
+    - normal: JSONL + Slack
     - info: JSONL only
+
+    Suppression layers:
+    - Dedup: same (project, classified_level) within 30 min = skip delivery
+    - Quiet hours: push suppressed 11 PM-7 AM Pacific, queued for morning
+    - Rate limit: max 5 push/hr, max 20 Slack/hr, overflow batched into digest
     """
     classified_level = classify(event)
     stored = StoredEvent(
@@ -25,7 +91,7 @@ def process_event(event: Event) -> StoredEvent:
         classified_level=classified_level,
     )
 
-    # Always log
+    # Always log to JSONL regardless of suppression
     write_jsonl(stored)
     logger.info(
         "Event %s: %s [source=%s, classified=%s]",
@@ -35,8 +101,27 @@ def process_event(event: Event) -> StoredEvent:
         classified_level,
     )
 
+    # Check for morning delivery of queued events
+    _drain_quiet_queue_if_needed()
+
+    # Dedup: stop delivery if duplicate (project, level) within window
+    if _suppression.is_duplicate(stored):
+        logger.debug("Event %s suppressed by dedup", stored.event_id)
+        return stored
+
     # Route based on classified level
     if classified_level == "urgent":
-        send_push(stored)
+        # Push: respect quiet hours
+        if _suppression.is_quiet_hours():
+            _suppression.queue_for_morning(stored)
+        else:
+            _deliver_push(stored)
+        # Slack: always (not affected by quiet hours)
+        _deliver_slack(stored)
+
+    elif classified_level == "normal":
+        _deliver_slack(stored)
+
+    # info: JSONL only (already logged above)
 
     return stored

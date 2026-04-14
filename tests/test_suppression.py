@@ -120,3 +120,34 @@ class TestRateLimiting:
         for _ in range(20):
             engine.record_slack()
         assert engine.check_slack_rate() is False
+
+
+class TestOverflowBuffer:
+    def test_empty_by_default(self) -> None:
+        engine = SuppressionEngine()
+        assert engine.has_overflow() is False
+        assert engine.drain_overflow() == []
+
+    def test_add_and_drain(self) -> None:
+        engine = SuppressionEngine()
+        event = _stored(title="Overflow 1")
+        engine.add_to_overflow(event)
+        assert engine.has_overflow() is True
+        drained = engine.drain_overflow()
+        assert len(drained) == 1
+        assert drained[0].event_id == event.event_id
+        assert engine.has_overflow() is False
+
+    def test_drain_clears_buffer(self) -> None:
+        engine = SuppressionEngine()
+        engine.add_to_overflow(_stored(title="A"))
+        engine.add_to_overflow(_stored(title="B"))
+        drained = engine.drain_overflow()
+        assert len(drained) == 2
+        assert engine.drain_overflow() == []
+
+    def test_multiple_overflows_accumulate(self) -> None:
+        engine = SuppressionEngine()
+        for i in range(5):
+            engine.add_to_overflow(_stored(title=f"Event {i}"))
+        assert len(engine.drain_overflow()) == 5
