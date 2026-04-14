@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -32,12 +34,27 @@ async def test_create_event_valid(client: AsyncClient) -> None:
         "body": "This is a test notification",
         "project": "notification-hub",
     }
-    resp = await client.post("/events", json=payload)
+    with patch("notification_hub.pipeline.send_push", return_value=True):
+        resp = await client.post("/events", json=payload)
     assert resp.status_code == 200
     data = resp.json()
     assert data["accepted"] is True
     assert data["level"] == "info"
     assert "event_id" in data
+
+
+async def test_create_event_classified_level_in_response(client: AsyncClient) -> None:
+    payload = {
+        "source": "cc",
+        "level": "info",
+        "title": "Security alert",
+        "body": "Security finding in auth module",
+    }
+    with patch("notification_hub.pipeline.send_push", return_value=True):
+        resp = await client.post("/events", json=payload)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["level"] == "urgent"
 
 
 async def test_create_event_minimal(client: AsyncClient) -> None:
@@ -47,7 +64,8 @@ async def test_create_event_minimal(client: AsyncClient) -> None:
         "title": "Alert",
         "body": "Something needs attention",
     }
-    resp = await client.post("/events", json=payload)
+    with patch("notification_hub.pipeline.send_push", return_value=True):
+        resp = await client.post("/events", json=payload)
     assert resp.status_code == 200
     data = resp.json()
     assert data["level"] == "urgent"
@@ -105,5 +123,6 @@ async def test_create_event_all_sources(client: AsyncClient) -> None:
             "title": f"Test from {source}",
             "body": "Source validation check",
         }
-        resp = await client.post("/events", json=payload)
+        with patch("notification_hub.pipeline.send_push", return_value=True):
+            resp = await client.post("/events", json=payload)
         assert resp.status_code == 200, f"Failed for source: {source}"

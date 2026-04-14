@@ -1,13 +1,14 @@
-"""Tests for JSONL logging channel."""
+"""Tests for delivery channels: JSONL logging and terminal-notifier push."""
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
-from notification_hub.channels import read_jsonl, write_jsonl
+from notification_hub.channels import read_jsonl, send_push, write_jsonl
 from notification_hub.models import StoredEvent
 import notification_hub.channels as channels_mod
 
@@ -72,3 +73,88 @@ def test_stored_event_has_ids() -> None:
     event = _make_event()
     assert len(event.event_id) == 12
     assert event.received_at is not None
+
+
+class TestSendPush:
+    def test_sends_notification_when_notifier_available(self) -> None:
+        event = _make_event(title="Alert", source="codex", project="ink")
+        with (
+            patch(
+                "notification_hub.channels.shutil.which",
+                return_value="/usr/local/bin/terminal-notifier",
+            ),
+            patch("notification_hub.channels.subprocess.run") as mock_run,
+        ):
+            result = send_push(event)
+        assert result is True
+        mock_run.assert_called_once()
+        cmd = mock_run.call_args[0][0]
+        assert cmd[0] == "/usr/local/bin/terminal-notifier"
+        assert "-title" in cmd
+        assert "Notification Hub" in cmd
+        assert "-sound" in cmd
+        assert "Hero" in cmd
+
+    def test_subtitle_includes_source_label(self) -> None:
+        event = _make_event(source="cc")
+        with (
+            patch("notification_hub.channels.shutil.which", return_value="/usr/bin/tn"),
+            patch("notification_hub.channels.subprocess.run") as mock_run,
+        ):
+            send_push(event)
+        cmd = mock_run.call_args[0][0]
+        subtitle_idx = cmd.index("-subtitle") + 1
+        assert "Claude Code" in cmd[subtitle_idx]
+
+    def test_subtitle_includes_project_name(self) -> None:
+        event = _make_event(source="codex", project="notification-hub")
+        with (
+            patch("notification_hub.channels.shutil.which", return_value="/usr/bin/tn"),
+            patch("notification_hub.channels.subprocess.run") as mock_run,
+        ):
+            send_push(event)
+        cmd = mock_run.call_args[0][0]
+        subtitle_idx = cmd.index("-subtitle") + 1
+        assert "notification-hub" in cmd[subtitle_idx]
+        assert "Codex" in cmd[subtitle_idx]
+
+    def test_returns_false_when_notifier_missing(self) -> None:
+        event = _make_event()
+        with patch("notification_hub.channels.shutil.which", return_value=None):
+            result = send_push(event)
+        assert result is False
+
+    def test_returns_false_on_timeout(self) -> None:
+        import subprocess as sp
+
+        event = _make_event()
+        with (
+            patch("notification_hub.channels.shutil.which", return_value="/usr/bin/tn"),
+            patch(
+                "notification_hub.channels.subprocess.run", side_effect=sp.TimeoutExpired("tn", 5)
+            ),
+        ):
+            result = send_push(event)
+        assert result is False
+
+    def test_returns_false_on_os_error(self) -> None:
+        event = _make_event()
+        with (
+            patch("notification_hub.channels.shutil.which", return_value="/usr/bin/tn"),
+            patch("notification_hub.channels.subprocess.run", side_effect=OSError("no such file")),
+        ):
+            result = send_push(event)
+        assert result is False
+
+    def test_truncates_long_body(self) -> None:
+        long_body = "x" * 300
+        event = _make_event(body=long_body)
+        with (
+            patch("notification_hub.channels.shutil.which", return_value="/usr/bin/tn"),
+            patch("notification_hub.channels.subprocess.run") as mock_run,
+        ):
+            send_push(event)
+        cmd = mock_run.call_args[0][0]
+        msg_idx = cmd.index("-message") + 1
+        assert len(cmd[msg_idx]) == 200
+        assert cmd[msg_idx].endswith("...")

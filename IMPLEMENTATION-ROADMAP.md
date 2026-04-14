@@ -6,16 +6,16 @@
 
 ### Tasks
 
-- [ ] **0.1** Set up pyproject.toml with dependencies (fastapi, uvicorn, watchdog, httpx, pydantic)
-- [ ] **0.2** Create Pydantic models: `Event` (source, level, title, body, project?, timestamp), `EventResponse`
-- [ ] **0.3** FastAPI app with `POST /events` endpoint — validates event, writes to JSONL log
-- [ ] **0.4** `GET /health` endpoint returning server status, uptime, event count
-- [ ] **0.5** JSONL writer — append events to `~/.local/share/notification-hub/events.jsonl`, auto-create directory
-- [ ] **0.6** Bridge file watcher using watchdog — monitors `~/.claude/projects/-Users-d/memory/claude_ai_context.md`
-- [ ] **0.7** Watcher diff logic — detect changes to "Recent Claude Code Activity" and "Recent Codex Activity" sections, parse new lines into events
-- [ ] **0.8** Wire watcher to event pipeline (watcher generates events that flow through the same POST path internally)
-- [ ] **0.9** Tests: server endpoint validation, JSONL write/read, watcher diff detection
-- [ ] **0.10** Manual smoke test: POST an event via curl, confirm JSONL entry
+- [x] **0.1** Set up pyproject.toml with dependencies (fastapi, uvicorn, watchdog, httpx, pydantic)
+- [x] **0.2** Create Pydantic models: `Event` (source, level, title, body, project?, timestamp), `EventResponse`
+- [x] **0.3** FastAPI app with `POST /events` endpoint — validates event, writes to JSONL log
+- [x] **0.4** `GET /health` endpoint returning server status, uptime, event count
+- [x] **0.5** JSONL writer — append events to `~/.local/share/notification-hub/events.jsonl`, auto-create directory
+- [x] **0.6** Bridge file watcher using watchdog — monitors `~/.claude/projects/-Users-d/memory/claude_ai_context.md`
+- [x] **0.7** Watcher diff logic — detect changes to "Recent Claude Code Activity" and "Recent Codex Activity" sections, parse new lines into events
+- [x] **0.8** Wire watcher to event pipeline (watcher generates events that flow through the same POST path internally)
+- [x] **0.9** Tests: server endpoint validation, JSONL write/read, watcher diff detection
+- [x] **0.10** Manual smoke test: POST an event via curl, confirm JSONL entry
 
 ### Acceptance Criteria
 
@@ -33,14 +33,14 @@
 
 ### Tasks
 
-- [ ] **1.1** Rules engine in classifier.py — keyword/pattern matching for urgent/normal/info
-- [ ] **1.2** Urgent keywords: "verification fail", "test regression", "eval degradation", "approval needed", "can_auto_archive=false", "security finding", "security audit"
-- [ ] **1.3** Normal keywords: "session complete", "automation report", "milestone", "bridge sync", "[SHIPPED]"
-- [ ] **1.4** Info: everything else, plus "can_auto_archive=true", "bridge file read", "status update"
-- [ ] **1.5** Terminal-notifier channel — shell out to terminal-notifier for urgent events with sound
-- [ ] **1.6** Classification pipeline: event → classify → route to appropriate channel
-- [ ] **1.7** Tests: classifier coverage for all keyword categories, channel delivery mocking
-- [ ] **1.8** Manual test: POST urgent event, confirm macOS notification appears with sound
+- [x] **1.1** Rules engine in classifier.py — keyword/pattern matching for urgent/normal/info
+- [x] **1.2** Urgent keywords: "verification fail", "test regression", "eval degradation", "approval needed", "can_auto_archive=false", "security finding", "security audit"
+- [x] **1.3** Normal keywords: "session complete", "automation report", "milestone", "bridge sync", "[SHIPPED]"
+- [x] **1.4** Info: everything else, plus "can_auto_archive=true", "bridge file read", "status update"
+- [x] **1.5** Terminal-notifier channel — shell out to terminal-notifier for urgent events with sound
+- [x] **1.6** Classification pipeline: event → classify → route to appropriate channel
+- [x] **1.7** Tests: classifier coverage for all keyword categories, channel delivery mocking
+- [x] **1.8** Manual test: POST urgent event, confirm macOS notification appears with sound
 
 ### Acceptance Criteria
 

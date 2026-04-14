@@ -29,6 +29,7 @@ class StoredEvent(Event):
 
     event_id: str = Field(default_factory=lambda: uuid.uuid4().hex[:12])
     received_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    classified_level: Level | None = None
 
 
 class EventResponse(BaseModel):

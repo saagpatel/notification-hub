@@ -9,9 +9,9 @@ from collections.abc import AsyncIterator
 
 from fastapi import FastAPI
 
-from notification_hub.channels import write_jsonl
 from notification_hub.config import BRIDGE_FILE
-from notification_hub.models import Event, EventResponse, StoredEvent
+from notification_hub.models import Event, EventResponse
+from notification_hub.pipeline import process_event
 from notification_hub.watcher import start_watcher
 
 logger = logging.getLogger(__name__)
@@ -22,12 +22,10 @@ _observer = None
 
 
 def _handle_bridge_event(event: Event) -> None:
-    """Callback for bridge file watcher — logs events through the same pipeline."""
+    """Callback for bridge file watcher — processes events through the full pipeline."""
     global _event_count
-    stored = StoredEvent(**event.model_dump())
-    write_jsonl(stored)
+    process_event(event)
     _event_count += 1
-    logger.info("Bridge event: %s [%s]", stored.title, stored.level)
 
 
 @asynccontextmanager
@@ -60,15 +58,14 @@ app = FastAPI(
 
 @app.post("/events", response_model=EventResponse)
 async def create_event(event: Event) -> EventResponse:
-    """Accept a notification event, log it, and return confirmation."""
+    """Accept a notification event, classify it, route to channels, and confirm."""
     global _event_count
-    stored = StoredEvent(**event.model_dump())
-    write_jsonl(stored)
+    stored = process_event(event)
     _event_count += 1
-    logger.info(
-        "Event %s: %s [%s] from %s", stored.event_id, stored.title, stored.level, stored.source
+    return EventResponse(
+        event_id=stored.event_id,
+        level=stored.classified_level or stored.level,
     )
-    return EventResponse(event_id=stored.event_id, level=stored.level)
 
 
 @app.get("/health")
