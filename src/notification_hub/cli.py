@@ -4,24 +4,51 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from collections.abc import Sequence
 
 from notification_hub.diagnostics import collect_doctor_report
+from notification_hub.operations import RetentionReport, SmokeReport, run_retention, run_smoke_check
 
 
-def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="notification-hub-doctor")
-    parser.add_argument(
-        "command",
-        nargs="?",
-        default="doctor",
-        choices=("doctor",),
-        help="Run the built-in doctor checks.",
-    )
-    parser.add_argument(
+def _build_parser(prog: str = "notification-hub") -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog=prog)
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    doctor = subparsers.add_parser("doctor", help="Run the built-in doctor checks.")
+    doctor.add_argument(
         "--json",
         action="store_true",
         help="Emit the doctor report as JSON.",
+    )
+
+    smoke = subparsers.add_parser("smoke", help="Send a harmless smoke event and verify the log.")
+    smoke.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the smoke report as JSON.",
+    )
+
+    retention = subparsers.add_parser(
+        "retention",
+        help="Archive older live-log events when the JSONL file grows past a threshold.",
+    )
+    retention.add_argument(
+        "--max-events",
+        type=int,
+        default=2000,
+        help="Keep this many most-recent events in the live log.",
+    )
+    retention.add_argument(
+        "--keep-archives",
+        type=int,
+        default=10,
+        help="Keep this many archive files before pruning older ones.",
+    )
+    retention.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the retention report as JSON.",
     )
     return parser
 
@@ -47,14 +74,68 @@ def _print_doctor_report(report: dict[str, object]) -> None:
     print(f"- health URL: {local_api['url']}")
 
 
+def _print_smoke_report(report: SmokeReport) -> None:
+    print(f"notification-hub smoke: {report['status']}")
+    print(f"- event URL: {report['event_url']}")
+    print(f"- health URL: {report['health_url']}")
+    print(f"- response status: {report['response_status']}")
+    print(f"- event ID: {report['event_id']}")
+    print(f"- log verified: {report['log_verified']}")
+    if report["error"] is not None:
+        print(f"- error: {report['error']}")
+
+
+def _print_retention_report(report: RetentionReport) -> None:
+    print(f"notification-hub retention: {report['status']}")
+    print(f"- rotated: {report['rotated']}")
+    print(f"- events before: {report['events_before']}")
+    print(f"- events after: {report['events_after']}")
+    print(f"- archived events: {report['archived_events']}")
+    if report["archive_path"] is not None:
+        print(f"- archive path: {report['archive_path']}")
+    deleted_archives = report["deleted_archives"]
+    if deleted_archives:
+        print(f"- deleted archives: {len(deleted_archives)}")
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
 
-    report = collect_doctor_report()
+    if args.command == "doctor":
+        report = collect_doctor_report()
+        if args.json:
+            print(json.dumps(report, indent=2, sort_keys=True))
+        else:
+            _print_doctor_report(report)
+        return 0 if report["status"] == "ok" else 1
+
+    if args.command == "smoke":
+        report = run_smoke_check()
+        if args.json:
+            print(json.dumps(report, indent=2, sort_keys=True))
+        else:
+            _print_smoke_report(report)
+        return 0 if report["status"] == "ok" else 1
+
+    report = run_retention(max_events=args.max_events, keep_archives=args.keep_archives)
     if args.json:
         print(json.dumps(report, indent=2, sort_keys=True))
     else:
-        _print_doctor_report(report)
-
+        _print_retention_report(report)
     return 0 if report["status"] == "ok" else 1
+
+
+def doctor_main(argv: Sequence[str] | None = None) -> int:
+    forwarded = list(argv) if argv is not None else sys.argv[1:]
+    return main(["doctor", *forwarded])
+
+
+def smoke_main(argv: Sequence[str] | None = None) -> int:
+    forwarded = list(argv) if argv is not None else sys.argv[1:]
+    return main(["smoke", *forwarded])
+
+
+def retention_main(argv: Sequence[str] | None = None) -> int:
+    forwarded = list(argv) if argv is not None else sys.argv[1:]
+    return main(["retention", *forwarded])
