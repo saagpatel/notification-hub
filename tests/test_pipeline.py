@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import cast
 from unittest.mock import patch
 
 import pytest
@@ -158,6 +159,66 @@ class TestClassificationRouting:
         mock_push.assert_not_called()
         mock_slack.assert_not_called()
 
+    def test_project_prefix_rule_matches(self, tmp_log: Path) -> None:
+        policy = PolicyConfig(
+            routing=RoutingPolicy(
+                rules=(
+                    RoutingRule(
+                        project_prefix="notification-",
+                        disable_push=True,
+                    ),
+                )
+            )
+        )
+
+        p1, p2, p3 = _patch_channels()
+        with (
+            patch("notification_hub.pipeline.get_policy_config", return_value=policy),
+            p1 as mock_push,
+            p2 as mock_slack,
+            p3,
+            _patch_daytime(),
+        ):
+            stored = process_event(_event(body="Approval needed", project="notification-hub"))
+
+        assert stored.classified_level == "urgent"
+        mock_push.assert_not_called()
+        mock_slack.assert_called_once_with(stored)
+
+    def test_text_matchers_can_drive_rule_match(self, tmp_log: Path) -> None:
+        policy = PolicyConfig(
+            routing=RoutingPolicy(
+                rules=(
+                    RoutingRule(
+                        title_contains="review",
+                        body_contains="verification",
+                        text_contains="session complete",
+                        disable_slack=True,
+                    ),
+                )
+            )
+        )
+
+        p1, p2, p3 = _patch_channels()
+        with (
+            patch("notification_hub.pipeline.get_policy_config", return_value=policy),
+            p1 as mock_push,
+            p2 as mock_slack,
+            p3,
+            _patch_daytime(),
+        ):
+            stored = process_event(
+                _event(
+                    title="Review ready",
+                    body="Session complete after verification",
+                    project="notification-hub",
+                )
+            )
+
+        assert stored.classified_level == "normal"
+        mock_push.assert_not_called()
+        mock_slack.assert_not_called()
+
     def test_explain_event_reports_rule_match_and_channels(self, tmp_log: Path) -> None:
         policy = PolicyConfig(
             routing=RoutingPolicy(
@@ -207,6 +268,34 @@ class TestClassificationRouting:
         assert routing["matched_rule_index"] == 1
         assert delivery["push"] is False
         assert delivery["slack"] is False
+
+    def test_explanation_report_includes_new_match_fields(self, tmp_log: Path) -> None:
+        policy = PolicyConfig(
+            routing=RoutingPolicy(
+                rules=(
+                    RoutingRule(
+                        project_prefix="notification-",
+                        text_contains="session complete",
+                        disable_slack=True,
+                    ),
+                )
+            )
+        )
+
+        with patch("notification_hub.pipeline.get_policy_config", return_value=policy):
+            report = build_event_explanation_report(
+                _event(
+                    title="Review ready",
+                    body="Session complete after verification",
+                    project="notification-hub",
+                )
+            )
+
+        routing = report["routing"]
+        assert isinstance(routing, dict)
+        matched_rule = cast(dict[str, object], routing["matched_rule"])
+        assert matched_rule["project_prefix"] == "notification-"
+        assert matched_rule["text_contains"] == "session complete"
 
 
 class TestLogging:

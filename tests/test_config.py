@@ -208,6 +208,12 @@ disable_push = true
 [[routing.rules]]
 source = "bridge_watcher"
 disable_slack = true
+
+[[routing.rules]]
+project_prefix = "notification-"
+title_contains = "review"
+body_contains = "verification"
+text_contains = "session complete"
 """.strip(),
             encoding="utf-8",
         )
@@ -224,6 +230,12 @@ disable_slack = true
             RoutingRule(
                 source="bridge_watcher",
                 disable_slack=True,
+            ),
+            RoutingRule(
+                project_prefix="notification-",
+                title_contains="review",
+                body_contains="verification",
+                text_contains="session complete",
             ),
         )
 
@@ -278,3 +290,38 @@ class TestPolicyAnalysis:
         assert warnings == (
             "classifier keyword 'ship it' appears in both urgent and normal; urgent wins first",
         )
+
+    def test_warns_when_project_and_prefix_are_both_set(self) -> None:
+        policy = PolicyConfig(
+            classification=ClassificationPolicy(),
+            suppression=SuppressionPolicy(),
+            routing=RoutingPolicy(
+                rules=(
+                    RoutingRule(
+                        project="notification-hub",
+                        project_prefix="notification-",
+                        disable_slack=True,
+                    ),
+                )
+            ),
+        )
+
+        warnings = analyze_policy_config(policy)
+
+        assert any("sets both project and project_prefix" in warning for warning in warnings)
+
+    def test_warns_on_shadowed_prefix_rule(self) -> None:
+        policy = PolicyConfig(
+            classification=ClassificationPolicy(),
+            suppression=SuppressionPolicy(),
+            routing=RoutingPolicy(
+                rules=(
+                    RoutingRule(project_prefix="notification-"),
+                    RoutingRule(project="notification-hub", disable_slack=True),
+                )
+            ),
+        )
+
+        warnings = analyze_policy_config(policy)
+
+        assert any("routing rule 2 is shadowed by earlier rule 1" in warning for warning in warnings)

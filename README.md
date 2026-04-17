@@ -103,12 +103,20 @@ disable_push = true
 [[routing.rules]]
 source = "bridge_watcher"
 disable_slack = true
+
+[[routing.rules]]
+project_prefix = "notification-"
+title_contains = "review"
+body_contains = "verification"
+disable_slack = true
 ```
 
 If the file is missing or invalid, notification-hub falls back to built-in defaults and reports the
 config status through the doctor command and `GET /health/details`.
 Routing rules are matched in order, and the first matching rule can override the classified level or
 disable push/Slack delivery for that event.
+Matchers can now use exact source/project, `project_prefix`, and lowercase `title_contains`,
+`body_contains`, or `text_contains` checks.
 
 First-time setup shortcut:
 

@@ -41,10 +41,22 @@ class EventExplanation:
 def _resolve_routing(event: Event, classified_level: Level) -> RoutingDecision:
     """Apply the first matching routing rule, if any, to the classified event."""
     policy = get_policy_config().routing
+    title_text = event.title.lower()
+    body_text = event.body.lower()
+    combined_text = f"{title_text} {body_text}"
     for index, rule in enumerate(policy.rules, start=1):
         if rule.source is not None and rule.source != event.source:
             continue
         if rule.project is not None and rule.project != event.project:
+            continue
+        if rule.project_prefix is not None:
+            if event.project is None or not event.project.startswith(rule.project_prefix):
+                continue
+        if rule.title_contains is not None and rule.title_contains not in title_text:
+            continue
+        if rule.body_contains is not None and rule.body_contains not in body_text:
+            continue
+        if rule.text_contains is not None and rule.text_contains not in combined_text:
             continue
 
         effective_level = (
@@ -91,6 +103,10 @@ def _routing_rule_to_dict(rule: RoutingRule | None) -> dict[str, object] | None:
     return {
         "source": rule.source,
         "project": rule.project,
+        "project_prefix": rule.project_prefix,
+        "title_contains": rule.title_contains,
+        "body_contains": rule.body_contains,
+        "text_contains": rule.text_contains,
         "force_level": rule.force_level,
         "disable_push": rule.disable_push,
         "disable_slack": rule.disable_slack,

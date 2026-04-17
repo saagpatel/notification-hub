@@ -115,6 +115,10 @@ class SuppressionPolicy:
 class RoutingRule:
     source: str | None = None
     project: str | None = None
+    project_prefix: str | None = None
+    title_contains: str | None = None
+    body_contains: str | None = None
+    text_contains: str | None = None
     force_level: str | None = None
     disable_push: bool = False
     disable_slack: bool = False
@@ -202,6 +206,12 @@ def _as_optional_string(value: object) -> str | None:
     return stripped if stripped else None
 
 
+def _as_optional_lower_string(value: object) -> str | None:
+    """Return a stripped lowercase string or None."""
+    candidate = _as_optional_string(value)
+    return None if candidate is None else candidate.lower()
+
+
 def _as_optional_choice(value: object, valid: frozenset[str]) -> str | None:
     """Return a lowercase string when it matches the allowed choices."""
     candidate = _as_optional_string(value)
@@ -221,13 +231,28 @@ def _parse_routing_rules(value: object) -> tuple[RoutingRule, ...]:
         raw_rule = _as_mapping(item)
         source = _as_optional_choice(raw_rule.get("source"), VALID_SOURCES)
         project = _as_optional_string(raw_rule.get("project"))
-        if source is None and project is None:
+        project_prefix = _as_optional_string(raw_rule.get("project_prefix"))
+        title_contains = _as_optional_lower_string(raw_rule.get("title_contains"))
+        body_contains = _as_optional_lower_string(raw_rule.get("body_contains"))
+        text_contains = _as_optional_lower_string(raw_rule.get("text_contains"))
+        if (
+            source is None
+            and project is None
+            and project_prefix is None
+            and title_contains is None
+            and body_contains is None
+            and text_contains is None
+        ):
             continue
 
         rules.append(
             RoutingRule(
                 source=source,
                 project=project,
+                project_prefix=project_prefix,
+                title_contains=title_contains,
+                body_contains=body_contains,
+                text_contains=text_contains,
                 force_level=_as_optional_choice(raw_rule.get("force_level"), VALID_LEVELS),
                 disable_push=_as_bool(raw_rule.get("disable_push")),
                 disable_slack=_as_bool(raw_rule.get("disable_slack")),
@@ -236,16 +261,47 @@ def _parse_routing_rules(value: object) -> tuple[RoutingRule, ...]:
     return tuple(rules)
 
 
+def _string_constraint_shadowed_by(
+    previous_exact: str | None,
+    previous_prefix: str | None,
+    current_exact: str | None,
+    current_prefix: str | None,
+) -> bool:
+    """Return whether a previous exact/prefix constraint covers the current one."""
+    if previous_exact is not None:
+        return current_exact == previous_exact
+    if previous_prefix is not None:
+        if current_exact is not None:
+            return current_exact.startswith(previous_prefix)
+        if current_prefix is not None:
+            return current_prefix.startswith(previous_prefix)
+        return False
+    return True
+
+
+def _contains_constraint_shadowed_by(previous: str | None, current: str | None) -> bool:
+    """Return whether a previous contains constraint covers the current one."""
+    if previous is None:
+        return True
+    if current is None:
+        return False
+    return current.find(previous) >= 0
+
+
 def _routing_rule_shadowed_by(previous: RoutingRule, current: RoutingRule) -> bool:
     """Return whether an earlier rule matches every event the later rule could match."""
-    for field_name in ("source", "project"):
-        previous_value = getattr(previous, field_name)
-        current_value = getattr(current, field_name)
-        if previous_value is None:
-            continue
-        if current_value != previous_value:
-            return False
-    return True
+    return (
+        _string_constraint_shadowed_by(previous.source, None, current.source, None)
+        and _string_constraint_shadowed_by(
+            previous.project,
+            previous.project_prefix,
+            current.project,
+            current.project_prefix,
+        )
+        and _contains_constraint_shadowed_by(previous.title_contains, current.title_contains)
+        and _contains_constraint_shadowed_by(previous.body_contains, current.body_contains)
+        and _contains_constraint_shadowed_by(previous.text_contains, current.text_contains)
+    )
 
 
 def analyze_policy_config(policy: PolicyConfig | None = None) -> tuple[str, ...]:
@@ -265,6 +321,11 @@ def analyze_policy_config(policy: PolicyConfig | None = None) -> tuple[str, ...]
 
     prior_rules: list[RoutingRule] = []
     for index, rule in enumerate(current_policy.routing.rules, start=1):
+        if rule.project is not None and rule.project_prefix is not None:
+            warnings.append(
+                f"routing rule {index} sets both project and project_prefix; project already implies the prefix"
+            )
+
         if rule.force_level is None and not rule.disable_push and not rule.disable_slack:
             warnings.append(
                 f"routing rule {index} does not change level or delivery behavior"
