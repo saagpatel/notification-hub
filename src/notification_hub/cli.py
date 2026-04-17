@@ -8,7 +8,14 @@ import sys
 from collections.abc import Sequence
 
 from notification_hub.diagnostics import collect_doctor_report
-from notification_hub.operations import RetentionReport, SmokeReport, run_retention, run_smoke_check
+from notification_hub.operations import (
+    BootstrapConfigReport,
+    RetentionReport,
+    SmokeReport,
+    bootstrap_policy_config,
+    run_retention,
+    run_smoke_check,
+)
 
 
 def _build_parser(prog: str = "notification-hub") -> argparse.ArgumentParser:
@@ -49,6 +56,21 @@ def _build_parser(prog: str = "notification-hub") -> argparse.ArgumentParser:
         "--json",
         action="store_true",
         help="Emit the retention report as JSON.",
+    )
+
+    bootstrap = subparsers.add_parser(
+        "bootstrap-config",
+        help="Copy the sample policy config into the live config location.",
+    )
+    bootstrap.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite an existing live config file.",
+    )
+    bootstrap.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the bootstrap report as JSON.",
     )
     return parser
 
@@ -98,6 +120,15 @@ def _print_retention_report(report: RetentionReport) -> None:
         print(f"- deleted archives: {len(deleted_archives)}")
 
 
+def _print_bootstrap_report(report: BootstrapConfigReport) -> None:
+    print(f"notification-hub bootstrap-config: {report['status']}")
+    print(f"- copied: {report['copied']}")
+    print(f"- sample path: {report['example_path']}")
+    print(f"- config path: {report['config_path']}")
+    if report["error"] is not None:
+        print(f"- error: {report['error']}")
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -116,6 +147,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(json.dumps(report, indent=2, sort_keys=True))
         else:
             _print_smoke_report(report)
+        return 0 if report["status"] == "ok" else 1
+
+    if args.command == "bootstrap-config":
+        report = bootstrap_policy_config(force=args.force)
+        if args.json:
+            print(json.dumps(report, indent=2, sort_keys=True))
+        else:
+            _print_bootstrap_report(report)
         return 0 if report["status"] == "ok" else 1
 
     report = run_retention(max_events=args.max_events, keep_archives=args.keep_archives)
@@ -139,3 +178,8 @@ def smoke_main(argv: Sequence[str] | None = None) -> int:
 def retention_main(argv: Sequence[str] | None = None) -> int:
     forwarded = list(argv) if argv is not None else sys.argv[1:]
     return main(["retention", *forwarded])
+
+
+def bootstrap_config_main(argv: Sequence[str] | None = None) -> int:
+    forwarded = list(argv) if argv is not None else sys.argv[1:]
+    return main(["bootstrap-config", *forwarded])

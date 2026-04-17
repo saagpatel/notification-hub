@@ -37,7 +37,18 @@ as implementation history rather than the primary current-state source.
 - [x] Add a sample/default config artifact for easier first-time customization
 - [x] Add event-log retention or rotation policy
 - [x] Add a small end-to-end smoke command for runtime validation
-- [ ] Consider project/source-specific routing rules if policy needs keep growing
+- [x] Add project/source-specific routing rules on top of the policy layer
+- [x] Add a bootstrap helper to copy the sample config into the live config path
+- [x] Keep retention manual by default and document that operator posture
+
+### Current Operator/Config Shape
+
+- Policy config supports classifier, suppression, and ordered routing rules
+- Routing rules can match by `project` and/or `source`
+- The first matching rule may force a classified level or disable push/Slack delivery
+- `notification-hub bootstrap-config` installs the sample config locally without overwriting an
+  existing config unless `--force` is used
+- Retention remains an explicit operator action, not a background job
 
 ## Phase 0: FastAPI Skeleton + JSONL Logging + Bridge File Watcher
 

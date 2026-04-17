@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import httpx
 from _pytest.capture import CaptureFixture
 
-from notification_hub.cli import doctor_main, main, retention_main, smoke_main
+from notification_hub.cli import bootstrap_config_main, doctor_main, main, retention_main, smoke_main
 from notification_hub.diagnostics import collect_doctor_report, collect_runtime_readiness
 
 
@@ -21,6 +21,7 @@ def test_collect_runtime_readiness_reports_config_and_paths() -> None:
                 path="/tmp/config.toml",
                 config_found=True,
                 load_error=None,
+                routing=MagicMock(rules=("a", "b")),
             ),
         ),
         patch("notification_hub.diagnostics._path_exists", side_effect=[True, True, False, True]),
@@ -41,6 +42,7 @@ def test_collect_runtime_readiness_reports_config_and_paths() -> None:
         "path": "/tmp/config.toml",
         "exists": True,
         "load_error": None,
+        "routing_rule_count": 2,
     }
 
 
@@ -63,6 +65,7 @@ def test_collect_doctor_report_handles_local_api_failure() -> None:
                     "path": "/tmp/config.toml",
                     "exists": False,
                     "load_error": None,
+                    "routing_rule_count": 0,
                 },
             },
         ),
@@ -85,7 +88,7 @@ def test_cli_json_output(capsys: CaptureFixture[str]) -> None:
         return_value={
             "status": "ok",
             "checks": {"local_api_healthy": True},
-            "config": {"path": "/tmp/config.toml", "load_error": None},
+            "config": {"path": "/tmp/config.toml", "load_error": None, "routing_rule_count": 0},
             "local_api": {"url": "http://127.0.0.1:9199/health/details"},
         },
     ):
@@ -136,13 +139,31 @@ def test_cli_retention_json_output(capsys: CaptureFixture[str]) -> None:
     assert '"events_before": 3' in captured.out
 
 
+def test_cli_bootstrap_json_output(capsys: CaptureFixture[str]) -> None:
+    with patch(
+        "notification_hub.cli.bootstrap_policy_config",
+        return_value={
+            "status": "ok",
+            "copied": True,
+            "config_path": "/tmp/config.toml",
+            "example_path": "/tmp/example.toml",
+            "error": None,
+        },
+    ):
+        exit_code = main(["bootstrap-config", "--json"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert '"copied": true' in captured.out
+
+
 def test_doctor_main_forwards_flags(capsys: CaptureFixture[str]) -> None:
     with patch(
         "notification_hub.cli.collect_doctor_report",
         return_value={
             "status": "ok",
             "checks": {"local_api_healthy": True},
-            "config": {"path": "/tmp/config.toml", "load_error": None},
+            "config": {"path": "/tmp/config.toml", "load_error": None, "routing_rule_count": 0},
             "local_api": {"url": "http://127.0.0.1:9199/health/details"},
         },
     ):
@@ -189,3 +210,22 @@ def test_smoke_and_retention_wrappers_forward_flags(capsys: CaptureFixture[str])
     retention_output = capsys.readouterr()
     assert retention_exit == 0
     assert '"events_before": 3' in retention_output.out
+
+
+def test_bootstrap_wrapper_forwards_flags(capsys: CaptureFixture[str]) -> None:
+    with patch(
+        "notification_hub.cli.bootstrap_policy_config",
+        return_value={
+            "status": "ok",
+            "copied": False,
+            "config_path": "/tmp/config.toml",
+            "example_path": "/tmp/example.toml",
+            "error": None,
+        },
+    ) as mock_bootstrap:
+        exit_code = bootstrap_config_main(["--json", "--force"])
+
+    output = capsys.readouterr()
+    assert exit_code == 0
+    assert '"copied": false' in output.out
+    mock_bootstrap.assert_called_once_with(force=True)

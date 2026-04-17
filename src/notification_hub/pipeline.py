@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
+from typing import cast
 
 from notification_hub.channels import send_push, send_slack, send_slack_digest, write_jsonl
 from notification_hub.classifier import classify
-from notification_hub.config import has_slack_webhook_configured
-from notification_hub.models import Event, StoredEvent
+from notification_hub.config import get_policy_config, has_slack_webhook_configured
+from notification_hub.models import Event, Level, StoredEvent
 from notification_hub.suppression import SuppressionEngine
 
 logger = logging.getLogger(__name__)
@@ -15,6 +17,34 @@ logger = logging.getLogger(__name__)
 # Module-level singleton — lives for the server's lifetime
 _suppression = SuppressionEngine()
 _slack_unconfigured_logged = False
+
+
+@dataclass(frozen=True)
+class RoutingDecision:
+    level: Level
+    allow_push: bool
+    allow_slack: bool
+
+
+def _resolve_routing(event: Event, classified_level: Level) -> RoutingDecision:
+    """Apply the first matching routing rule, if any, to the classified event."""
+    policy = get_policy_config().routing
+    for rule in policy.rules:
+        if rule.source is not None and rule.source != event.source:
+            continue
+        if rule.project is not None and rule.project != event.project:
+            continue
+
+        effective_level = (
+            classified_level if rule.force_level is None else cast(Level, rule.force_level)
+        )
+        return RoutingDecision(
+            level=effective_level,
+            allow_push=not rule.disable_push,
+            allow_slack=not rule.disable_slack,
+        )
+
+    return RoutingDecision(level=classified_level, allow_push=True, allow_slack=True)
 
 
 def get_suppression_engine() -> SuppressionEngine:
@@ -117,9 +147,10 @@ def process_event(event: Event) -> StoredEvent:
     - Rate limit: max 5 push/hr, max 20 Slack/hr, overflow batched into digest
     """
     classified_level = classify(event)
+    routing = _resolve_routing(event, classified_level)
     stored = StoredEvent(
         **event.model_dump(),
-        classified_level=classified_level,
+        classified_level=routing.level,
     )
 
     # Always log to JSONL regardless of suppression
@@ -129,7 +160,7 @@ def process_event(event: Event) -> StoredEvent:
         stored.event_id,
         stored.title,
         stored.level,
-        classified_level,
+        routing.level,
     )
 
     # Check for morning delivery of queued events
@@ -141,17 +172,19 @@ def process_event(event: Event) -> StoredEvent:
         return stored
 
     # Route based on classified level
-    if classified_level == "urgent":
+    if routing.level == "urgent":
         # Push: respect quiet hours
-        if _suppression.is_quiet_hours():
+        if routing.allow_push and _suppression.is_quiet_hours():
             _suppression.queue_for_morning(stored)
-        else:
+        elif routing.allow_push:
             _deliver_push(stored)
         # Slack: always (not affected by quiet hours)
-        _deliver_slack(stored)
+        if routing.allow_slack:
+            _deliver_slack(stored)
 
-    elif classified_level == "normal":
-        _deliver_slack(stored)
+    elif routing.level == "normal":
+        if routing.allow_slack:
+            _deliver_slack(stored)
 
     # info: JSONL only (already logged above)
 

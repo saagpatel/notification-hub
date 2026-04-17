@@ -22,3 +22,12 @@ max_push_per_hour = 5
 max_slack_per_hour = 20
 max_overflow_buffer = 500
 max_quiet_queue = 200
+
+[[routing.rules]]
+project = "notification-hub"
+force_level = "normal"
+disable_push = true
+
+[[routing.rules]]
+source = "bridge_watcher"
+disable_slack = true

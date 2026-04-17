@@ -20,6 +20,7 @@ EVENTS_DIR = Path.home() / ".local" / "share" / "notification-hub"
 EVENTS_LOG = EVENTS_DIR / "events.jsonl"
 APP_CONFIG_DIR = Path.home() / ".config" / "notification-hub"
 POLICY_CONFIG = APP_CONFIG_DIR / "config.toml"
+EXAMPLE_POLICY_CONFIG = Path(__file__).resolve().parents[2] / "config" / "policy.example.toml"
 LAUNCH_AGENT_PLIST = Path.home() / "Library" / "LaunchAgents" / "com.saagar.notification-hub.plist"
 
 BRIDGE_FILE = Path.home() / ".claude" / "projects" / "-Users-d" / "memory" / "claude_ai_context.md"
@@ -88,6 +89,8 @@ DEFAULT_MAX_PUSH_PER_HOUR = 5
 DEFAULT_MAX_SLACK_PER_HOUR = 20
 DEFAULT_MAX_OVERFLOW_BUFFER = 500
 DEFAULT_MAX_QUIET_QUEUE = 200
+VALID_LEVELS = frozenset(("urgent", "normal", "info"))
+VALID_SOURCES = frozenset(("codex", "cc", "claude_ai", "bridge_watcher"))
 
 
 @dataclass(frozen=True)
@@ -109,12 +112,27 @@ class SuppressionPolicy:
 
 
 @dataclass(frozen=True)
+class RoutingRule:
+    source: str | None = None
+    project: str | None = None
+    force_level: str | None = None
+    disable_push: bool = False
+    disable_slack: bool = False
+
+
+@dataclass(frozen=True)
+class RoutingPolicy:
+    rules: tuple[RoutingRule, ...] = ()
+
+
+@dataclass(frozen=True)
 class PolicyConfig:
     path: Path = POLICY_CONFIG
     config_found: bool = False
     load_error: str | None = None
     classification: ClassificationPolicy = field(default_factory=ClassificationPolicy)
     suppression: SuppressionPolicy = field(default_factory=SuppressionPolicy)
+    routing: RoutingPolicy = field(default_factory=RoutingPolicy)
 
 
 def _is_cached_webhook_url(value: str | None | object) -> TypeGuard[str | None]:
@@ -162,6 +180,55 @@ def _as_int(
     return candidate
 
 
+def _as_bool(value: object, fallback: bool = False) -> bool:
+    """Coerce config booleans safely."""
+    if isinstance(value, bool):
+        return value
+    return fallback
+
+
+def _as_optional_string(value: object) -> str | None:
+    """Return a stripped string or None."""
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped if stripped else None
+
+
+def _as_optional_choice(value: object, valid: frozenset[str]) -> str | None:
+    """Return a lowercase string when it matches the allowed choices."""
+    candidate = _as_optional_string(value)
+    if candidate is None:
+        return None
+    lowered = candidate.lower()
+    return lowered if lowered in valid else None
+
+
+def _parse_routing_rules(value: object) -> tuple[RoutingRule, ...]:
+    """Parse routing rules from `[[routing.rules]]` TOML input."""
+    if not isinstance(value, list):
+        return ()
+
+    rules: list[RoutingRule] = []
+    for item in cast(list[object], value):
+        raw_rule = _as_mapping(item)
+        source = _as_optional_choice(raw_rule.get("source"), VALID_SOURCES)
+        project = _as_optional_string(raw_rule.get("project"))
+        if source is None and project is None:
+            continue
+
+        rules.append(
+            RoutingRule(
+                source=source,
+                project=project,
+                force_level=_as_optional_choice(raw_rule.get("force_level"), VALID_LEVELS),
+                disable_push=_as_bool(raw_rule.get("disable_push")),
+                disable_slack=_as_bool(raw_rule.get("disable_slack")),
+            )
+        )
+    return tuple(rules)
+
+
 def _build_policy_config(
     raw_config: object,
     *,
@@ -173,6 +240,7 @@ def _build_policy_config(
     root = _as_mapping(raw_config)
     classifier = _as_mapping(root.get("classifier"))
     suppression = _as_mapping(root.get("suppression"))
+    routing = _as_mapping(root.get("routing"))
 
     return PolicyConfig(
         path=path,
@@ -231,6 +299,7 @@ def _build_policy_config(
                 minimum=1,
             ),
         ),
+        routing=RoutingPolicy(rules=_parse_routing_rules(routing.get("rules"))),
     )
 
 
