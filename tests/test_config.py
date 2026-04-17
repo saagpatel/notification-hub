@@ -3,17 +3,26 @@
 from __future__ import annotations
 
 import subprocess
+from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 import pytest
 
-from notification_hub.config import get_slack_webhook_url, clear_webhook_cache
+import notification_hub.config as config_mod
+from notification_hub.config import (
+    ClassificationPolicy,
+    clear_policy_cache,
+    clear_webhook_cache,
+    get_policy_config,
+    get_slack_webhook_url,
+)
 
 
 @pytest.fixture(autouse=True)
 def fresh_cache() -> None:
     """Clear webhook cache between tests."""
     clear_webhook_cache()
+    clear_policy_cache()
 
 
 class TestKeychainWebhook:
@@ -112,3 +121,84 @@ class TestKeychainWebhook:
         assert "-s" in cmd
         assert "slack-webhook" in cmd
         assert "-w" in cmd
+
+
+class TestPolicyConfig:
+    def test_defaults_when_config_missing(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(config_mod, "POLICY_CONFIG", tmp_path / "missing.toml")
+
+        policy = get_policy_config()
+
+        assert policy.config_found is False
+        assert policy.load_error is None
+        assert "verification fail" in policy.classification.urgent_keywords
+        assert policy.suppression.max_slack_per_hour == 20
+
+    def test_loads_classifier_and_suppression_overrides(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        config_path = tmp_path / "config.toml"
+        config_path.write_text(
+            """
+[classifier]
+urgent_keywords = ["database down"]
+normal_keywords = ["ship it"]
+info_keywords = ["routine ping"]
+
+[suppression]
+quiet_start_hour = 22
+quiet_end_hour = 6
+dedup_window_minutes = 45
+max_push_per_hour = 2
+max_slack_per_hour = 7
+max_overflow_buffer = 42
+max_quiet_queue = 12
+""".strip(),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(config_mod, "POLICY_CONFIG", config_path)
+
+        policy = get_policy_config()
+
+        assert policy.config_found is True
+        assert policy.load_error is None
+        assert policy.classification == ClassificationPolicy(
+            urgent_keywords=("database down",),
+            normal_keywords=("ship it",),
+            info_keywords=("routine ping",),
+        )
+        assert policy.suppression.quiet_start_hour == 22
+        assert policy.suppression.max_slack_per_hour == 7
+
+    def test_invalid_toml_falls_back_with_error(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        config_path = tmp_path / "config.toml"
+        config_path.write_text("[classifier\nbroken = true\n", encoding="utf-8")
+        monkeypatch.setattr(config_mod, "POLICY_CONFIG", config_path)
+
+        policy = get_policy_config()
+
+        assert policy.config_found is True
+        assert policy.load_error is not None
+        assert "session complete" in policy.classification.normal_keywords
+
+    def test_cache_reload_when_config_changes(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        config_path = tmp_path / "config.toml"
+        config_path.write_text("[classifier]\nurgent_keywords = [\"alpha\"]\n", encoding="utf-8")
+        monkeypatch.setattr(config_mod, "POLICY_CONFIG", config_path)
+
+        first = get_policy_config()
+        config_path.write_text("[classifier]\nurgent_keywords = [\"beta\"]\n", encoding="utf-8")
+        second = get_policy_config()
+
+        assert first.classification.urgent_keywords == ("alpha",)
+        assert second.classification.urgent_keywords == ("beta",)

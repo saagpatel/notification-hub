@@ -38,6 +38,45 @@ uv sync --extra dev
 uv run uvicorn notification_hub.server:app --host 127.0.0.1 --port 9199 --reload
 ```
 
+## Operator Commands
+
+```bash
+uv run notification-hub-doctor
+uv run notification-hub-doctor --json
+```
+
+The doctor command checks the local API, LaunchAgent presence, bridge file path, push notifier,
+Slack Keychain setup, and policy-config load status.
+
+## Policy Config
+
+Optional runtime policy overrides live at:
+
+```text
+~/.config/notification-hub/config.toml
+```
+
+Supported sections today:
+
+```toml
+[classifier]
+urgent_keywords = ["database down", "approval needed"]
+normal_keywords = ["session complete", "ship it"]
+info_keywords = ["routine ping"]
+
+[suppression]
+quiet_start_hour = 23
+quiet_end_hour = 7
+dedup_window_minutes = 30
+max_push_per_hour = 5
+max_slack_per_hour = 20
+max_overflow_buffer = 500
+max_quiet_queue = 200
+```
+
+If the file is missing or invalid, notification-hub falls back to built-in defaults and reports the
+config status through the doctor command and `GET /health/details`.
+
 ## Verification
 
 ```bash
@@ -56,6 +95,7 @@ Runtime diagnostics:
 ```bash
 curl http://127.0.0.1:9199/health
 curl http://127.0.0.1:9199/health/details
+uv run notification-hub-doctor
 ```
 
 ## Runtime Notes
@@ -69,7 +109,8 @@ curl http://127.0.0.1:9199/health/details
   about a minute, so a manual restart is usually not required.
 - LaunchAgent support lives at `~/Library/LaunchAgents/com.saagar.notification-hub.plist`.
 - `GET /health/details` reports whether push delivery is available, whether Slack is configured,
-  and whether key local files exist, without exposing secrets.
+  whether key local files exist, whether a policy config file was loaded, and current suppression
+  queue counters, without exposing secrets.
 
 ## Docs
 

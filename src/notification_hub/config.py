@@ -1,12 +1,15 @@
-"""Configuration constants and paths."""
+"""Configuration constants, paths, and loadable policy settings."""
 
 from __future__ import annotations
 
 import logging
 import subprocess
 import time
+import tomllib
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TypeGuard
+from typing import TypeGuard, cast
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +18,9 @@ PORT = 9199
 
 EVENTS_DIR = Path.home() / ".local" / "share" / "notification-hub"
 EVENTS_LOG = EVENTS_DIR / "events.jsonl"
+APP_CONFIG_DIR = Path.home() / ".config" / "notification-hub"
+POLICY_CONFIG = APP_CONFIG_DIR / "config.toml"
+LAUNCH_AGENT_PLIST = Path.home() / "Library" / "LaunchAgents" / "com.saagar.notification-hub.plist"
 
 BRIDGE_FILE = Path.home() / ".claude" / "projects" / "-Users-d" / "memory" / "claude_ai_context.md"
 
@@ -32,11 +38,243 @@ MISSING_WEBHOOK_RECHECK_SECONDS = 60.0
 _UNSET = object()
 _cached_webhook_url: str | None | object = _UNSET
 _cached_webhook_checked_at: float | None = None
+_cached_policy: PolicyConfig | None = None
+_cached_policy_mtime_ns: int | None = None
+
+# Default classifier policy
+DEFAULT_URGENT_KEYWORDS: tuple[str, ...] = (
+    "verification fail",
+    "test regression",
+    "eval degradation",
+    "approval needed",
+    "approval required",
+    "can_auto_archive=false",
+    "security finding",
+    "security audit",
+    "needs approval",
+    "action required",
+    "runtime issue",
+)
+
+DEFAULT_NORMAL_KEYWORDS: tuple[str, ...] = (
+    "session complete",
+    "automation report",
+    "milestone",
+    "bridge sync",
+    "[shipped]",
+    "phase complete",
+    "all phases complete",
+    "v1.0 done",
+    "deployed",
+    "released",
+    "submitted to app store",
+    "published to github",
+    "merged to main",
+    "production deploy",
+)
+
+DEFAULT_INFO_KEYWORDS: tuple[str, ...] = (
+    "can_auto_archive=true",
+    "bridge file read",
+    "status update",
+    "routine check",
+)
+
+# Default suppression policy
+DEFAULT_QUIET_START_HOUR = 23
+DEFAULT_QUIET_END_HOUR = 7
+DEFAULT_DEDUP_WINDOW_MINUTES = 30
+DEFAULT_MAX_PUSH_PER_HOUR = 5
+DEFAULT_MAX_SLACK_PER_HOUR = 20
+DEFAULT_MAX_OVERFLOW_BUFFER = 500
+DEFAULT_MAX_QUIET_QUEUE = 200
+
+
+@dataclass(frozen=True)
+class ClassificationPolicy:
+    urgent_keywords: tuple[str, ...] = DEFAULT_URGENT_KEYWORDS
+    normal_keywords: tuple[str, ...] = DEFAULT_NORMAL_KEYWORDS
+    info_keywords: tuple[str, ...] = DEFAULT_INFO_KEYWORDS
+
+
+@dataclass(frozen=True)
+class SuppressionPolicy:
+    quiet_start_hour: int = DEFAULT_QUIET_START_HOUR
+    quiet_end_hour: int = DEFAULT_QUIET_END_HOUR
+    dedup_window_minutes: int = DEFAULT_DEDUP_WINDOW_MINUTES
+    max_push_per_hour: int = DEFAULT_MAX_PUSH_PER_HOUR
+    max_slack_per_hour: int = DEFAULT_MAX_SLACK_PER_HOUR
+    max_overflow_buffer: int = DEFAULT_MAX_OVERFLOW_BUFFER
+    max_quiet_queue: int = DEFAULT_MAX_QUIET_QUEUE
+
+
+@dataclass(frozen=True)
+class PolicyConfig:
+    path: Path = POLICY_CONFIG
+    config_found: bool = False
+    load_error: str | None = None
+    classification: ClassificationPolicy = field(default_factory=ClassificationPolicy)
+    suppression: SuppressionPolicy = field(default_factory=SuppressionPolicy)
 
 
 def _is_cached_webhook_url(value: str | None | object) -> TypeGuard[str | None]:
     """Narrow the cache sentinel away for static type checkers."""
     return isinstance(value, str) or value is None
+
+
+def _as_mapping(value: object) -> Mapping[str, object]:
+    """Return a mapping view when possible, otherwise an empty mapping."""
+    if isinstance(value, Mapping):
+        return cast(Mapping[str, object], value)
+    return {}
+
+
+def _as_string_tuple(value: object, fallback: tuple[str, ...]) -> tuple[str, ...]:
+    """Coerce a config list of strings into an immutable tuple."""
+    if not isinstance(value, list):
+        return fallback
+
+    items: list[str] = []
+    for item in cast(list[object], value):
+        if isinstance(item, str):
+            stripped = item.strip().lower()
+            if stripped:
+                items.append(stripped)
+    return tuple(items) if items else fallback
+
+
+def _as_int(
+    value: object,
+    fallback: int,
+    *,
+    minimum: int = 0,
+    maximum: int | None = None,
+) -> int:
+    """Coerce a config value to a bounded int, falling back on invalid input."""
+    if not isinstance(value, int):
+        return fallback
+
+    candidate = value
+    if candidate < minimum:
+        return fallback
+    if maximum is not None and candidate > maximum:
+        return fallback
+    return candidate
+
+
+def _build_policy_config(
+    raw_config: object,
+    *,
+    path: Path,
+    config_found: bool,
+    load_error: str | None = None,
+) -> PolicyConfig:
+    """Build a validated policy object from TOML-like input."""
+    root = _as_mapping(raw_config)
+    classifier = _as_mapping(root.get("classifier"))
+    suppression = _as_mapping(root.get("suppression"))
+
+    return PolicyConfig(
+        path=path,
+        config_found=config_found,
+        load_error=load_error,
+        classification=ClassificationPolicy(
+            urgent_keywords=_as_string_tuple(
+                classifier.get("urgent_keywords"),
+                DEFAULT_URGENT_KEYWORDS,
+            ),
+            normal_keywords=_as_string_tuple(
+                classifier.get("normal_keywords"),
+                DEFAULT_NORMAL_KEYWORDS,
+            ),
+            info_keywords=_as_string_tuple(
+                classifier.get("info_keywords"),
+                DEFAULT_INFO_KEYWORDS,
+            ),
+        ),
+        suppression=SuppressionPolicy(
+            quiet_start_hour=_as_int(
+                suppression.get("quiet_start_hour"),
+                DEFAULT_QUIET_START_HOUR,
+                minimum=0,
+                maximum=23,
+            ),
+            quiet_end_hour=_as_int(
+                suppression.get("quiet_end_hour"),
+                DEFAULT_QUIET_END_HOUR,
+                minimum=0,
+                maximum=23,
+            ),
+            dedup_window_minutes=_as_int(
+                suppression.get("dedup_window_minutes"),
+                DEFAULT_DEDUP_WINDOW_MINUTES,
+                minimum=1,
+            ),
+            max_push_per_hour=_as_int(
+                suppression.get("max_push_per_hour"),
+                DEFAULT_MAX_PUSH_PER_HOUR,
+                minimum=1,
+            ),
+            max_slack_per_hour=_as_int(
+                suppression.get("max_slack_per_hour"),
+                DEFAULT_MAX_SLACK_PER_HOUR,
+                minimum=1,
+            ),
+            max_overflow_buffer=_as_int(
+                suppression.get("max_overflow_buffer"),
+                DEFAULT_MAX_OVERFLOW_BUFFER,
+                minimum=1,
+            ),
+            max_quiet_queue=_as_int(
+                suppression.get("max_quiet_queue"),
+                DEFAULT_MAX_QUIET_QUEUE,
+                minimum=1,
+            ),
+        ),
+    )
+
+
+def get_policy_config() -> PolicyConfig:
+    """Load the optional policy config file, falling back to safe built-in defaults."""
+    global _cached_policy, _cached_policy_mtime_ns
+
+    try:
+        stat = POLICY_CONFIG.stat()
+    except FileNotFoundError:
+        if _cached_policy is None or _cached_policy.config_found:
+            _cached_policy = PolicyConfig(path=POLICY_CONFIG, config_found=False, load_error=None)
+        _cached_policy_mtime_ns = None
+        return _cached_policy
+
+    if _cached_policy is not None and _cached_policy_mtime_ns == stat.st_mtime_ns:
+        return _cached_policy
+
+    try:
+        with POLICY_CONFIG.open("rb") as handle:
+            raw_config = tomllib.load(handle)
+        _cached_policy = _build_policy_config(
+            raw_config,
+            path=POLICY_CONFIG,
+            config_found=True,
+            load_error=None,
+        )
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        logger.warning("Failed to load policy config %s: %s", POLICY_CONFIG, exc)
+        _cached_policy = PolicyConfig(
+            path=POLICY_CONFIG,
+            config_found=True,
+            load_error=str(exc),
+        )
+
+    _cached_policy_mtime_ns = stat.st_mtime_ns
+    return _cached_policy
+
+
+def clear_policy_cache() -> None:
+    """Clear cached policy config. Used for testing."""
+    global _cached_policy, _cached_policy_mtime_ns
+    _cached_policy = None
+    _cached_policy_mtime_ns = None
 
 
 def get_slack_webhook_url() -> str | None:

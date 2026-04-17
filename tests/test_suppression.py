@@ -5,6 +5,9 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
+import pytest
+
+from notification_hub.config import PolicyConfig, SuppressionPolicy
 from notification_hub.models import Level, StoredEvent
 from notification_hub.suppression import SuppressionEngine
 
@@ -203,3 +206,31 @@ class TestOverflowBuffer:
         for i in range(5):
             engine.add_to_overflow(_stored(title=f"Event {i}"))
         assert len(engine.drain_overflow()) == 5
+
+
+def test_uses_configured_quiet_hours_and_limits(monkeypatch: pytest.MonkeyPatch) -> None:
+    policy = PolicyConfig(
+        suppression=SuppressionPolicy(
+            quiet_start_hour=21,
+            quiet_end_hour=6,
+            dedup_window_minutes=10,
+            max_push_per_hour=1,
+            max_slack_per_hour=2,
+            max_overflow_buffer=3,
+            max_quiet_queue=2,
+        )
+    )
+    monkeypatch.setattr("notification_hub.suppression.get_policy_config", lambda: policy)
+    engine = SuppressionEngine()
+
+    nine_pm_pacific = datetime(2026, 4, 16, 4, 0, tzinfo=timezone.utc)
+    assert engine.is_quiet_hours(nine_pm_pacific) is True
+
+    assert engine.check_push_rate() is True
+    engine.record_push()
+    assert engine.check_push_rate() is False
+
+    engine.queue_for_morning(_stored(title="first"))
+    engine.queue_for_morning(_stored(title="second"))
+    engine.queue_for_morning(_stored(title="dropped"))
+    assert len(engine.drain_quiet_queue()) == 2

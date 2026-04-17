@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import pytest
+
+from notification_hub.config import ClassificationPolicy, PolicyConfig
 from notification_hub.classifier import classify
 from notification_hub.models import Event, Level
 
@@ -95,3 +98,18 @@ class TestFallback:
     def test_normal_keyword_in_title_only(self) -> None:
         event = _event(title="Session complete", body="No keywords here")
         assert classify(event) == "normal"
+
+
+def test_uses_policy_config_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
+    policy = PolicyConfig(
+        classification=ClassificationPolicy(
+            urgent_keywords=("database down",),
+            normal_keywords=("ship it",),
+            info_keywords=("routine ping",),
+        )
+    )
+    monkeypatch.setattr("notification_hub.classifier.get_policy_config", lambda: policy)
+
+    assert classify(_event(body="Database down in production")) == "urgent"
+    assert classify(_event(body="Ship it before lunch")) == "normal"
+    assert classify(_event(body="Routine ping from watchdog")) == "info"

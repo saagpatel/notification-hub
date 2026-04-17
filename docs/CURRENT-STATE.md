@@ -10,6 +10,8 @@ Last updated: 2026-04-17
 - GitHub Actions CI is configured and passing on `main`.
 - The daemon is running locally via LaunchAgent on `127.0.0.1:9199`.
 - Slack delivery is configured through macOS Keychain and is working.
+- Policy-based runtime overrides are now supported through an optional config file.
+- A local doctor command is available for operator checks.
 - The earlier runtime-hardening and repo-cleanup pass is complete.
 
 ## What Was Cleaned Up
@@ -20,6 +22,8 @@ Last updated: 2026-04-17
 - Added GitHub Actions CI for `pytest`, `ruff`, and `pyright`.
 - Committed `uv.lock` so local installs and CI resolve the same dependency set.
 - Restored a normal git baseline on `main` and merged the CI/lockfile work back into `main`.
+- Added a loadable policy config for classifier keywords and suppression limits.
+- Added `notification-hub-doctor` and expanded runtime diagnostics.
 
 ## Verified Baseline
 
@@ -31,14 +35,16 @@ uv run pytest
 uv run ruff check
 uv run pyright
 curl http://127.0.0.1:9199/health/details
+uv run notification-hub-doctor
 ```
 
 Expected current outcome:
 
-- `pytest`: 136 passed
+- `pytest`: 145 passed
 - `ruff`: clean
 - `pyright`: 0 errors
 - `/health/details`: `status: ok`, watcher active, push available, Slack configured
+- `notification-hub-doctor`: `status: ok`
 - GitHub Actions `CI` workflow: passing on `main`
 
 ## Runtime Notes
@@ -47,6 +53,7 @@ Expected current outcome:
 - Event log: `~/.local/share/notification-hub/events.jsonl`
 - Bridge file watched by the daemon: `~/.claude/projects/-Users-d/memory/claude_ai_context.md`
 - Slack webhook storage: macOS Keychain, service `slack-webhook`, account `notification-hub`
+- Optional policy config: `~/.config/notification-hub/config.toml`
 
 ## Git Notes
 
@@ -59,7 +66,7 @@ It is not part of normal day-to-day work.
 ## Safest Next Step
 
 Start future work from `main`, keep using the existing verification commands, and treat this cleanup pass as complete.
-The next work here should be product or behavior changes, not more repo-baseline repair.
+The next work here should build on the new doctor/config surfaces rather than reopening repo-baseline repair.
 
 ## Optional Follow-Up
 

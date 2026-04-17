@@ -2,48 +2,18 @@
 
 from __future__ import annotations
 
+from notification_hub.config import (
+    DEFAULT_INFO_KEYWORDS,
+    DEFAULT_NORMAL_KEYWORDS,
+    DEFAULT_URGENT_KEYWORDS,
+    get_policy_config,
+)
 from notification_hub.models import Event, Level
 
-# Keywords that escalate to urgent — checked against title + body (lowercased)
-URGENT_KEYWORDS: tuple[str, ...] = (
-    "verification fail",
-    "test regression",
-    "eval degradation",
-    "approval needed",
-    "approval required",
-    "can_auto_archive=false",
-    "security finding",
-    "security audit",
-    "needs approval",
-    "action required",
-    "runtime issue",
-)
-
-# Keywords that classify as normal
-NORMAL_KEYWORDS: tuple[str, ...] = (
-    "session complete",
-    "automation report",
-    "milestone",
-    "bridge sync",
-    "[shipped]",
-    "phase complete",
-    "all phases complete",
-    "v1.0 done",
-    "deployed",
-    "released",
-    "submitted to app store",
-    "published to github",
-    "merged to main",
-    "production deploy",
-)
-
-# Keywords that force info level (override normal if both match)
-INFO_KEYWORDS: tuple[str, ...] = (
-    "can_auto_archive=true",
-    "bridge file read",
-    "status update",
-    "routine check",
-)
+# Public defaults preserved for tests and diagnostics.
+URGENT_KEYWORDS: tuple[str, ...] = DEFAULT_URGENT_KEYWORDS
+NORMAL_KEYWORDS: tuple[str, ...] = DEFAULT_NORMAL_KEYWORDS
+INFO_KEYWORDS: tuple[str, ...] = DEFAULT_INFO_KEYWORDS
 
 
 def classify(event: Event) -> Level:
@@ -53,14 +23,15 @@ def classify(event: Event) -> Level:
     but keywords can escalate or demote).
     """
     text = f"{event.title} {event.body}".lower()
+    policy = get_policy_config().classification
 
-    if any(kw in text for kw in URGENT_KEYWORDS):
+    if any(kw in text for kw in policy.urgent_keywords):
         return "urgent"
 
-    if any(kw in text for kw in INFO_KEYWORDS):
+    if any(kw in text for kw in policy.info_keywords):
         return "info"
 
-    if any(kw in text for kw in NORMAL_KEYWORDS):
+    if any(kw in text for kw in policy.normal_keywords):
         return "normal"
 
     # Fall back to the level provided by the source

@@ -3,6 +3,7 @@
 ## Current Baseline
 
 All roadmap phases listed below are complete, and the post-build cleanup/hardening pass is also complete.
+Phase 4 operator/config work has now started with a small, shipped first slice.
 
 Current repo/runtime status:
 
@@ -10,9 +11,33 @@ Current repo/runtime status:
 - GitHub Actions CI now runs `pytest`, `ruff`, and `pyright`
 - `uv.lock` is committed and used as part of the verification baseline
 - LaunchAgent-backed local runtime is healthy, with Slack delivery configured through Keychain
+- An optional policy config can override classifier and suppression defaults
+- A doctor command is available for local operator checks
 
 For the best resume checkpoint, use `docs/CURRENT-STATE.md` first and treat the rest of this file
 as implementation history rather than the primary current-state source.
+
+---
+
+## Phase 4: Operator Hardening + Configurable Policy
+
+**Goal:** Make the daemon easier to trust and easier to tune without changing code for every policy tweak.
+
+### Initial Slice Completed
+
+- [x] Add optional TOML policy config at `~/.config/notification-hub/config.toml`
+- [x] Externalize classifier keyword lists into the loadable policy layer
+- [x] Externalize suppression settings for quiet hours, dedup window, and rate limits
+- [x] Add a `notification-hub-doctor` operator command
+- [x] Expand `GET /health/details` with config and suppression diagnostics
+- [x] Add tests for policy config loading, diagnostics, and doctor output
+
+### Next Likely Slice
+
+- [ ] Add a sample/default config artifact for easier first-time customization
+- [ ] Add event-log retention or rotation policy
+- [ ] Add a small end-to-end smoke command for runtime validation
+- [ ] Consider project/source-specific routing rules if policy needs keep growing
 
 ## Phase 0: FastAPI Skeleton + JSONL Logging + Bridge File Watcher
 
