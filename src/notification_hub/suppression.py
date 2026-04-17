@@ -6,18 +6,12 @@ import logging
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
+from notification_hub.config import get_policy_config
 from notification_hub.models import Level, StoredEvent
 
 logger = logging.getLogger(__name__)
 
 PACIFIC = ZoneInfo("America/Los_Angeles")
-QUIET_START_HOUR = 23  # 11 PM
-QUIET_END_HOUR = 7  # 7 AM
-DEDUP_WINDOW = timedelta(minutes=30)
-MAX_PUSH_PER_HOUR = 5
-MAX_SLACK_PER_HOUR = 20
-MAX_OVERFLOW_BUFFER = 500
-MAX_QUIET_QUEUE = 200
 
 
 class SuppressionEngine:
@@ -36,11 +30,12 @@ class SuppressionEngine:
 
     def is_duplicate(self, event: StoredEvent) -> bool:
         """Check if this (project, classified_level) combo was seen within the dedup window."""
+        policy = get_policy_config().suppression
         effective_level = event.classified_level or event.level
         key = (event.project, effective_level)
         now = datetime.now(timezone.utc)
         last_seen = self._dedup_log.get(key)
-        if last_seen and (now - last_seen) < DEDUP_WINDOW:
+        if last_seen and (now - last_seen) < timedelta(minutes=policy.dedup_window_minutes):
             logger.debug("Dedup suppressed: %s/%s", event.project, effective_level)
             return True
         self._dedup_log[key] = now
@@ -48,15 +43,19 @@ class SuppressionEngine:
 
     def is_quiet_hours(self, at: datetime | None = None) -> bool:
         """Check if current time is in quiet hours (11 PM - 7 AM Pacific)."""
+        policy = get_policy_config().suppression
         now_pacific = (at or datetime.now(timezone.utc)).astimezone(PACIFIC)
         hour = now_pacific.hour
-        return hour >= QUIET_START_HOUR or hour < QUIET_END_HOUR
+        return hour >= policy.quiet_start_hour or hour < policy.quiet_end_hour
 
     def queue_for_morning(self, event: StoredEvent) -> None:
         """Queue an event for delivery when quiet hours end."""
-        if len(self._quiet_queue) >= MAX_QUIET_QUEUE:
+        policy = get_policy_config().suppression
+        if len(self._quiet_queue) >= policy.max_quiet_queue:
             logger.warning(
-                "Quiet queue full (%d), dropping event %s", MAX_QUIET_QUEUE, event.event_id
+                "Quiet queue full (%d), dropping event %s",
+                policy.max_quiet_queue,
+                event.event_id,
             )
             return
         self._quiet_queue.append(event)
@@ -75,9 +74,10 @@ class SuppressionEngine:
 
     def check_push_rate(self) -> bool:
         """Return True if a push notification is allowed under rate limit."""
+        policy = get_policy_config().suppression
         self._push_times = self._prune_old(self._push_times, timedelta(hours=1))
-        if len(self._push_times) >= MAX_PUSH_PER_HOUR:
-            logger.debug("Push rate limit reached (%d/hr)", MAX_PUSH_PER_HOUR)
+        if len(self._push_times) >= policy.max_push_per_hour:
+            logger.debug("Push rate limit reached (%d/hr)", policy.max_push_per_hour)
             return False
         return True
 
@@ -91,9 +91,10 @@ class SuppressionEngine:
 
     def check_slack_rate(self) -> bool:
         """Return True if a Slack message is allowed under rate limit."""
+        policy = get_policy_config().suppression
         self._slack_times = self._prune_old(self._slack_times, timedelta(hours=1))
-        if len(self._slack_times) >= MAX_SLACK_PER_HOUR:
-            logger.debug("Slack rate limit reached (%d/hr)", MAX_SLACK_PER_HOUR)
+        if len(self._slack_times) >= policy.max_slack_per_hour:
+            logger.debug("Slack rate limit reached (%d/hr)", policy.max_slack_per_hour)
             return False
         return True
 
@@ -112,9 +113,12 @@ class SuppressionEngine:
 
     def add_to_overflow(self, event: StoredEvent) -> None:
         """Add an event to the overflow buffer for later digest delivery."""
-        if len(self._overflow_buffer) >= MAX_OVERFLOW_BUFFER:
+        policy = get_policy_config().suppression
+        if len(self._overflow_buffer) >= policy.max_overflow_buffer:
             logger.warning(
-                "Overflow buffer full (%d), dropping event %s", MAX_OVERFLOW_BUFFER, event.event_id
+                "Overflow buffer full (%d), dropping event %s",
+                policy.max_overflow_buffer,
+                event.event_id,
             )
             return
         self._overflow_buffer.append(event)
@@ -133,3 +137,15 @@ class SuppressionEngine:
     def has_overflow(self) -> bool:
         """Check if there are events waiting in the overflow buffer."""
         return len(self._overflow_buffer) > 0
+
+    def snapshot(self) -> dict[str, int]:
+        """Return queue and recent-delivery counters for diagnostics."""
+        self._push_times = self._prune_old(self._push_times, timedelta(hours=1))
+        self._slack_times = self._prune_old(self._slack_times, timedelta(hours=1))
+        return {
+            "dedup_entries": len(self._dedup_log),
+            "queued_for_morning": len(self._quiet_queue),
+            "overflow_buffered": len(self._overflow_buffer),
+            "pushes_last_hour": len(self._push_times),
+            "slacks_last_hour": len(self._slack_times),
+        }

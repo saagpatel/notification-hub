@@ -47,10 +47,35 @@ async def test_health_endpoint(client: AsyncClient) -> None:
 
 async def test_health_details_endpoint(client: AsyncClient) -> None:
     with (
-        patch("notification_hub.server.has_push_notifier", return_value=True),
-        patch("notification_hub.server.has_slack_webhook_configured", return_value=False),
-        patch("notification_hub.server._path_exists", side_effect=[True, False]),
+        patch(
+            "notification_hub.server.collect_runtime_readiness",
+            return_value={
+                "delivery": {
+                    "push_notifier_available": True,
+                    "slack_webhook_configured": False,
+                },
+                "paths": {
+                    "bridge_file_exists": True,
+                    "events_dir_exists": True,
+                    "events_log_exists": False,
+                    "launch_agent_exists": True,
+                },
+                "config": {
+                    "path": "/tmp/config.toml",
+                    "exists": False,
+                    "load_error": None,
+                },
+            },
+        ),
+        patch("notification_hub.server.get_suppression_engine") as mock_engine,
     ):
+        mock_engine.return_value.snapshot.return_value = {
+            "dedup_entries": 0,
+            "queued_for_morning": 0,
+            "overflow_buffered": 0,
+            "pushes_last_hour": 0,
+            "slacks_last_hour": 0,
+        }
         resp = await client.get("/health/details")
     assert resp.status_code == 200
     data = resp.json()
@@ -61,7 +86,21 @@ async def test_health_details_endpoint(client: AsyncClient) -> None:
     }
     assert data["paths"] == {
         "bridge_file_exists": True,
+        "events_dir_exists": True,
         "events_log_exists": False,
+        "launch_agent_exists": True,
+    }
+    assert data["config"] == {
+        "path": "/tmp/config.toml",
+        "exists": False,
+        "load_error": None,
+    }
+    assert data["suppression"] == {
+        "dedup_entries": 0,
+        "queued_for_morning": 0,
+        "overflow_buffered": 0,
+        "pushes_last_hour": 0,
+        "slacks_last_hour": 0,
     }
 
 

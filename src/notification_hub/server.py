@@ -9,11 +9,10 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from notification_hub.channels import has_push_notifier
 from notification_hub.config import BRIDGE_FILE
-from notification_hub.config import EVENTS_LOG, has_slack_webhook_configured
+from notification_hub.diagnostics import collect_runtime_readiness
 from notification_hub.models import Event, EventResponse
-from notification_hub.pipeline import process_event
+from notification_hub.pipeline import get_suppression_engine, process_event
 from notification_hub.watcher import ObserverHandle, start_watcher
 
 logger = logging.getLogger(__name__)
@@ -21,11 +20,6 @@ logger = logging.getLogger(__name__)
 _start_time: float = 0.0
 _event_count: int = 0
 _observer: ObserverHandle | None = None
-
-
-def _path_exists(path: object) -> bool:
-    """Wrapper to keep path existence checks easy to patch in tests."""
-    return bool(getattr(path, "exists")())
 
 
 def _handle_bridge_event(event: Event) -> None:
@@ -89,16 +83,15 @@ async def health() -> dict[str, object]:
     }
 
 
+async def _collect_health_details() -> dict[str, object]:
+    """Detailed runtime readiness without exposing secrets."""
+    base = await health()
+    base.update(collect_runtime_readiness())
+    base["suppression"] = get_suppression_engine().snapshot()
+    return base
+
+
 @app.get("/health/details")
 async def health_details() -> dict[str, object]:
     """Detailed runtime readiness without exposing secrets."""
-    base = await health()
-    base["delivery"] = {
-        "push_notifier_available": has_push_notifier(),
-        "slack_webhook_configured": has_slack_webhook_configured(),
-    }
-    base["paths"] = {
-        "bridge_file_exists": _path_exists(BRIDGE_FILE),
-        "events_log_exists": _path_exists(EVENTS_LOG),
-    }
-    return base
+    return await _collect_health_details()

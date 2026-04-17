@@ -11,7 +11,7 @@ import notification_hub.channels as channels_mod
 import notification_hub.config as config_mod
 import notification_hub.server as server_mod
 import notification_hub.watcher as watcher_mod
-from notification_hub.config import clear_webhook_cache
+from notification_hub.config import clear_policy_cache, clear_webhook_cache
 from notification_hub.pipeline import reset_suppression_engine
 
 
@@ -27,9 +27,10 @@ def isolate_runtime_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> It
 
     monkeypatch.setattr(config_mod, "EVENTS_DIR", events_dir)
     monkeypatch.setattr(config_mod, "EVENTS_LOG", events_log)
+    monkeypatch.setattr(config_mod, "POLICY_CONFIG", tmp_path / "config.toml")
+    monkeypatch.setattr(config_mod, "LAUNCH_AGENT_PLIST", tmp_path / "com.saagar.notification-hub.plist")
     monkeypatch.setattr(channels_mod, "EVENTS_DIR", events_dir)
     monkeypatch.setattr(channels_mod, "EVENTS_LOG", events_log)
-    monkeypatch.setattr(server_mod, "EVENTS_LOG", events_log)
 
     monkeypatch.setattr(config_mod, "BRIDGE_FILE", bridge_file)
     monkeypatch.setattr(server_mod, "BRIDGE_FILE", bridge_file)
@@ -40,6 +41,8 @@ def isolate_runtime_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> It
     monkeypatch.setattr(server_mod, "_start_time", 0.0)
 
     clear_webhook_cache()
+    clear_policy_cache()
     reset_suppression_engine()
     yield
     clear_webhook_cache()
+    clear_policy_cache()
