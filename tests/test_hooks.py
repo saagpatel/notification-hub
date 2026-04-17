@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import json
-
 import pytest
-from pydantic import ValidationError
 
 from notification_hub.models import Event
 

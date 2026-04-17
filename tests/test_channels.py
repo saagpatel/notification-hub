@@ -4,22 +4,22 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
 
 from notification_hub.channels import (
-    _format_slack_digest,
-    _format_slack_message,
+    format_slack_digest,
+    format_slack_message,
     read_jsonl,
     send_push,
     send_slack,
     send_slack_digest,
     write_jsonl,
 )
-from notification_hub.models import StoredEvent
 import notification_hub.channels as channels_mod
+from notification_hub.models import Level, Source, StoredEvent
 
 
 @pytest.fixture
@@ -31,15 +31,42 @@ def tmp_log(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return log_file
 
 
+def _as_source(value: object) -> Source:
+    if value in ("cc", "codex", "claude_ai", "bridge_watcher"):
+        return value
+    return "cc"
+
+
+def _as_level(value: object) -> Level:
+    if value in ("urgent", "normal", "info"):
+        return value
+    return "info"
+
+
+def _as_project(value: object) -> str | None:
+    if isinstance(value, str):
+        return value
+    return None
+
+
 def _make_event(**overrides: object) -> StoredEvent:
-    defaults = {
+    defaults: dict[str, object] = {
         "source": "cc",
         "level": "info",
         "title": "Test",
         "body": "Test body",
     }
     defaults.update(overrides)
-    return StoredEvent(**defaults)  # type: ignore[arg-type]
+    return StoredEvent(
+        source=_as_source(defaults["source"]),
+        level=_as_level(defaults["level"]),
+        title=str(defaults["title"]),
+        body=str(defaults["body"]),
+        project=_as_project(defaults.get("project")),
+        classified_level=_as_level(defaults["classified_level"])
+        if defaults.get("classified_level") is not None
+        else None,
+    )
 
 
 def test_write_creates_directory(tmp_log: Path) -> None:
@@ -82,6 +109,19 @@ def test_stored_event_has_ids() -> None:
     event = _make_event()
     assert len(event.event_id) == 12
     assert event.received_at is not None
+
+
+class TestPushNotifierDiscovery:
+    def test_finds_notifier_from_path(self) -> None:
+        with patch("notification_hub.channels.shutil.which", return_value="/usr/local/bin/terminal-notifier"):
+            assert channels_mod.find_push_notifier() == "/usr/local/bin/terminal-notifier"
+
+    def test_finds_notifier_from_common_location(self) -> None:
+        with (
+            patch("notification_hub.channels.shutil.which", return_value=None),
+            patch("notification_hub.channels.Path.exists", return_value=True),
+        ):
+            assert channels_mod.find_push_notifier() == "/opt/homebrew/bin/terminal-notifier"
 
 
 class TestSendPush:
@@ -129,7 +169,7 @@ class TestSendPush:
 
     def test_returns_false_when_notifier_missing(self) -> None:
         event = _make_event()
-        with patch("notification_hub.channels.shutil.which", return_value=None):
+        with patch("notification_hub.channels.find_push_notifier", return_value=None):
             result = send_push(event)
         assert result is False
 
@@ -172,33 +212,33 @@ class TestSendPush:
 class TestSlackFormatting:
     def test_message_includes_level_emoji(self) -> None:
         event = _make_event(classified_level="urgent")
-        payload = _format_slack_message(event)
-        text = payload["blocks"][0]["text"]["text"]  # type: ignore[index]
+        payload = format_slack_message(event)
+        text = payload["blocks"][0]["text"]["text"]
         assert ":red_circle:" in text
 
     def test_message_includes_project(self) -> None:
         event = _make_event(project="ink", classified_level="normal")
-        payload = _format_slack_message(event)
-        text = payload["blocks"][0]["text"]["text"]  # type: ignore[index]
+        payload = format_slack_message(event)
+        text = payload["blocks"][0]["text"]["text"]
         assert "`ink`" in text
 
     def test_message_includes_source_label(self) -> None:
         event = _make_event(source="codex", classified_level="info")
-        payload = _format_slack_message(event)
-        text = payload["blocks"][0]["text"]["text"]  # type: ignore[index]
+        payload = format_slack_message(event)
+        text = payload["blocks"][0]["text"]["text"]
         assert "Codex" in text
         assert ":gear:" in text
 
     def test_message_has_fallback_text(self) -> None:
         event = _make_event(title="Test Alert", classified_level="urgent")
-        payload = _format_slack_message(event)
-        assert "Test Alert" in payload["text"]  # type: ignore[operator]
-        assert "URGENT" in payload["text"]  # type: ignore[operator]
+        payload = format_slack_message(event)
+        assert "Test Alert" in payload["text"]
+        assert "URGENT" in payload["text"]
 
     def test_message_without_project(self) -> None:
         event = _make_event(project=None, classified_level="info")
-        payload = _format_slack_message(event)
-        text = payload["blocks"][0]["text"]["text"]  # type: ignore[index]
+        payload = format_slack_message(event)
+        text = payload["blocks"][0]["text"]["text"]
         assert "` —" not in text  # no project tag
 
     def test_digest_format(self) -> None:
@@ -206,16 +246,16 @@ class TestSlackFormatting:
             _make_event(title="Event 1", project="ink", classified_level="urgent"),
             _make_event(title="Event 2", project="codec", classified_level="normal"),
         ]
-        payload = _format_slack_digest(events)
-        text = payload["blocks"][0]["text"]["text"]  # type: ignore[index]
+        payload = format_slack_digest(events)
+        text = payload["blocks"][0]["text"]["text"]
         assert "Notification Digest" in text
         assert "2 events" in text
         assert "`ink`" in text
         assert "`codec`" in text
 
     def test_digest_empty_list(self) -> None:
-        payload = _format_slack_digest([])
-        text = payload["blocks"][0]["text"]["text"]  # type: ignore[index]
+        payload = format_slack_digest([])
+        text = payload["blocks"][0]["text"]["text"]
         assert "0 events" in text
 
 

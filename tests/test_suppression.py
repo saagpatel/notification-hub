@@ -5,9 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-import pytest
-
-from notification_hub.models import StoredEvent
+from notification_hub.models import Level, StoredEvent
 from notification_hub.suppression import SuppressionEngine
 
 PACIFIC = ZoneInfo("America/Los_Angeles")
@@ -15,18 +13,18 @@ PACIFIC = ZoneInfo("America/Los_Angeles")
 
 def _stored(
     project: str | None = "test-proj",
-    level: str = "info",
+    level: Level = "info",
     title: str = "Test",
     body: str = "Test body",
-    classified_level: str | None = None,
+    classified_level: Level | None = None,
 ) -> StoredEvent:
     return StoredEvent(
         source="cc",
-        level=level,  # type: ignore[arg-type]
+        level=level,
         title=title,
         body=body,
         project=project,
-        classified_level=classified_level,  # type: ignore[arg-type]
+        classified_level=classified_level,
     )
 
 
@@ -164,13 +162,15 @@ class TestRateLimiting:
     def test_push_rate_resets_after_window(self) -> None:
         engine = SuppressionEngine()
         old = datetime.now(timezone.utc) - timedelta(hours=1, minutes=1)
-        engine._push_times = [old] * 5
+        for _ in range(5):
+            engine.record_push_at(old)
         assert engine.check_push_rate() is True
 
     def test_slack_rate_resets_after_window(self) -> None:
         engine = SuppressionEngine()
         old = datetime.now(timezone.utc) - timedelta(hours=1, minutes=1)
-        engine._slack_times = [old] * 20
+        for _ in range(20):
+            engine.record_slack_at(old)
         assert engine.check_slack_rate() is True
 
 

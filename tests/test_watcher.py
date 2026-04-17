@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from notification_hub.watcher import diff_sections, extract_section_lines, parse_activity_line
 
 
