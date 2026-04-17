@@ -12,6 +12,10 @@ import notification_hub.config as config_mod
 from notification_hub.config import (
     ClassificationPolicy,
     RoutingRule,
+    RoutingPolicy,
+    SuppressionPolicy,
+    PolicyConfig,
+    analyze_policy_config,
     clear_policy_cache,
     clear_webhook_cache,
     get_policy_config,
@@ -238,3 +242,39 @@ disable_slack = true
 
         assert first.classification.urgent_keywords == ("alpha",)
         assert second.classification.urgent_keywords == ("beta",)
+
+
+class TestPolicyAnalysis:
+    def test_warns_on_shadowed_and_noop_routing_rules(self) -> None:
+        policy = PolicyConfig(
+            classification=ClassificationPolicy(),
+            suppression=SuppressionPolicy(),
+            routing=RoutingPolicy(
+                rules=(
+                    RoutingRule(source="codex"),
+                    RoutingRule(source="codex", project="notification-hub", disable_slack=True),
+                )
+            ),
+        )
+
+        warnings = analyze_policy_config(policy)
+
+        assert any("routing rule 1 does not change level or delivery behavior" in warning for warning in warnings)
+        assert any("routing rule 2 is shadowed by earlier rule 1" in warning for warning in warnings)
+
+    def test_warns_on_overlapping_classifier_keywords(self) -> None:
+        policy = PolicyConfig(
+            classification=ClassificationPolicy(
+                urgent_keywords=("ship it",),
+                normal_keywords=("ship it",),
+                info_keywords=(),
+            ),
+            suppression=SuppressionPolicy(),
+            routing=RoutingPolicy(),
+        )
+
+        warnings = analyze_policy_config(policy)
+
+        assert warnings == (
+            "classifier keyword 'ship it' appears in both urgent and normal; urgent wins first",
+        )

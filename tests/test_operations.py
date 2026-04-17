@@ -10,8 +10,20 @@ import httpx
 import pytest
 
 import notification_hub.operations as ops_mod
+from notification_hub.config import (
+    ClassificationPolicy,
+    PolicyConfig,
+    RoutingPolicy,
+    RoutingRule,
+    SuppressionPolicy,
+)
 from notification_hub.models import StoredEvent
-from notification_hub.operations import bootstrap_policy_config, run_retention, run_smoke_check
+from notification_hub.operations import (
+    bootstrap_policy_config,
+    run_policy_check,
+    run_retention,
+    run_smoke_check,
+)
 
 
 def test_smoke_check_reports_success_when_event_hits_log() -> None:
@@ -119,3 +131,57 @@ def test_bootstrap_policy_config_noop_without_force(
     assert report["status"] == "ok"
     assert report["copied"] is False
     assert "keep me" in config_path.read_text(encoding="utf-8")
+
+
+def test_policy_check_reports_warnings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    policy = PolicyConfig(
+        config_found=True,
+        classification=ClassificationPolicy(
+            urgent_keywords=("ship it",),
+            normal_keywords=("ship it",),
+            info_keywords=(),
+        ),
+        suppression=SuppressionPolicy(),
+        routing=RoutingPolicy(
+            rules=(
+                RoutingRule(source="codex"),
+            )
+        ),
+    )
+
+    monkeypatch.setattr(ops_mod, "get_policy_config", lambda: policy)
+    def _warnings_for_policy(_policy: PolicyConfig) -> tuple[str, ...]:
+        return ("warning one", "warning two")
+
+    monkeypatch.setattr(ops_mod, "analyze_policy_config", _warnings_for_policy)
+
+    report = run_policy_check()
+
+    assert report["status"] == "warn"
+    assert report["warning_count"] == 2
+    assert report["warnings"] == ["warning one", "warning two"]
+
+
+def test_policy_check_reports_degraded_on_load_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    policy = PolicyConfig(
+        config_found=True,
+        load_error="bad toml",
+        classification=ClassificationPolicy(),
+        suppression=SuppressionPolicy(),
+        routing=RoutingPolicy(),
+    )
+
+    monkeypatch.setattr(ops_mod, "get_policy_config", lambda: policy)
+    def _no_warnings(_policy: PolicyConfig) -> tuple[str, ...]:
+        return ()
+
+    monkeypatch.setattr(ops_mod, "analyze_policy_config", _no_warnings)
+
+    report = run_policy_check()
+
+    assert report["status"] == "degraded"
+    assert report["load_error"] == "bad toml"

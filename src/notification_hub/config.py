@@ -135,6 +135,13 @@ class PolicyConfig:
     routing: RoutingPolicy = field(default_factory=RoutingPolicy)
 
 
+_CLASSIFICATION_PRECEDENCE: tuple[tuple[str, str], ...] = (
+    ("urgent", "urgent"),
+    ("info", "info"),
+    ("normal", "normal"),
+)
+
+
 def _is_cached_webhook_url(value: str | None | object) -> TypeGuard[str | None]:
     """Narrow the cache sentinel away for static type checkers."""
     return isinstance(value, str) or value is None
@@ -227,6 +234,51 @@ def _parse_routing_rules(value: object) -> tuple[RoutingRule, ...]:
             )
         )
     return tuple(rules)
+
+
+def _routing_rule_shadowed_by(previous: RoutingRule, current: RoutingRule) -> bool:
+    """Return whether an earlier rule matches every event the later rule could match."""
+    for field_name in ("source", "project"):
+        previous_value = getattr(previous, field_name)
+        current_value = getattr(current, field_name)
+        if previous_value is None:
+            continue
+        if current_value != previous_value:
+            return False
+    return True
+
+
+def analyze_policy_config(policy: PolicyConfig | None = None) -> tuple[str, ...]:
+    """Return human-readable warnings for overlapping or ineffective policy rules."""
+    current_policy = get_policy_config() if policy is None else policy
+    warnings: list[str] = []
+
+    keyword_to_first_group: dict[str, str] = {}
+    for group_name, attribute_name in _CLASSIFICATION_PRECEDENCE:
+        for keyword in getattr(current_policy.classification, f"{attribute_name}_keywords"):
+            first_group = keyword_to_first_group.setdefault(keyword, group_name)
+            if first_group != group_name:
+                warnings.append(
+                    f"classifier keyword '{keyword}' appears in both {first_group} and {group_name}; "
+                    f"{first_group} wins first"
+                )
+
+    prior_rules: list[RoutingRule] = []
+    for index, rule in enumerate(current_policy.routing.rules, start=1):
+        if rule.force_level is None and not rule.disable_push and not rule.disable_slack:
+            warnings.append(
+                f"routing rule {index} does not change level or delivery behavior"
+            )
+
+        for prior_index, prior_rule in enumerate(prior_rules, start=1):
+            if _routing_rule_shadowed_by(prior_rule, rule):
+                warnings.append(
+                    f"routing rule {index} is shadowed by earlier rule {prior_index} and will never match"
+                )
+                break
+        prior_rules.append(rule)
+
+    return tuple(warnings)
 
 
 def _build_policy_config(

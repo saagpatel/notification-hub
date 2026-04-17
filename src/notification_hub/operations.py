@@ -17,6 +17,8 @@ from notification_hub.config import (
     HOST,
     POLICY_CONFIG,
     PORT,
+    analyze_policy_config,
+    get_policy_config,
 )
 from notification_hub.models import Event
 
@@ -47,6 +49,16 @@ class BootstrapConfigReport(TypedDict):
     config_path: str
     example_path: str
     error: str | None
+
+
+class PolicyCheckReport(TypedDict):
+    status: str
+    config_path: str
+    config_found: bool
+    example_path: str
+    load_error: str | None
+    warning_count: int
+    warnings: list[str]
 
 
 def run_smoke_check() -> SmokeReport:
@@ -209,4 +221,28 @@ def bootstrap_policy_config(*, force: bool = False) -> BootstrapConfigReport:
         "config_path": str(config_path),
         "example_path": str(example_path),
         "error": None,
+    }
+
+
+def run_policy_check() -> PolicyCheckReport:
+    """Analyze the current policy config for overlapping or ineffective rules."""
+    policy = get_policy_config()
+    warnings = list(analyze_policy_config(policy))
+    load_error = policy.load_error
+
+    if load_error is not None or not EXAMPLE_POLICY_CONFIG.exists():
+        status = "degraded"
+    elif warnings:
+        status = "warn"
+    else:
+        status = "ok"
+
+    return {
+        "status": status,
+        "config_path": str(policy.path),
+        "config_found": policy.config_found,
+        "example_path": str(EXAMPLE_POLICY_CONFIG),
+        "load_error": load_error,
+        "warning_count": len(warnings),
+        "warnings": warnings,
     }

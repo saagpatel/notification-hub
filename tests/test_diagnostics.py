@@ -12,6 +12,7 @@ from notification_hub.cli import (
     doctor_main,
     explain_main,
     main,
+    policy_check_main,
     retention_main,
     smoke_main,
 )
@@ -31,6 +32,7 @@ def test_collect_runtime_readiness_reports_config_and_paths() -> None:
                 routing=MagicMock(rules=("a", "b")),
             ),
         ),
+        patch("notification_hub.diagnostics.config_mod.analyze_policy_config", return_value=("w1", "w2", "w3")),
         patch("notification_hub.diagnostics._path_exists", side_effect=[True, True, False, True]),
     ):
         data = collect_runtime_readiness()
@@ -50,6 +52,7 @@ def test_collect_runtime_readiness_reports_config_and_paths() -> None:
         "exists": True,
         "load_error": None,
         "routing_rule_count": 2,
+        "warning_count": 3,
     }
 
 
@@ -73,6 +76,7 @@ def test_collect_doctor_report_handles_local_api_failure() -> None:
                     "exists": False,
                     "load_error": None,
                     "routing_rule_count": 0,
+                    "warning_count": 0,
                 },
             },
         ),
@@ -95,7 +99,7 @@ def test_cli_json_output(capsys: CaptureFixture[str]) -> None:
         return_value={
             "status": "ok",
             "checks": {"local_api_healthy": True},
-            "config": {"path": "/tmp/config.toml", "load_error": None, "routing_rule_count": 0},
+            "config": {"path": "/tmp/config.toml", "load_error": None, "routing_rule_count": 0, "warning_count": 0},
             "local_api": {"url": "http://127.0.0.1:9199/health/details"},
         },
     ):
@@ -124,6 +128,26 @@ def test_cli_smoke_json_output(capsys: CaptureFixture[str]) -> None:
     captured = capsys.readouterr()
     assert exit_code == 0
     assert '"event_id": "abc123"' in captured.out
+
+
+def test_cli_policy_check_json_output(capsys: CaptureFixture[str]) -> None:
+    with patch(
+        "notification_hub.cli.run_policy_check",
+        return_value={
+            "status": "warn",
+            "config_path": "/tmp/config.toml",
+            "config_found": True,
+            "example_path": "/tmp/example.toml",
+            "load_error": None,
+            "warning_count": 1,
+            "warnings": ["shadowed rule"],
+        },
+    ):
+        exit_code = main(["policy-check", "--json"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert '"warning_count": 1' in captured.out
 
 
 def test_cli_explain_json_output(capsys: CaptureFixture[str]) -> None:
@@ -213,7 +237,7 @@ def test_doctor_main_forwards_flags(capsys: CaptureFixture[str]) -> None:
         return_value={
             "status": "ok",
             "checks": {"local_api_healthy": True},
-            "config": {"path": "/tmp/config.toml", "load_error": None, "routing_rule_count": 0},
+            "config": {"path": "/tmp/config.toml", "load_error": None, "routing_rule_count": 0, "warning_count": 0},
             "local_api": {"url": "http://127.0.0.1:9199/health/details"},
         },
     ):
@@ -260,6 +284,27 @@ def test_smoke_and_retention_wrappers_forward_flags(capsys: CaptureFixture[str])
     retention_output = capsys.readouterr()
     assert retention_exit == 0
     assert '"events_before": 3' in retention_output.out
+
+
+def test_policy_check_wrapper_forwards_flags(capsys: CaptureFixture[str]) -> None:
+    with patch(
+        "notification_hub.cli.run_policy_check",
+        return_value={
+            "status": "warn",
+            "config_path": "/tmp/config.toml",
+            "config_found": True,
+            "example_path": "/tmp/example.toml",
+            "load_error": None,
+            "warning_count": 1,
+            "warnings": ["shadowed rule"],
+        },
+    ) as mock_policy_check:
+        exit_code = policy_check_main(["--json"])
+
+    output = capsys.readouterr()
+    assert exit_code == 0
+    assert '"status": "warn"' in output.out
+    mock_policy_check.assert_called_once_with()
 
 
 def test_explain_wrapper_forwards_flags(capsys: CaptureFixture[str]) -> None:
