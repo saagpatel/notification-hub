@@ -7,13 +7,13 @@ from unittest.mock import patch
 
 import pytest
 
-from notification_hub.models import Event
+import notification_hub.channels as channels_mod
+from notification_hub.models import Event, Level, Source
 from notification_hub.pipeline import (
+    get_suppression_engine,
     process_event,
     reset_suppression_engine,
-    get_suppression_engine,
 )
-import notification_hub.channels as channels_mod
 
 
 @pytest.fixture
@@ -31,16 +31,22 @@ def fresh_suppression() -> None:
     reset_suppression_engine()
 
 
+@pytest.fixture(autouse=True)
+def configured_slack(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep pipeline tests focused on routing unless a test opts out."""
+    monkeypatch.setattr("notification_hub.pipeline.has_slack_webhook_configured", lambda: True)
+
+
 def _event(
     title: str = "Test",
     body: str = "Test body",
-    level: str = "info",
-    source: str = "cc",
+    level: Level = "info",
+    source: Source = "cc",
     project: str | None = None,
 ) -> Event:
     return Event(
-        source=source,  # type: ignore[arg-type]
-        level=level,  # type: ignore[arg-type]
+        source=source,
+        level=level,
         title=title,
         body=body,
         project=project,
@@ -149,7 +155,7 @@ class TestQuietHours:
         p1, p2, p3 = _patch_channels()
         with p1 as mock_push, p2 as mock_slack, p3:
             with patch.object(get_suppression_engine(), "is_quiet_hours", return_value=True):
-                stored = process_event(_event(body="Approval needed"))
+                process_event(_event(body="Approval needed"))
         # Push queued, not sent
         mock_push.assert_not_called()
         # Slack still fires during quiet hours
@@ -229,7 +235,7 @@ class TestRateLimiting:
         assert engine.has_overflow()
 
         # Reset rate limit (simulate time passing)
-        engine._slack_times.clear()
+        engine.clear_rate_history()
 
         p1, p2, p3 = _patch_channels()
         with p1, p2 as mock_slack, p3 as mock_digest, _patch_daytime():
@@ -238,6 +244,59 @@ class TestRateLimiting:
         # Digest sent for overflow + new event sent directly
         mock_digest.assert_called_once()
         mock_slack.assert_called_once()
+
+    def test_failed_digest_is_requeued(self, tmp_log: Path) -> None:
+        engine = get_suppression_engine()
+        for _ in range(20):
+            engine.record_slack()
+
+        p1, p2, p3 = _patch_channels()
+        with p1, p2, p3, _patch_daytime():
+            process_event(_event(body="Session complete", project="p1"))
+
+        engine.clear_rate_history()
+
+        with (
+            patch("notification_hub.pipeline.send_push", return_value=True),
+            patch("notification_hub.pipeline.send_slack", return_value=True),
+            patch("notification_hub.pipeline.send_slack_digest", return_value=False),
+            _patch_daytime(),
+        ):
+            process_event(_event(body="Session complete", project="p2"))
+
+        assert engine.has_overflow()
+
+    def test_failed_channel_sends_do_not_consume_rate_limit(self, tmp_log: Path) -> None:
+        engine = get_suppression_engine()
+        with (
+            patch("notification_hub.pipeline.send_push", return_value=False),
+            patch("notification_hub.pipeline.send_slack", return_value=False),
+            patch("notification_hub.pipeline.send_slack_digest", return_value=True),
+            _patch_daytime(),
+        ):
+            process_event(_event(body="Approval needed", project="ink"))
+
+        assert engine.check_push_rate() is True
+        assert engine.check_slack_rate() is True
+
+    def test_missing_webhook_skips_slack_delivery_without_noise_spike(
+        self, tmp_log: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        engine = get_suppression_engine()
+        monkeypatch.setattr("notification_hub.pipeline.has_slack_webhook_configured", lambda: False)
+
+        with (
+            patch("notification_hub.pipeline.send_push", return_value=True) as mock_push,
+            patch("notification_hub.pipeline.send_slack") as mock_slack,
+            patch("notification_hub.pipeline.send_slack_digest") as mock_digest,
+            _patch_daytime(),
+        ):
+            process_event(_event(body="Session complete", project="ink"))
+
+        mock_push.assert_not_called()
+        mock_slack.assert_not_called()
+        mock_digest.assert_not_called()
+        assert engine.check_slack_rate() is True
 
 
 class TestPushFailureResilience:

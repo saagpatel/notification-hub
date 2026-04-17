@@ -59,6 +59,29 @@ class TestKeychainWebhook:
             url = get_slack_webhook_url()
         assert url is None
 
+    def test_retries_missing_webhook_after_ttl(self) -> None:
+        missing = MagicMock()
+        missing.returncode = 44
+        missing.stdout = ""
+
+        found = MagicMock()
+        found.returncode = 0
+        found.stdout = "https://hooks.slack.com/recovered\n"
+
+        with (
+            patch(
+                "notification_hub.config.subprocess.run",
+                side_effect=[missing, found],
+            ) as mock_run,
+            patch("notification_hub.config.time.monotonic", side_effect=[100.0, 161.0, 161.0]),
+        ):
+            first = get_slack_webhook_url()
+            second = get_slack_webhook_url()
+
+        assert first is None
+        assert second == "https://hooks.slack.com/recovered"
+        assert mock_run.call_count == 2
+
     def test_clear_cache_allows_reread(self) -> None:
         mock_result = MagicMock()
         mock_result.returncode = 0

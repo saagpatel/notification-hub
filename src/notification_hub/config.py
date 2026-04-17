@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import logging
 import subprocess
+import time
 from pathlib import Path
+from typing import TypeGuard
 
 logger = logging.getLogger(__name__)
 
@@ -25,16 +27,30 @@ WATCHED_SECTIONS = (
 # Keychain service/account for Slack webhook URL
 KEYCHAIN_SERVICE = "slack-webhook"
 KEYCHAIN_ACCOUNT = "notification-hub"
+MISSING_WEBHOOK_RECHECK_SECONDS = 60.0
 
 _UNSET = object()
 _cached_webhook_url: str | None | object = _UNSET
+_cached_webhook_checked_at: float | None = None
+
+
+def _is_cached_webhook_url(value: str | None | object) -> TypeGuard[str | None]:
+    """Narrow the cache sentinel away for static type checkers."""
+    return isinstance(value, str) or value is None
 
 
 def get_slack_webhook_url() -> str | None:
-    """Read Slack webhook URL from macOS Keychain. Cached after first read (including failures)."""
-    global _cached_webhook_url
+    """Read Slack webhook URL from macOS Keychain with a short retry window for missing values."""
+    global _cached_webhook_url, _cached_webhook_checked_at
+    if isinstance(_cached_webhook_url, str):
+        return _cached_webhook_url
+
+    if _cached_webhook_url is None and _cached_webhook_checked_at is not None:
+        if (time.monotonic() - _cached_webhook_checked_at) < MISSING_WEBHOOK_RECHECK_SECONDS:
+            return None
+
     if _cached_webhook_url is not _UNSET:
-        return _cached_webhook_url  # type: ignore[return-value]
+        assert _is_cached_webhook_url(_cached_webhook_url)
 
     try:
         result = subprocess.run(
@@ -51,10 +67,12 @@ def get_slack_webhook_url() -> str | None:
             text=True,
             timeout=5,
         )
+        _cached_webhook_checked_at = time.monotonic()
         if result.returncode == 0 and result.stdout.strip():
             _cached_webhook_url = result.stdout.strip()
             logger.info("Slack webhook URL loaded from Keychain")
-            return _cached_webhook_url  # type: ignore[return-value]
+            assert _is_cached_webhook_url(_cached_webhook_url)
+            return _cached_webhook_url
         logger.warning(
             "Slack webhook not found in Keychain (service=%s, account=%s)",
             KEYCHAIN_SERVICE,
@@ -70,5 +88,11 @@ def get_slack_webhook_url() -> str | None:
 
 def clear_webhook_cache() -> None:
     """Clear cached webhook URL. Used for testing."""
-    global _cached_webhook_url
+    global _cached_webhook_url, _cached_webhook_checked_at
     _cached_webhook_url = _UNSET
+    _cached_webhook_checked_at = None
+
+
+def has_slack_webhook_configured() -> bool:
+    """Return whether a Slack webhook is available via Keychain."""
+    return get_slack_webhook_url() is not None

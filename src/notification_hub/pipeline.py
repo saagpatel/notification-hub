@@ -6,6 +6,7 @@ import logging
 
 from notification_hub.channels import send_push, send_slack, send_slack_digest, write_jsonl
 from notification_hub.classifier import classify
+from notification_hub.config import has_slack_webhook_configured
 from notification_hub.models import Event, StoredEvent
 from notification_hub.suppression import SuppressionEngine
 
@@ -13,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 # Module-level singleton — lives for the server's lifetime
 _suppression = SuppressionEngine()
+_slack_unconfigured_logged = False
 
 
 def get_suppression_engine() -> SuppressionEngine:
@@ -22,21 +24,43 @@ def get_suppression_engine() -> SuppressionEngine:
 
 def reset_suppression_engine() -> None:
     """Replace the suppression engine with a fresh instance. Used in tests."""
-    global _suppression
+    global _suppression, _slack_unconfigured_logged
     _suppression = SuppressionEngine()
+    _slack_unconfigured_logged = False
+
+
+def _slack_delivery_enabled() -> bool:
+    """Return whether Slack delivery is configured, logging the disabled state only once."""
+    global _slack_unconfigured_logged
+    if has_slack_webhook_configured():
+        _slack_unconfigured_logged = False
+        return True
+
+    if not _slack_unconfigured_logged:
+        logger.info("Slack webhook not configured; Slack delivery disabled")
+        _slack_unconfigured_logged = True
+    return False
 
 
 def _flush_overflow() -> None:
     """If the overflow buffer has events and Slack rate allows, send a digest."""
+    if not _slack_delivery_enabled():
+        return
     if not _suppression.has_overflow():
         return
     if not _suppression.check_slack_rate():
         return
     overflow = _suppression.drain_overflow()
     if overflow:
-        send_slack_digest(overflow)
-        _suppression.record_slack()
-        logger.info("Flushed overflow digest: %d events", len(overflow))
+        if send_slack_digest(overflow):
+            _suppression.record_slack()
+            logger.info("Flushed overflow digest: %d events", len(overflow))
+            return
+
+        # Preserve overflow when digest delivery fails so a later event can retry.
+        for event in overflow:
+            _suppression.add_to_overflow(event)
+        logger.warning("Failed to flush overflow digest; returning %d events to buffer", len(overflow))
 
 
 def _drain_quiet_queue_if_needed() -> None:
@@ -52,8 +76,10 @@ def _drain_quiet_queue_if_needed() -> None:
 def _deliver_push(event: StoredEvent) -> None:
     """Send a push notification with rate limiting. Overflow goes to buffer."""
     if _suppression.check_push_rate():
-        send_push(event)
-        _suppression.record_push()
+        if send_push(event):
+            _suppression.record_push()
+            return
+        logger.warning("Push delivery failed for %s", event.event_id)
     else:
         _suppression.add_to_overflow(event)
         logger.debug("Push rate-limited, event %s added to overflow", event.event_id)
@@ -61,12 +87,17 @@ def _deliver_push(event: StoredEvent) -> None:
 
 def _deliver_slack(event: StoredEvent) -> None:
     """Send a Slack message with rate limiting. Overflow goes to buffer."""
+    if not _slack_delivery_enabled():
+        return
+
     # Try to flush any pending overflow first
     _flush_overflow()
 
     if _suppression.check_slack_rate():
-        send_slack(event)
-        _suppression.record_slack()
+        if send_slack(event):
+            _suppression.record_slack()
+            return
+        logger.warning("Slack delivery failed for %s", event.event_id)
     else:
         _suppression.add_to_overflow(event)
         logger.debug("Slack rate-limited, event %s added to overflow", event.event_id)
