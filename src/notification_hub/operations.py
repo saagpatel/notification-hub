@@ -3,13 +3,21 @@
 from __future__ import annotations
 
 import os
+import shutil
 from datetime import datetime, timezone
 from typing import TypedDict
 
 import httpx
 
 from notification_hub.channels import ensure_log_dir, read_jsonl
-from notification_hub.config import EVENTS_DIR, EVENTS_LOG, HOST, PORT
+from notification_hub.config import (
+    EVENTS_DIR,
+    EVENTS_LOG,
+    EXAMPLE_POLICY_CONFIG,
+    HOST,
+    POLICY_CONFIG,
+    PORT,
+)
 from notification_hub.models import Event
 
 
@@ -31,6 +39,14 @@ class RetentionReport(TypedDict):
     events_after: int
     archived_events: int
     deleted_archives: list[str]
+
+
+class BootstrapConfigReport(TypedDict):
+    status: str
+    copied: bool
+    config_path: str
+    example_path: str
+    error: str | None
 
 
 def run_smoke_check() -> SmokeReport:
@@ -148,4 +164,49 @@ def run_retention(*, max_events: int, keep_archives: int) -> RetentionReport:
         "events_after": len(remaining_lines),
         "archived_events": len(archived_lines),
         "deleted_archives": deleted_archives,
+    }
+
+
+def bootstrap_policy_config(*, force: bool = False) -> BootstrapConfigReport:
+    """Copy the repo sample policy file into the live config location."""
+    example_path = EXAMPLE_POLICY_CONFIG
+    config_path = POLICY_CONFIG
+
+    if not example_path.exists():
+        return {
+            "status": "degraded",
+            "copied": False,
+            "config_path": str(config_path),
+            "example_path": str(example_path),
+            "error": "sample policy config not found",
+        }
+
+    if config_path.exists() and not force:
+        return {
+            "status": "ok",
+            "copied": False,
+            "config_path": str(config_path),
+            "example_path": str(example_path),
+            "error": None,
+        }
+
+    try:
+        config_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        shutil.copyfile(example_path, config_path)
+        os.chmod(config_path, 0o600)
+    except OSError as exc:
+        return {
+            "status": "degraded",
+            "copied": False,
+            "config_path": str(config_path),
+            "example_path": str(example_path),
+            "error": str(exc),
+        }
+
+    return {
+        "status": "ok",
+        "copied": True,
+        "config_path": str(config_path),
+        "example_path": str(example_path),
+        "error": None,
     }

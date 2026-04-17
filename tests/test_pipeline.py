@@ -8,6 +8,7 @@ from unittest.mock import patch
 import pytest
 
 import notification_hub.channels as channels_mod
+from notification_hub.config import PolicyConfig, RoutingPolicy, RoutingRule
 from notification_hub.models import Event, Level, Source
 from notification_hub.pipeline import (
     get_suppression_engine,
@@ -99,6 +100,61 @@ class TestClassificationRouting:
         assert stored.classified_level == "urgent"
         mock_push.assert_called_once()
         mock_slack.assert_called_once()
+
+    def test_project_rule_can_force_level_and_disable_push(self, tmp_log: Path) -> None:
+        policy = PolicyConfig(
+            routing=RoutingPolicy(
+                rules=(
+                    RoutingRule(
+                        project="notification-hub",
+                        force_level="normal",
+                        disable_push=True,
+                    ),
+                )
+            )
+        )
+
+        p1, p2, p3 = _patch_channels()
+        with (
+            patch("notification_hub.pipeline.get_policy_config", return_value=policy),
+            p1 as mock_push,
+            p2 as mock_slack,
+            p3,
+            _patch_daytime(),
+        ):
+            stored = process_event(_event(body="Approval needed", project="notification-hub"))
+
+        assert stored.classified_level == "normal"
+        mock_push.assert_not_called()
+        mock_slack.assert_called_once_with(stored)
+
+    def test_source_rule_can_disable_slack(self, tmp_log: Path) -> None:
+        policy = PolicyConfig(
+            routing=RoutingPolicy(
+                rules=(
+                    RoutingRule(
+                        source="bridge_watcher",
+                        disable_slack=True,
+                    ),
+                )
+            )
+        )
+
+        p1, p2, p3 = _patch_channels()
+        with (
+            patch("notification_hub.pipeline.get_policy_config", return_value=policy),
+            p1 as mock_push,
+            p2 as mock_slack,
+            p3,
+            _patch_daytime(),
+        ):
+            stored = process_event(
+                _event(body="Session complete", source="bridge_watcher", project="notification-hub")
+            )
+
+        assert stored.classified_level == "normal"
+        mock_push.assert_not_called()
+        mock_slack.assert_not_called()
 
 
 class TestLogging:

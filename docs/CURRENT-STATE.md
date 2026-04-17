@@ -13,6 +13,8 @@ Last updated: 2026-04-17
 - Policy-based runtime overrides are now supported through an optional config file.
 - A local doctor command is available for operator checks.
 - The repo now also includes a sample policy config, a smoke command, and a log-retention command.
+- Policy config now also supports ordered routing rules, and a bootstrap command can copy the sample
+  config into the live config path.
 - The earlier runtime-hardening and repo-cleanup pass is complete.
 
 ## What Was Cleaned Up
@@ -26,6 +28,9 @@ Last updated: 2026-04-17
 - Added a loadable policy config for classifier keywords and suppression limits.
 - Added `notification-hub-doctor` and expanded runtime diagnostics.
 - Added a checked-in sample config, a smoke check command, and log-retention tooling.
+- Added ordered routing rules for per-project and per-source delivery overrides.
+- Added `notification-hub bootstrap-config` so first-time policy setup is a command instead of a
+  manual copy step.
 
 ## Verified Baseline
 
@@ -44,7 +49,7 @@ uv run notification-hub retention --max-events 2000
 
 Expected current outcome:
 
-- `pytest`: 153 passed
+- `pytest`: 160 passed
 - `ruff`: clean
 - `pyright`: 0 errors
 - `/health/details`: `status: ok`, watcher active, push available, Slack configured
@@ -52,6 +57,15 @@ Expected current outcome:
 - `notification-hub smoke`: `status: ok`
 - `notification-hub retention --max-events 2000`: `status: ok`
 - GitHub Actions `CI` workflow: passing on `main`
+
+Additional behavioral baseline:
+
+- `config/policy.example.toml` includes classifier, suppression, and routing examples
+- `notification-hub bootstrap-config` copies that sample into `~/.config/notification-hub/config.toml`
+  and preserves an existing config unless `--force` is used
+- Bootstrap command wiring is verified, but live bootstrap is intentionally not part of the routine
+  confidence pass when no user config exists yet because it would create local runtime state
+- Retention is still a manual operator action by choice; it is not scheduled automatically
 
 ## Runtime Notes
 

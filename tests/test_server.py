@@ -64,6 +64,7 @@ async def test_health_details_endpoint(client: AsyncClient) -> None:
                     "path": "/tmp/config.toml",
                     "exists": False,
                     "load_error": None,
+                    "routing_rule_count": 0,
                 },
             },
         ),
@@ -94,6 +95,7 @@ async def test_health_details_endpoint(client: AsyncClient) -> None:
         "path": "/tmp/config.toml",
         "exists": False,
         "load_error": None,
+        "routing_rule_count": 0,
     }
     assert data["suppression"] == {
         "dedup_entries": 0,

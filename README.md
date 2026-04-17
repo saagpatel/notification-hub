@@ -45,13 +45,18 @@ uv run notification-hub doctor
 uv run notification-hub-doctor
 uv run notification-hub-doctor --json
 uv run notification-hub smoke
+uv run notification-hub bootstrap-config
 uv run notification-hub retention --max-events 2000
 ```
 
 The doctor command checks the local API, LaunchAgent presence, bridge file path, push notifier,
 Slack Keychain setup, and policy-config load status.
 The smoke command posts a harmless `info` event and verifies it lands in the live JSONL log.
+The bootstrap command copies the repo sample policy file into `~/.config/notification-hub/config.toml`
+without overwriting an existing config unless you pass `--force`.
 The retention command archives older log entries into `~/.local/share/notification-hub/archive/`.
+Retention remains a manual operator action by design for now, so log pruning only happens when you
+explicitly run the command.
 
 ## Policy Config
 
@@ -83,10 +88,27 @@ max_push_per_hour = 5
 max_slack_per_hour = 20
 max_overflow_buffer = 500
 max_quiet_queue = 200
+
+[[routing.rules]]
+project = "notification-hub"
+force_level = "normal"
+disable_push = true
+
+[[routing.rules]]
+source = "bridge_watcher"
+disable_slack = true
 ```
 
 If the file is missing or invalid, notification-hub falls back to built-in defaults and reports the
 config status through the doctor command and `GET /health/details`.
+Routing rules are matched in order, and the first matching rule can override the classified level or
+disable push/Slack delivery for that event.
+
+First-time setup shortcut:
+
+```bash
+uv run notification-hub bootstrap-config
+```
 
 ## Verification
 

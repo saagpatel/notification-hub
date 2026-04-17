@@ -26,6 +26,7 @@ class ConfigStatus(TypedDict):
     path: str
     exists: bool
     load_error: str | None
+    routing_rule_count: int
 
 
 def _path_exists(path: object) -> bool:
@@ -50,6 +51,7 @@ def collect_runtime_readiness() -> dict[str, object]:
         "path": str(policy.path),
         "exists": policy.config_found,
         "load_error": policy.load_error,
+        "routing_rule_count": len(policy.routing.rules),
     }
     return {
         "delivery": delivery,

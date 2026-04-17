@@ -11,6 +11,7 @@ import pytest
 import notification_hub.config as config_mod
 from notification_hub.config import (
     ClassificationPolicy,
+    RoutingRule,
     clear_policy_cache,
     clear_webhook_cache,
     get_policy_config,
@@ -186,6 +187,41 @@ max_quiet_queue = 12
         assert policy.config_found is True
         assert policy.load_error is not None
         assert "session complete" in policy.classification.normal_keywords
+
+    def test_loads_routing_rules(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        config_path = tmp_path / "config.toml"
+        config_path.write_text(
+            """
+[[routing.rules]]
+project = "notification-hub"
+force_level = "normal"
+disable_push = true
+
+[[routing.rules]]
+source = "bridge_watcher"
+disable_slack = true
+""".strip(),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(config_mod, "POLICY_CONFIG", config_path)
+
+        policy = get_policy_config()
+
+        assert policy.routing.rules == (
+            RoutingRule(
+                project="notification-hub",
+                force_level="normal",
+                disable_push=True,
+            ),
+            RoutingRule(
+                source="bridge_watcher",
+                disable_slack=True,
+            ),
+        )
 
     def test_cache_reload_when_config_changes(
         self,
