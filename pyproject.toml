@@ -21,7 +21,10 @@ dev = [
 ]
 
 [project.scripts]
-notification-hub-doctor = "notification_hub.cli:main"
+notification-hub = "notification_hub.cli:main"
+notification-hub-doctor = "notification_hub.cli:doctor_main"
+notification-hub-smoke = "notification_hub.cli:smoke_main"
+notification-hub-retention = "notification_hub.cli:retention_main"
 
 [build-system]
 requires = ["hatchling"]

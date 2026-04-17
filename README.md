@@ -41,12 +41,17 @@ uv run uvicorn notification_hub.server:app --host 127.0.0.1 --port 9199 --reload
 ## Operator Commands
 
 ```bash
+uv run notification-hub doctor
 uv run notification-hub-doctor
 uv run notification-hub-doctor --json
+uv run notification-hub smoke
+uv run notification-hub retention --max-events 2000
 ```
 
 The doctor command checks the local API, LaunchAgent presence, bridge file path, push notifier,
 Slack Keychain setup, and policy-config load status.
+The smoke command posts a harmless `info` event and verifies it lands in the live JSONL log.
+The retention command archives older log entries into `~/.local/share/notification-hub/archive/`.
 
 ## Policy Config
 
@@ -54,6 +59,12 @@ Optional runtime policy overrides live at:
 
 ```text
 ~/.config/notification-hub/config.toml
+```
+
+The repo includes a starter example at:
+
+```text
+config/policy.example.toml
 ```
 
 Supported sections today:
@@ -96,6 +107,8 @@ Runtime diagnostics:
 curl http://127.0.0.1:9199/health
 curl http://127.0.0.1:9199/health/details
 uv run notification-hub-doctor
+uv run notification-hub smoke
+uv run notification-hub retention --max-events 2000
 ```
 
 ## Runtime Notes

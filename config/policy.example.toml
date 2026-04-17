@@ -1,0 +1,24 @@
+[classifier]
+urgent_keywords = [
+  "verification fail",
+  "approval needed",
+  "database down",
+]
+normal_keywords = [
+  "session complete",
+  "merged to main",
+  "ship it",
+]
+info_keywords = [
+  "routine ping",
+  "status update",
+]
+
+[suppression]
+quiet_start_hour = 23
+quiet_end_hour = 7
+dedup_window_minutes = 30
+max_push_per_hour = 5
+max_slack_per_hour = 20
+max_overflow_buffer = 500
+max_quiet_queue = 200

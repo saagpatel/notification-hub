@@ -34,9 +34,9 @@ as implementation history rather than the primary current-state source.
 
 ### Next Likely Slice
 
-- [ ] Add a sample/default config artifact for easier first-time customization
-- [ ] Add event-log retention or rotation policy
-- [ ] Add a small end-to-end smoke command for runtime validation
+- [x] Add a sample/default config artifact for easier first-time customization
+- [x] Add event-log retention or rotation policy
+- [x] Add a small end-to-end smoke command for runtime validation
 - [ ] Consider project/source-specific routing rules if policy needs keep growing
 
 ## Phase 0: FastAPI Skeleton + JSONL Logging + Bridge File Watcher
