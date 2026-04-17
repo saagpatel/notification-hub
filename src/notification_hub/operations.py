@@ -65,6 +65,11 @@ class PolicyCheckReport(TypedDict):
 
 def _suggest_fix_for_warning(warning: str) -> str:
     """Turn a policy warning into a concrete next action."""
+    if warning.startswith("automatic retention is disabled"):
+        return (
+            "Re-enable retention in the policy config unless you intentionally want log pruning to "
+            "stay fully manual."
+        )
     if "appears in both" in warning:
         return (
             "Keep the keyword in one classifier group only, or move it into the higher-priority "
@@ -84,6 +89,11 @@ def _suggest_fix_for_warning(warning: str) -> str:
         return (
             "Move the narrower rule earlier, or tighten the earlier rule so the later one still "
             "has a chance to match."
+        )
+    if "sets continue_matching but there is no later rule to continue into" in warning:
+        return (
+            "Remove `continue_matching` on the final rule, or add a later rule if you meant to "
+            "compose another routing step."
         )
     return "Review the warning and simplify the policy rule or classifier entry so its intent is explicit."
 

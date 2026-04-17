@@ -48,6 +48,8 @@ as implementation history rather than the primary current-state source.
 - The first matching rule may force a classified level or disable push/Slack delivery, unless a rule
   opts into `continue_matching` so later rules can keep refining the decision
 - `notification-hub policy-check` audits overlaps, shadowing, and no-op policy rules and suggests likely fixes
+- `notification-hub policy-check` now also flags disabled automatic retention and ineffective
+  `continue_matching` usage
 - `notification-hub explain` previews classification, routing, and delivery without sending anything
 - `notification-hub bootstrap-config` installs the sample config locally without overwriting an
   existing config unless `--force` is used

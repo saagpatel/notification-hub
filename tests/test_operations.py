@@ -13,6 +13,7 @@ import notification_hub.operations as ops_mod
 from notification_hub.config import (
     ClassificationPolicy,
     PolicyConfig,
+    RetentionPolicy,
     RoutingPolicy,
     RoutingRule,
     SuppressionPolicy,
@@ -213,3 +214,31 @@ def test_policy_check_maps_shadowed_rule_to_fix_suggestion(
 
     assert report["status"] == "warn"
     assert any("Move the narrower rule earlier" in suggestion for suggestion in report["suggestions"])
+
+
+def test_policy_check_maps_retention_and_continue_warnings_to_fix_suggestions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    policy = PolicyConfig(
+        config_found=True,
+        classification=ClassificationPolicy(),
+        suppression=SuppressionPolicy(),
+        retention=RetentionPolicy(enabled=False),
+        routing=RoutingPolicy(
+            rules=(
+                RoutingRule(
+                    project="notification-hub",
+                    disable_slack=True,
+                    continue_matching=True,
+                ),
+            )
+        ),
+    )
+
+    monkeypatch.setattr(ops_mod, "get_policy_config", lambda: policy)
+
+    report = run_policy_check()
+
+    assert report["status"] == "warn"
+    assert any("Re-enable retention" in suggestion for suggestion in report["suggestions"])
+    assert any("Remove `continue_matching` on the final rule" in suggestion for suggestion in report["suggestions"])
