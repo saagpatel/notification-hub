@@ -11,9 +11,11 @@ from notification_hub.diagnostics import collect_doctor_report
 from notification_hub.models import Event
 from notification_hub.operations import (
     BootstrapConfigReport,
+    PolicyCheckReport,
     RetentionReport,
     SmokeReport,
     bootstrap_policy_config,
+    run_policy_check,
     run_retention,
     run_smoke_check,
 )
@@ -36,6 +38,16 @@ def _build_parser(prog: str = "notification-hub") -> argparse.ArgumentParser:
         "--json",
         action="store_true",
         help="Emit the smoke report as JSON.",
+    )
+
+    policy_check = subparsers.add_parser(
+        "policy-check",
+        help="Analyze the current policy config for overlaps, shadowing, and no-op rules.",
+    )
+    policy_check.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the policy-check report as JSON.",
     )
 
     explain = subparsers.add_parser(
@@ -124,6 +136,18 @@ def _print_smoke_report(report: SmokeReport) -> None:
         print(f"- error: {report['error']}")
 
 
+def _print_policy_check_report(report: PolicyCheckReport) -> None:
+    print(f"notification-hub policy-check: {report['status']}")
+    print(f"- config found: {report['config_found']}")
+    print(f"- config path: {report['config_path']}")
+    print(f"- sample path: {report['example_path']}")
+    print(f"- warning count: {report['warning_count']}")
+    if report["load_error"] is not None:
+        print(f"- load error: {report['load_error']}")
+    for warning in report["warnings"]:
+        print(f"- warning: {warning}")
+
+
 def _print_explain_report(report: dict[str, object]) -> None:
     event = report["event"]
     classification = report["classification"]
@@ -189,6 +213,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             _print_smoke_report(report)
         return 0 if report["status"] == "ok" else 1
 
+    if args.command == "policy-check":
+        report = run_policy_check()
+        if args.json:
+            print(json.dumps(report, indent=2, sort_keys=True))
+        else:
+            _print_policy_check_report(report)
+        return 0 if report["status"] != "degraded" else 1
+
     if args.command == "explain":
         event = Event(
             source=args.source,
@@ -228,6 +260,11 @@ def doctor_main(argv: Sequence[str] | None = None) -> int:
 def smoke_main(argv: Sequence[str] | None = None) -> int:
     forwarded = list(argv) if argv is not None else sys.argv[1:]
     return main(["smoke", *forwarded])
+
+
+def policy_check_main(argv: Sequence[str] | None = None) -> int:
+    forwarded = list(argv) if argv is not None else sys.argv[1:]
+    return main(["policy-check", *forwarded])
 
 
 def explain_main(argv: Sequence[str] | None = None) -> int:

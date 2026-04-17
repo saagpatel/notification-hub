@@ -45,6 +45,7 @@ uv run notification-hub doctor
 uv run notification-hub-doctor
 uv run notification-hub-doctor --json
 uv run notification-hub smoke
+uv run notification-hub policy-check
 uv run notification-hub explain --source codex --level info --title "Test" --body "Approval needed"
 uv run notification-hub bootstrap-config
 uv run notification-hub retention --max-events 2000
@@ -53,6 +54,8 @@ uv run notification-hub retention --max-events 2000
 The doctor command checks the local API, LaunchAgent presence, bridge file path, push notifier,
 Slack Keychain setup, and policy-config load status.
 The smoke command posts a harmless `info` event and verifies it lands in the live JSONL log.
+The policy-check command inspects the current policy config for overlapping keywords, shadowed
+routing rules, and no-op rules before they cause confusing behavior.
 The explain command shows how a sample event would classify, route, and deliver without posting it
 to the live daemon or sending any notifications.
 The bootstrap command copies the repo sample policy file into `~/.config/notification-hub/config.toml`
@@ -123,6 +126,12 @@ uv run notification-hub explain \
   --body "Session complete after verification"
 ```
 
+Safe policy-audit shortcut:
+
+```bash
+uv run notification-hub policy-check
+```
+
 ## Verification
 
 ```bash
@@ -142,6 +151,7 @@ Runtime diagnostics:
 curl http://127.0.0.1:9199/health
 curl http://127.0.0.1:9199/health/details
 uv run notification-hub-doctor
+uv run notification-hub policy-check
 uv run notification-hub explain --source codex --level info --title "Test" --body "Approval needed"
 uv run notification-hub smoke
 uv run notification-hub retention --max-events 2000
@@ -158,8 +168,8 @@ uv run notification-hub retention --max-events 2000
   about a minute, so a manual restart is usually not required.
 - LaunchAgent support lives at `~/Library/LaunchAgents/com.saagar.notification-hub.plist`.
 - `GET /health/details` reports whether push delivery is available, whether Slack is configured,
-  whether key local files exist, whether a policy config file was loaded, and current suppression
-  queue counters, without exposing secrets.
+  whether key local files exist, whether a policy config file was loaded, how many policy warnings
+  were found, and current suppression queue counters, without exposing secrets.
 
 ## Docs
 
