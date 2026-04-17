@@ -161,7 +161,10 @@ def test_policy_check_reports_warnings(
 
     assert report["status"] == "warn"
     assert report["warning_count"] == 2
+    assert report["suggestion_count"] == 2
     assert report["warnings"] == ["warning one", "warning two"]
+    assert len(report["suggestions"]) == 2
+    assert all(isinstance(suggestion, str) and suggestion for suggestion in report["suggestions"])
 
 
 def test_policy_check_reports_degraded_on_load_error(
@@ -185,3 +188,28 @@ def test_policy_check_reports_degraded_on_load_error(
 
     assert report["status"] == "degraded"
     assert report["load_error"] == "bad toml"
+    assert report["suggestion_count"] == 0
+    assert report["suggestions"] == []
+
+
+def test_policy_check_maps_shadowed_rule_to_fix_suggestion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    policy = PolicyConfig(
+        config_found=True,
+        classification=ClassificationPolicy(),
+        suppression=SuppressionPolicy(),
+        routing=RoutingPolicy(
+            rules=(
+                RoutingRule(source="codex"),
+                RoutingRule(source="codex", project="notification-hub", disable_slack=True),
+            )
+        ),
+    )
+
+    monkeypatch.setattr(ops_mod, "get_policy_config", lambda: policy)
+
+    report = run_policy_check()
+
+    assert report["status"] == "warn"
+    assert any("Move the narrower rule earlier" in suggestion for suggestion in report["suggestions"])
