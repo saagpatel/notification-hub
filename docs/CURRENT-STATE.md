@@ -65,7 +65,7 @@ uv run notification-hub retention --max-events 2000
 
 Expected current outcome:
 
-- `pytest`: 181 passed
+- `pytest`: 182 passed
 - `ruff`: clean
 - `pyright`: 0 errors
 - `/health/details`: `status: ok`, watcher active, push available, Slack configured
@@ -88,11 +88,11 @@ Additional behavioral baseline:
 - `notification-hub bootstrap-config` copies that sample into `~/.config/notification-hub/config.toml`
   and preserves an existing config unless `--force` is used
 - `notification-hub policy-check` is available as a non-mutating ruleset audit tool with suggested
-  next fixes for the common warning cases
+  next fixes for the common warning cases, including disabled automatic retention and ineffective
+  `continue_matching` usage
 - `notification-hub explain` is available as a non-mutating policy preview tool
 - Bootstrap command wiring is verified, but live bootstrap is intentionally not part of the routine
   confidence pass when no user config exists yet because it would create local runtime state
-- Retention is still a manual operator action by choice; it is not scheduled automatically
 
 ## Runtime Notes
 

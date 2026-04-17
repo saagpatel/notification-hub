@@ -154,7 +154,8 @@ uv run notification-hub policy-check
 
 The audit output is intentionally non-mutating. It reports warnings plus likely next fixes such as
 moving a narrower rule earlier, removing a redundant matcher, or deleting a rule that does not
-change behavior.
+change behavior. It also flags disabled automatic retention and `continue_matching` rules that
+cannot actually continue into a later rule.
 
 ## Verification
 

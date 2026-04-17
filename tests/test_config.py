@@ -272,6 +272,18 @@ text_contains = "session complete"
 
 
 class TestPolicyAnalysis:
+    def test_warns_when_automatic_retention_is_disabled(self) -> None:
+        policy = PolicyConfig(
+            classification=ClassificationPolicy(),
+            suppression=SuppressionPolicy(),
+            retention=RetentionPolicy(enabled=False),
+            routing=RoutingPolicy(),
+        )
+
+        warnings = analyze_policy_config(policy)
+
+        assert any("automatic retention is disabled" in warning for warning in warnings)
+
     def test_warns_on_shadowed_and_noop_routing_rules(self) -> None:
         policy = PolicyConfig(
             classification=ClassificationPolicy(),
@@ -356,3 +368,22 @@ class TestPolicyAnalysis:
         warnings = analyze_policy_config(policy)
 
         assert not any("shadowed" in warning for warning in warnings)
+
+    def test_warns_when_continue_matching_is_used_on_last_rule(self) -> None:
+        policy = PolicyConfig(
+            classification=ClassificationPolicy(),
+            suppression=SuppressionPolicy(),
+            routing=RoutingPolicy(
+                rules=(
+                    RoutingRule(
+                        project="notification-hub",
+                        disable_slack=True,
+                        continue_matching=True,
+                    ),
+                )
+            ),
+        )
+
+        warnings = analyze_policy_config(policy)
+
+        assert any("sets continue_matching but there is no later rule to continue into" in warning for warning in warnings)

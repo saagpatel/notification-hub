@@ -323,6 +323,12 @@ def analyze_policy_config(policy: PolicyConfig | None = None) -> tuple[str, ...]
     """Return human-readable warnings for overlapping or ineffective policy rules."""
     current_policy = get_policy_config() if policy is None else policy
     warnings: list[str] = []
+    total_rules = len(current_policy.routing.rules)
+
+    if not current_policy.retention.enabled:
+        warnings.append(
+            "automatic retention is disabled; the live event log will only prune when you run retention manually"
+        )
 
     keyword_to_first_group: dict[str, str] = {}
     for group_name, attribute_name in _CLASSIFICATION_PRECEDENCE:
@@ -344,6 +350,11 @@ def analyze_policy_config(policy: PolicyConfig | None = None) -> tuple[str, ...]
         if rule.force_level is None and not rule.disable_push and not rule.disable_slack:
             warnings.append(
                 f"routing rule {index} does not change level or delivery behavior"
+            )
+
+        if rule.continue_matching and index == total_rules:
+            warnings.append(
+                f"routing rule {index} sets continue_matching but there is no later rule to continue into"
             )
 
         for prior_index, prior_rule in enumerate(prior_rules, start=1):
