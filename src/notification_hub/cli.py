@@ -6,6 +6,7 @@ import argparse
 import json
 import sys
 from collections.abc import Sequence
+from typing import cast
 
 from notification_hub.diagnostics import collect_doctor_report
 from notification_hub.models import Event
@@ -169,6 +170,9 @@ def _print_explain_report(report: dict[str, object]) -> None:
         print(f"- matched keyword: {classification['matched_keyword']}")
     print(f"- routing reason: {routing['reason']}")
     print(f"- final level: {routing['final_level']}")
+    matched_rule_indices = cast(list[object], routing["matched_rule_indices"])
+    if matched_rule_indices:
+        print(f"- matched rules: {matched_rule_indices}")
     print(f"- push would send: {delivery['push']}")
     print(f"- slack would send: {delivery['slack']}")
 

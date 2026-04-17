@@ -45,7 +45,8 @@ as implementation history rather than the primary current-state source.
 
 - Policy config supports classifier, suppression, and ordered routing rules
 - Routing rules can match by exact `project`/`source`, `project_prefix`, and title/body/text contains checks
-- The first matching rule may force a classified level or disable push/Slack delivery
+- The first matching rule may force a classified level or disable push/Slack delivery, unless a rule
+  opts into `continue_matching` so later rules can keep refining the decision
 - `notification-hub policy-check` audits overlaps, shadowing, and no-op policy rules and suggests likely fixes
 - `notification-hub explain` previews classification, routing, and delivery without sending anything
 - `notification-hub bootstrap-config` installs the sample config locally without overwriting an

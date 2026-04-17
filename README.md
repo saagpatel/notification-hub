@@ -100,6 +100,7 @@ max_quiet_queue = 200
 project = "notification-hub"
 force_level = "normal"
 disable_push = true
+continue_matching = true
 
 [[routing.rules]]
 source = "bridge_watcher"
@@ -118,6 +119,8 @@ Routing rules are matched in order, and the first matching rule can override the
 disable push/Slack delivery for that event.
 Matchers can now use exact source/project, `project_prefix`, and lowercase `title_contains`,
 `body_contains`, or `text_contains` checks.
+If a rule sets `continue_matching = true`, notification-hub keeps evaluating later rules so a policy
+can compose multiple overrides instead of stopping at the first match.
 
 First-time setup shortcut:
 

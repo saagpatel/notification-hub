@@ -238,8 +238,59 @@ class TestClassificationRouting:
         assert explanation.classification.output_level == "urgent"
         assert explanation.routing.level == "normal"
         assert explanation.routing.matched_rule_index == 1
+        assert explanation.routing.matched_rule_indices == (1,)
         assert explanation.push_delivery is False
         assert explanation.slack_delivery is True
+
+    def test_continue_matching_allows_rule_composition(self, tmp_log: Path) -> None:
+        policy = PolicyConfig(
+            routing=RoutingPolicy(
+                rules=(
+                    RoutingRule(
+                        project_prefix="notification-",
+                        force_level="normal",
+                        continue_matching=True,
+                    ),
+                    RoutingRule(
+                        title_contains="review",
+                        disable_slack=True,
+                    ),
+                )
+            )
+        )
+
+        p1, p2, p3 = _patch_channels()
+        with (
+            patch("notification_hub.pipeline.get_policy_config", return_value=policy),
+            p1 as mock_push,
+            p2 as mock_slack,
+            p3,
+            _patch_daytime(),
+        ):
+            stored = process_event(
+                _event(
+                    title="Review ready",
+                    body="Approval needed",
+                    project="notification-hub",
+                )
+            )
+
+        assert stored.classified_level == "normal"
+        mock_push.assert_not_called()
+        mock_slack.assert_not_called()
+
+        with patch("notification_hub.pipeline.get_policy_config", return_value=policy):
+            explanation = explain_event(
+                _event(
+                    title="Review ready",
+                    body="Approval needed",
+                    project="notification-hub",
+                )
+            )
+
+        assert explanation.routing.matched_rule_index == 2
+        assert explanation.routing.matched_rule_indices == (1, 2)
+        assert explanation.routing.reason == "matched routing rules 1, 2; stopped at rule 2"
 
     def test_build_event_explanation_report_is_json_ready(self, tmp_log: Path) -> None:
         policy = PolicyConfig(
@@ -266,6 +317,7 @@ class TestClassificationRouting:
         assert isinstance(delivery, dict)
         assert classification["matched_group"] == "normal"
         assert routing["matched_rule_index"] == 1
+        assert routing["matched_rule_indices"] == [1]
         assert delivery["push"] is False
         assert delivery["slack"] is False
 
@@ -296,6 +348,41 @@ class TestClassificationRouting:
         matched_rule = cast(dict[str, object], routing["matched_rule"])
         assert matched_rule["project_prefix"] == "notification-"
         assert matched_rule["text_contains"] == "session complete"
+
+    def test_explanation_report_includes_all_matched_rules(self, tmp_log: Path) -> None:
+        policy = PolicyConfig(
+            routing=RoutingPolicy(
+                rules=(
+                    RoutingRule(
+                        project_prefix="notification-",
+                        force_level="normal",
+                        continue_matching=True,
+                    ),
+                    RoutingRule(
+                        title_contains="review",
+                        disable_slack=True,
+                    ),
+                )
+            )
+        )
+
+        with patch("notification_hub.pipeline.get_policy_config", return_value=policy):
+            report = build_event_explanation_report(
+                _event(
+                    title="Review ready",
+                    body="Approval needed",
+                    project="notification-hub",
+                )
+            )
+
+        routing = cast(dict[str, object], report["routing"])
+        assert routing["matched_rule_indices"] == [1, 2]
+        matched_rules = cast(list[object], routing["matched_rules"])
+        assert len(matched_rules) == 2
+        first_rule = cast(dict[str, object], matched_rules[0])
+        second_rule = cast(dict[str, object], matched_rules[1])
+        assert first_rule["continue_matching"] is True
+        assert second_rule["disable_slack"] is True
 
 
 class TestLogging:
