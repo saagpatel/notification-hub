@@ -23,6 +23,12 @@ max_slack_per_hour = 20
 max_overflow_buffer = 500
 max_quiet_queue = 200
 
+[retention]
+enabled = true
+interval_minutes = 60
+max_events = 2000
+keep_archives = 10
+
 [[routing.rules]]
 project = "notification-hub"
 force_level = "normal"

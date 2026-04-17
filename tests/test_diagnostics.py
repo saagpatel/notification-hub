@@ -30,6 +30,12 @@ def test_collect_runtime_readiness_reports_config_and_paths() -> None:
                 config_found=True,
                 load_error=None,
                 routing=MagicMock(rules=("a", "b")),
+                retention=MagicMock(
+                    enabled=True,
+                    interval_minutes=60,
+                    max_events=2000,
+                    keep_archives=10,
+                ),
             ),
         ),
         patch("notification_hub.diagnostics.config_mod.analyze_policy_config", return_value=("w1", "w2", "w3")),
@@ -53,6 +59,12 @@ def test_collect_runtime_readiness_reports_config_and_paths() -> None:
         "load_error": None,
         "routing_rule_count": 2,
         "warning_count": 3,
+    }
+    assert data["retention"] == {
+        "enabled": True,
+        "interval_minutes": 60,
+        "max_events": 2000,
+        "keep_archives": 10,
     }
 
 
@@ -78,6 +90,12 @@ def test_collect_doctor_report_handles_local_api_failure() -> None:
                     "routing_rule_count": 0,
                     "warning_count": 0,
                 },
+                "retention": {
+                    "enabled": True,
+                    "interval_minutes": 60,
+                    "max_events": 2000,
+                    "keep_archives": 10,
+                },
             },
         ),
         patch(
@@ -100,6 +118,7 @@ def test_cli_json_output(capsys: CaptureFixture[str]) -> None:
             "status": "ok",
             "checks": {"local_api_healthy": True},
             "config": {"path": "/tmp/config.toml", "load_error": None, "routing_rule_count": 0, "warning_count": 0},
+            "retention": {"enabled": True, "interval_minutes": 60, "max_events": 2000, "keep_archives": 10},
             "local_api": {"url": "http://127.0.0.1:9199/health/details"},
         },
     ):
@@ -243,6 +262,7 @@ def test_doctor_main_forwards_flags(capsys: CaptureFixture[str]) -> None:
             "status": "ok",
             "checks": {"local_api_healthy": True},
             "config": {"path": "/tmp/config.toml", "load_error": None, "routing_rule_count": 0, "warning_count": 0},
+            "retention": {"enabled": True, "interval_minutes": 60, "max_events": 2000, "keep_archives": 10},
             "local_api": {"url": "http://127.0.0.1:9199/health/details"},
         },
     ):

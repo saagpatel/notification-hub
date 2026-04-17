@@ -89,6 +89,10 @@ DEFAULT_MAX_PUSH_PER_HOUR = 5
 DEFAULT_MAX_SLACK_PER_HOUR = 20
 DEFAULT_MAX_OVERFLOW_BUFFER = 500
 DEFAULT_MAX_QUIET_QUEUE = 200
+DEFAULT_RETENTION_ENABLED = True
+DEFAULT_RETENTION_INTERVAL_MINUTES = 60
+DEFAULT_RETENTION_MAX_EVENTS = 2000
+DEFAULT_RETENTION_KEEP_ARCHIVES = 10
 VALID_LEVELS = frozenset(("urgent", "normal", "info"))
 VALID_SOURCES = frozenset(("codex", "cc", "claude_ai", "bridge_watcher"))
 
@@ -109,6 +113,14 @@ class SuppressionPolicy:
     max_slack_per_hour: int = DEFAULT_MAX_SLACK_PER_HOUR
     max_overflow_buffer: int = DEFAULT_MAX_OVERFLOW_BUFFER
     max_quiet_queue: int = DEFAULT_MAX_QUIET_QUEUE
+
+
+@dataclass(frozen=True)
+class RetentionPolicy:
+    enabled: bool = DEFAULT_RETENTION_ENABLED
+    interval_minutes: int = DEFAULT_RETENTION_INTERVAL_MINUTES
+    max_events: int = DEFAULT_RETENTION_MAX_EVENTS
+    keep_archives: int = DEFAULT_RETENTION_KEEP_ARCHIVES
 
 
 @dataclass(frozen=True)
@@ -137,6 +149,7 @@ class PolicyConfig:
     load_error: str | None = None
     classification: ClassificationPolicy = field(default_factory=ClassificationPolicy)
     suppression: SuppressionPolicy = field(default_factory=SuppressionPolicy)
+    retention: RetentionPolicy = field(default_factory=RetentionPolicy)
     routing: RoutingPolicy = field(default_factory=RoutingPolicy)
 
 
@@ -356,6 +369,7 @@ def _build_policy_config(
     root = _as_mapping(raw_config)
     classifier = _as_mapping(root.get("classifier"))
     suppression = _as_mapping(root.get("suppression"))
+    retention = _as_mapping(root.get("retention"))
     routing = _as_mapping(root.get("routing"))
 
     return PolicyConfig(
@@ -412,6 +426,24 @@ def _build_policy_config(
             max_quiet_queue=_as_int(
                 suppression.get("max_quiet_queue"),
                 DEFAULT_MAX_QUIET_QUEUE,
+                minimum=1,
+            ),
+        ),
+        retention=RetentionPolicy(
+            enabled=_as_bool(retention.get("enabled"), DEFAULT_RETENTION_ENABLED),
+            interval_minutes=_as_int(
+                retention.get("interval_minutes"),
+                DEFAULT_RETENTION_INTERVAL_MINUTES,
+                minimum=1,
+            ),
+            max_events=_as_int(
+                retention.get("max_events"),
+                DEFAULT_RETENTION_MAX_EVENTS,
+                minimum=1,
+            ),
+            keep_archives=_as_int(
+                retention.get("keep_archives"),
+                DEFAULT_RETENTION_KEEP_ARCHIVES,
                 minimum=1,
             ),
         ),

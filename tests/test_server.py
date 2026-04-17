@@ -9,6 +9,8 @@ from unittest.mock import patch
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+import notification_hub.server as server_mod
+from notification_hub.config import PolicyConfig, RetentionPolicy
 from notification_hub.pipeline import reset_suppression_engine
 from notification_hub.server import app
 
@@ -67,9 +69,28 @@ async def test_health_details_endpoint(client: AsyncClient) -> None:
                     "routing_rule_count": 0,
                     "warning_count": 0,
                 },
+                "retention": {
+                    "enabled": True,
+                    "interval_minutes": 60,
+                    "max_events": 2000,
+                    "keep_archives": 10,
+                },
             },
         ),
         patch("notification_hub.server.get_suppression_engine") as mock_engine,
+        patch(
+            "notification_hub.server.get_retention_runtime_status",
+            return_value={
+                "enabled": True,
+                "interval_minutes": 60,
+                "max_events": 2000,
+                "keep_archives": 10,
+                "last_checked_at": "2026-04-17T12:00:00Z",
+                "last_status": "ok",
+                "last_rotated": False,
+                "last_archive_path": None,
+            },
+        ),
     ):
         mock_engine.return_value.snapshot.return_value = {
             "dedup_entries": 0,
@@ -98,6 +119,16 @@ async def test_health_details_endpoint(client: AsyncClient) -> None:
         "load_error": None,
         "routing_rule_count": 0,
         "warning_count": 0,
+    }
+    assert data["retention"] == {
+        "enabled": True,
+        "interval_minutes": 60,
+        "max_events": 2000,
+        "keep_archives": 10,
+        "last_checked_at": "2026-04-17T12:00:00Z",
+        "last_status": "ok",
+        "last_rotated": False,
+        "last_archive_path": None,
     }
     assert data["suppression"] == {
         "dedup_entries": 0,
@@ -208,3 +239,48 @@ async def test_create_event_all_sources(client: AsyncClient) -> None:
         with _mock_channels():
             resp = await client.post("/events", json=payload)
         assert resp.status_code == 201, f"Failed for source: {source}"
+
+
+def test_run_retention_once_updates_runtime_status(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        server_mod,
+        "get_policy_config",
+        lambda: PolicyConfig(
+            retention=RetentionPolicy(
+                enabled=True,
+                interval_minutes=30,
+                max_events=111,
+                keep_archives=5,
+            )
+        ),
+    )
+    def _run_retention(*, max_events: int, keep_archives: int) -> dict[str, object]:
+        return {
+            "status": "ok",
+            "rotated": True,
+            "archive_path": "/tmp/archive.jsonl",
+            "events_before": 120,
+            "events_after": 111,
+            "archived_events": 9,
+            "deleted_archives": [],
+        }
+
+    def _strftime(_format: str, _time_tuple: object) -> str:
+        return "2026-04-17T12:00:00Z"
+
+    monkeypatch.setattr(server_mod, "run_retention", _run_retention)
+    monkeypatch.setattr(server_mod.time, "strftime", _strftime)
+
+    server_mod.reset_retention_runtime_state()
+    server_mod.run_retention_check_once()
+
+    assert server_mod.get_retention_runtime_status() == {
+        "enabled": True,
+        "interval_minutes": 30,
+        "max_events": 111,
+        "keep_archives": 5,
+        "last_checked_at": "2026-04-17T12:00:00Z",
+        "last_status": "ok",
+        "last_rotated": True,
+        "last_archive_path": "/tmp/archive.jsonl",
+    }

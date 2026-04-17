@@ -51,7 +51,8 @@ as implementation history rather than the primary current-state source.
 - `notification-hub explain` previews classification, routing, and delivery without sending anything
 - `notification-hub bootstrap-config` installs the sample config locally without overwriting an
   existing config unless `--force` is used
-- Retention remains an explicit operator action, not a background job
+- Retention now runs automatically on the daemon schedule, while the manual command still exists for
+  immediate operator-triggered passes
 
 ## Phase 0: FastAPI Skeleton + JSONL Logging + Bridge File Watcher
 

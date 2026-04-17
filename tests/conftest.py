@@ -42,10 +42,13 @@ def isolate_runtime_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> It
     monkeypatch.setattr(server_mod, "_event_count", 0)
     monkeypatch.setattr(server_mod, "_observer", None)
     monkeypatch.setattr(server_mod, "_start_time", 0.0)
+    monkeypatch.setattr(server_mod, "_retention_task", None)
+    server_mod.reset_retention_runtime_state()
 
     clear_webhook_cache()
     clear_policy_cache()
     reset_suppression_engine()
     yield
+    server_mod.reset_retention_runtime_state()
     clear_webhook_cache()
     clear_policy_cache()
