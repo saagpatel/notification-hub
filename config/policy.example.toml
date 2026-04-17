@@ -31,3 +31,9 @@ disable_push = true
 [[routing.rules]]
 source = "bridge_watcher"
 disable_slack = true
+
+[[routing.rules]]
+project_prefix = "notification-"
+title_contains = "review"
+body_contains = "verification"
+disable_slack = true

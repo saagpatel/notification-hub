@@ -44,7 +44,7 @@ as implementation history rather than the primary current-state source.
 ### Current Operator/Config Shape
 
 - Policy config supports classifier, suppression, and ordered routing rules
-- Routing rules can match by `project` and/or `source`
+- Routing rules can match by exact `project`/`source`, `project_prefix`, and title/body/text contains checks
 - The first matching rule may force a classified level or disable push/Slack delivery
 - `notification-hub policy-check` audits overlaps, shadowing, and no-op policy rules
 - `notification-hub explain` previews classification, routing, and delivery without sending anything

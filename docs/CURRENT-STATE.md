@@ -17,6 +17,7 @@ Last updated: 2026-04-17
   config into the live config path.
 - A local explain command can preview classification, routing, and delivery without sending anything.
 - A local policy-check command can audit the ruleset for overlaps, shadowing, and no-op rules.
+- Routing rules now support exact and prefix/text matchers instead of only exact source/project matching.
 - The earlier runtime-hardening and repo-cleanup pass is complete.
 
 ## What Was Cleaned Up
@@ -35,6 +36,7 @@ Last updated: 2026-04-17
   manual copy step.
 - Added `notification-hub explain` so policy behavior can be previewed before a real event is sent.
 - Added `notification-hub policy-check` so the policy itself can be audited before it gets confusing.
+- Added richer routing matchers like `project_prefix`, `title_contains`, `body_contains`, and `text_contains`.
 
 ## Verified Baseline
 
@@ -55,7 +57,7 @@ uv run notification-hub retention --max-events 2000
 
 Expected current outcome:
 
-- `pytest`: 172 passed
+- `pytest`: 177 passed
 - `ruff`: clean
 - `pyright`: 0 errors
 - `/health/details`: `status: ok`, watcher active, push available, Slack configured
@@ -69,6 +71,7 @@ Expected current outcome:
 Additional behavioral baseline:
 
 - `config/policy.example.toml` includes classifier, suppression, and routing examples
+- Routing rules can now match on `project_prefix`, `title_contains`, `body_contains`, and `text_contains`
 - `notification-hub bootstrap-config` copies that sample into `~/.config/notification-hub/config.toml`
   and preserves an existing config unless `--force` is used
 - `notification-hub policy-check` is available as a non-mutating ruleset audit tool
