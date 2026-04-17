@@ -16,7 +16,8 @@ Last updated: 2026-04-17
 - Policy config now also supports ordered routing rules, and a bootstrap command can copy the sample
   config into the live config path.
 - A local explain command can preview classification, routing, and delivery without sending anything.
-- A local policy-check command can audit the ruleset for overlaps, shadowing, and no-op rules.
+- A local policy-check command can audit the ruleset for overlaps, shadowing, and no-op rules,
+  and now suggests likely fixes for each warning.
 - Routing rules now support exact and prefix/text matchers instead of only exact source/project matching.
 - The earlier runtime-hardening and repo-cleanup pass is complete.
 
@@ -35,7 +36,8 @@ Last updated: 2026-04-17
 - Added `notification-hub bootstrap-config` so first-time policy setup is a command instead of a
   manual copy step.
 - Added `notification-hub explain` so policy behavior can be previewed before a real event is sent.
-- Added `notification-hub policy-check` so the policy itself can be audited before it gets confusing.
+- Added `notification-hub policy-check` so the policy itself can be audited before it gets confusing,
+  with concrete next-fix suggestions in the operator output.
 - Added richer routing matchers like `project_prefix`, `title_contains`, `body_contains`, and `text_contains`.
 
 ## Verified Baseline
@@ -62,7 +64,8 @@ Expected current outcome:
 - `pyright`: 0 errors
 - `/health/details`: `status: ok`, watcher active, push available, Slack configured
 - `notification-hub-doctor`: `status: ok`
-- `notification-hub-policy-check`: `status: ok` or `warn`, depending on the active policy file
+- `notification-hub-policy-check`: `status: ok` or `warn`, depending on the active policy file,
+  plus warning-specific fix suggestions when issues are found
 - `notification-hub-explain`: returns a non-mutating classification/routing/delivery preview
 - `notification-hub smoke`: `status: ok`
 - `notification-hub retention --max-events 2000`: `status: ok`
@@ -74,7 +77,8 @@ Additional behavioral baseline:
 - Routing rules can now match on `project_prefix`, `title_contains`, `body_contains`, and `text_contains`
 - `notification-hub bootstrap-config` copies that sample into `~/.config/notification-hub/config.toml`
   and preserves an existing config unless `--force` is used
-- `notification-hub policy-check` is available as a non-mutating ruleset audit tool
+- `notification-hub policy-check` is available as a non-mutating ruleset audit tool with suggested
+  next fixes for the common warning cases
 - `notification-hub explain` is available as a non-mutating policy preview tool
 - Bootstrap command wiring is verified, but live bootstrap is intentionally not part of the routine
   confidence pass when no user config exists yet because it would create local runtime state

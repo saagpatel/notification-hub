@@ -58,7 +58,34 @@ class PolicyCheckReport(TypedDict):
     example_path: str
     load_error: str | None
     warning_count: int
+    suggestion_count: int
     warnings: list[str]
+    suggestions: list[str]
+
+
+def _suggest_fix_for_warning(warning: str) -> str:
+    """Turn a policy warning into a concrete next action."""
+    if "appears in both" in warning:
+        return (
+            "Keep the keyword in one classifier group only, or move it into the higher-priority "
+            "group if that overlap is intentional."
+        )
+    if "sets both project and project_prefix" in warning:
+        return (
+            "Drop `project_prefix` when you only mean one project, or remove `project` if you "
+            "really want the broader prefix match."
+        )
+    if "does not change level or delivery behavior" in warning:
+        return (
+            "Either add `force_level`, `disable_push`, or `disable_slack`, or delete the rule if "
+            "it is only restating the default behavior."
+        )
+    if "is shadowed by earlier rule" in warning:
+        return (
+            "Move the narrower rule earlier, or tighten the earlier rule so the later one still "
+            "has a chance to match."
+        )
+    return "Review the warning and simplify the policy rule or classifier entry so its intent is explicit."
 
 
 def run_smoke_check() -> SmokeReport:
@@ -228,6 +255,7 @@ def run_policy_check() -> PolicyCheckReport:
     """Analyze the current policy config for overlapping or ineffective rules."""
     policy = get_policy_config()
     warnings = list(analyze_policy_config(policy))
+    suggestions = [_suggest_fix_for_warning(warning) for warning in warnings]
     load_error = policy.load_error
 
     if load_error is not None or not EXAMPLE_POLICY_CONFIG.exists():
@@ -244,5 +272,7 @@ def run_policy_check() -> PolicyCheckReport:
         "example_path": str(EXAMPLE_POLICY_CONFIG),
         "load_error": load_error,
         "warning_count": len(warnings),
+        "suggestion_count": len(suggestions),
         "warnings": warnings,
+        "suggestions": suggestions,
     }

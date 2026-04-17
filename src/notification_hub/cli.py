@@ -142,10 +142,12 @@ def _print_policy_check_report(report: PolicyCheckReport) -> None:
     print(f"- config path: {report['config_path']}")
     print(f"- sample path: {report['example_path']}")
     print(f"- warning count: {report['warning_count']}")
+    print(f"- suggestion count: {report['suggestion_count']}")
     if report["load_error"] is not None:
         print(f"- load error: {report['load_error']}")
-    for warning in report["warnings"]:
+    for warning, suggestion in zip(report["warnings"], report["suggestions"], strict=False):
         print(f"- warning: {warning}")
+        print(f"- suggestion: {suggestion}")
 
 
 def _print_explain_report(report: dict[str, object]) -> None:

@@ -140,7 +140,9 @@ def test_cli_policy_check_json_output(capsys: CaptureFixture[str]) -> None:
             "example_path": "/tmp/example.toml",
             "load_error": None,
             "warning_count": 1,
+            "suggestion_count": 1,
             "warnings": ["shadowed rule"],
+            "suggestions": ["move the narrower rule earlier"],
         },
     ):
         exit_code = main(["policy-check", "--json"])
@@ -148,6 +150,7 @@ def test_cli_policy_check_json_output(capsys: CaptureFixture[str]) -> None:
     captured = capsys.readouterr()
     assert exit_code == 0
     assert '"warning_count": 1' in captured.out
+    assert '"suggestion_count": 1' in captured.out
 
 
 def test_cli_explain_json_output(capsys: CaptureFixture[str]) -> None:
@@ -296,7 +299,9 @@ def test_policy_check_wrapper_forwards_flags(capsys: CaptureFixture[str]) -> Non
             "example_path": "/tmp/example.toml",
             "load_error": None,
             "warning_count": 1,
+            "suggestion_count": 1,
             "warnings": ["shadowed rule"],
+            "suggestions": ["move the narrower rule earlier"],
         },
     ) as mock_policy_check:
         exit_code = policy_check_main(["--json"])

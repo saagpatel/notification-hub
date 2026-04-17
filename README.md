@@ -55,7 +55,8 @@ The doctor command checks the local API, LaunchAgent presence, bridge file path,
 Slack Keychain setup, and policy-config load status.
 The smoke command posts a harmless `info` event and verifies it lands in the live JSONL log.
 The policy-check command inspects the current policy config for overlapping keywords, shadowed
-routing rules, and no-op rules before they cause confusing behavior.
+routing rules, and no-op rules before they cause confusing behavior, and now also suggests likely
+fixes for each warning it reports.
 The explain command shows how a sample event would classify, route, and deliver without posting it
 to the live daemon or sending any notifications.
 The bootstrap command copies the repo sample policy file into `~/.config/notification-hub/config.toml`
@@ -139,6 +140,10 @@ Safe policy-audit shortcut:
 ```bash
 uv run notification-hub policy-check
 ```
+
+The audit output is intentionally non-mutating. It reports warnings plus likely next fixes such as
+moving a narrower rule earlier, removing a redundant matcher, or deleting a rule that does not
+change behavior.
 
 ## Verification
 
