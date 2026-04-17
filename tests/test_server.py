@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from contextlib import contextmanager
 from unittest.mock import patch
 
@@ -24,7 +25,7 @@ def _mock_channels():
 
 
 @pytest.fixture
-async def client() -> AsyncClient:
+async def client() -> AsyncIterator[AsyncClient]:
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
@@ -42,6 +43,26 @@ async def test_health_endpoint(client: AsyncClient) -> None:
     assert data["status"] == "ok"
     assert "uptime_seconds" in data
     assert "events_processed" in data
+
+
+async def test_health_details_endpoint(client: AsyncClient) -> None:
+    with (
+        patch("notification_hub.server.has_push_notifier", return_value=True),
+        patch("notification_hub.server.has_slack_webhook_configured", return_value=False),
+        patch("notification_hub.server._path_exists", side_effect=[True, False]),
+    ):
+        resp = await client.get("/health/details")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert data["delivery"] == {
+        "push_notifier_available": True,
+        "slack_webhook_configured": False,
+    }
+    assert data["paths"] == {
+        "bridge_file_exists": True,
+        "events_log_exists": False,
+    }
 
 
 async def test_create_event_valid(client: AsyncClient) -> None:

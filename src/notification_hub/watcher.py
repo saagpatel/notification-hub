@@ -7,6 +7,7 @@ import re
 from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Protocol, cast
 
 from watchdog.events import DirModifiedEvent, FileModifiedEvent, FileSystemEventHandler
 from watchdog.observers import Observer
@@ -15,6 +16,14 @@ from notification_hub.config import BRIDGE_FILE, WATCHED_SECTIONS
 from notification_hub.models import Event, Level
 
 logger = logging.getLogger(__name__)
+
+
+class ObserverHandle(Protocol):
+    """Minimal observer interface used by the server lifecycle."""
+
+    def stop(self) -> None: ...
+
+    def join(self, timeout: float | None = None) -> None: ...
 
 # Pattern for activity log entries:
 # - [YYYY-MM-DD] [optional-tag] project-name: summary (branch)
@@ -108,7 +117,7 @@ class BridgeFileHandler(FileSystemEventHandler):
                 self._on_event(parsed)
 
 
-def start_watcher(on_event: Callable[[Event], None]) -> Observer:
+def start_watcher(on_event: Callable[[Event], None]) -> ObserverHandle:
     """Start watching the bridge file directory. Returns the observer (call .stop() to halt)."""
     handler = BridgeFileHandler(on_event)
     observer = Observer()
@@ -117,4 +126,4 @@ def start_watcher(on_event: Callable[[Event], None]) -> Observer:
     observer.daemon = True
     observer.start()
     logger.info("Bridge file watcher started on %s", watch_dir)
-    return observer
+    return cast(ObserverHandle, observer)

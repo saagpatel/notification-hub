@@ -83,7 +83,11 @@ class SuppressionEngine:
 
     def record_push(self) -> None:
         """Record a push notification send."""
-        self._push_times.append(datetime.now(timezone.utc))
+        self.record_push_at(datetime.now(timezone.utc))
+
+    def record_push_at(self, at: datetime) -> None:
+        """Record a push notification at a specific time."""
+        self._push_times.append(at)
 
     def check_slack_rate(self) -> bool:
         """Return True if a Slack message is allowed under rate limit."""
@@ -95,7 +99,16 @@ class SuppressionEngine:
 
     def record_slack(self) -> None:
         """Record a Slack message send."""
-        self._slack_times.append(datetime.now(timezone.utc))
+        self.record_slack_at(datetime.now(timezone.utc))
+
+    def record_slack_at(self, at: datetime) -> None:
+        """Record a Slack message at a specific time."""
+        self._slack_times.append(at)
+
+    def clear_rate_history(self) -> None:
+        """Clear delivery history for both channels."""
+        self._push_times.clear()
+        self._slack_times.clear()
 
     def add_to_overflow(self, event: StoredEvent) -> None:
         """Add an event to the overflow buffer for later digest delivery."""

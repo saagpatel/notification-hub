@@ -8,6 +8,7 @@ import os
 import shutil
 import subprocess
 from pathlib import Path
+from typing import TypedDict
 
 import httpx
 
@@ -39,10 +40,53 @@ _SOURCE_EMOJI: dict[str, str] = {
     "bridge_watcher": ":bridge_at_night:",
 }
 
+_PUSH_NOTIFIER_CANDIDATES: tuple[str, ...] = (
+    "/opt/homebrew/bin/terminal-notifier",
+    "/usr/local/bin/terminal-notifier",
+)
+
+
+class SlackTextObject(TypedDict):
+    """Minimal mrkdwn text object used in Slack Block Kit payloads."""
+
+    type: str
+    text: str
+
+
+class SlackSectionBlock(TypedDict):
+    """Slack section block used for one-message payloads."""
+
+    type: str
+    text: SlackTextObject
+
+
+class SlackPayload(TypedDict):
+    """Typed Slack payload used by channel formatters and tests."""
+
+    blocks: list[SlackSectionBlock]
+    text: str
+
 
 def ensure_log_dir() -> None:
     """Create the events log directory with restricted permissions."""
     EVENTS_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+
+
+def find_push_notifier() -> str | None:
+    """Find terminal-notifier from PATH or common macOS install locations."""
+    if notifier := shutil.which("terminal-notifier"):
+        return notifier
+
+    for candidate in _PUSH_NOTIFIER_CANDIDATES:
+        if Path(candidate).exists():
+            return candidate
+
+    return None
+
+
+def has_push_notifier() -> bool:
+    """Return whether terminal-notifier is available on this machine."""
+    return find_push_notifier() is not None
 
 
 def write_jsonl(event: StoredEvent) -> None:
@@ -73,7 +117,7 @@ def read_jsonl(path: Path | None = None) -> list[StoredEvent]:
 
 def send_push(event: StoredEvent) -> bool:
     """Send a macOS push notification via terminal-notifier. Returns True if sent."""
-    notifier = shutil.which("terminal-notifier")
+    notifier = find_push_notifier()
     if notifier is None:
         logger.warning("terminal-notifier not found, skipping push for %s", event.event_id)
         return False
@@ -118,7 +162,7 @@ def send_push(event: StoredEvent) -> bool:
         return False
 
 
-def _format_slack_message(event: StoredEvent) -> dict[str, object]:
+def format_slack_message(event: StoredEvent) -> SlackPayload:
     """Build a Slack Block Kit message payload for an event."""
     level = event.classified_level or event.level
     level_emoji = _LEVEL_EMOJI.get(level, ":white_circle:")
@@ -145,7 +189,7 @@ def _format_slack_message(event: StoredEvent) -> dict[str, object]:
     }
 
 
-def _format_slack_digest(events: list[StoredEvent]) -> dict[str, object]:
+def format_slack_digest(events: list[StoredEvent]) -> SlackPayload:
     """Build a Slack digest message for multiple batched events."""
     lines: list[str] = []
     for event in events:
@@ -174,7 +218,7 @@ def send_slack(event: StoredEvent) -> bool:
         logger.warning("No Slack webhook configured, skipping event %s", event.event_id)
         return False
 
-    payload = _format_slack_message(event)
+    payload = format_slack_message(event)
     try:
         resp = httpx.post(webhook_url, json=payload, timeout=10)
         if resp.status_code == 200:
@@ -197,7 +241,7 @@ def send_slack_digest(events: list[StoredEvent]) -> bool:
         logger.warning("No Slack webhook configured, skipping digest of %d events", len(events))
         return False
 
-    payload = _format_slack_digest(events)
+    payload = format_slack_digest(events)
     try:
         resp = httpx.post(webhook_url, json=payload, timeout=10)
         if resp.status_code == 200:

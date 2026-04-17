@@ -57,11 +57,11 @@ def classify(event: Event) -> Level:
     if any(kw in text for kw in URGENT_KEYWORDS):
         return "urgent"
 
-    if any(kw in text for kw in NORMAL_KEYWORDS):
-        return "normal"
-
     if any(kw in text for kw in INFO_KEYWORDS):
         return "info"
+
+    if any(kw in text for kw in NORMAL_KEYWORDS):
+        return "normal"
 
     # Fall back to the level provided by the source
     return event.level

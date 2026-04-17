@@ -2,16 +2,14 @@
 
 from __future__ import annotations
 
-import pytest
-
 from notification_hub.classifier import classify
-from notification_hub.models import Event
+from notification_hub.models import Event, Level
 
 
-def _event(title: str = "Test", body: str = "Test body", level: str = "info") -> Event:
+def _event(title: str = "Test", body: str = "Test body", level: Level = "info") -> Event:
     return Event(
         source="cc",
-        level=level,  # type: ignore[arg-type]
+        level=level,
         title=title,
         body=body,
     )
@@ -72,6 +70,9 @@ class TestInfoClassification:
 
     def test_bridge_file_read(self) -> None:
         assert classify(_event(body="Bridge file read by weekly-review")) == "info"
+
+    def test_info_keyword_overrides_normal_keyword(self) -> None:
+        assert classify(_event(body="Session complete status update")) == "info"
 
 
 class TestFallback:
