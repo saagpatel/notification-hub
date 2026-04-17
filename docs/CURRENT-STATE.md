@@ -89,7 +89,7 @@ Additional behavioral baseline:
   and preserves an existing config unless `--force` is used
 - `notification-hub policy-check` is available as a non-mutating ruleset audit tool with suggested
   next fixes for the common warning cases, including disabled automatic retention and ineffective
-  `continue_matching` usage
+  `continue_matching` usage, plus redundant rules inside a continue-matching chain
 - `notification-hub explain` is available as a non-mutating policy preview tool
 - Bootstrap command wiring is verified, but live bootstrap is intentionally not part of the routine
   confidence pass when no user config exists yet because it would create local runtime state

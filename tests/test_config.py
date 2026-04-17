@@ -387,3 +387,30 @@ class TestPolicyAnalysis:
         warnings = analyze_policy_config(policy)
 
         assert any("sets continue_matching but there is no later rule to continue into" in warning for warning in warnings)
+
+    def test_warns_when_rule_is_redundant_after_continue_matching_chain(self) -> None:
+        policy = PolicyConfig(
+            classification=ClassificationPolicy(),
+            suppression=SuppressionPolicy(),
+            routing=RoutingPolicy(
+                rules=(
+                    RoutingRule(
+                        project_prefix="notification-",
+                        disable_slack=True,
+                        continue_matching=True,
+                    ),
+                    RoutingRule(
+                        project="notification-hub",
+                        disable_slack=True,
+                    ),
+                )
+            ),
+        )
+
+        warnings = analyze_policy_config(policy)
+
+        assert any(
+            "routing rule 2 does not add behavior beyond earlier continue-matching rule(s) 1"
+            in warning
+            for warning in warnings
+        )

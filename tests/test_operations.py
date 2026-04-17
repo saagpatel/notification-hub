@@ -242,3 +242,33 @@ def test_policy_check_maps_retention_and_continue_warnings_to_fix_suggestions(
     assert report["status"] == "warn"
     assert any("Re-enable retention" in suggestion for suggestion in report["suggestions"])
     assert any("Remove `continue_matching` on the final rule" in suggestion for suggestion in report["suggestions"])
+
+
+def test_policy_check_maps_redundant_continue_chain_warning_to_fix_suggestion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    policy = PolicyConfig(
+        config_found=True,
+        classification=ClassificationPolicy(),
+        suppression=SuppressionPolicy(),
+        routing=RoutingPolicy(
+            rules=(
+                RoutingRule(
+                    project_prefix="notification-",
+                    disable_slack=True,
+                    continue_matching=True,
+                ),
+                RoutingRule(
+                    project="notification-hub",
+                    disable_slack=True,
+                ),
+            )
+        ),
+    )
+
+    monkeypatch.setattr(ops_mod, "get_policy_config", lambda: policy)
+
+    report = run_policy_check()
+
+    assert report["status"] == "warn"
+    assert any("Delete the redundant rule" in suggestion for suggestion in report["suggestions"])
