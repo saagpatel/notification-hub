@@ -85,10 +85,15 @@ def _suggest_fix_for_warning(warning: str) -> str:
             "Either add `force_level`, `disable_push`, or `disable_slack`, or delete the rule if "
             "it is only restating the default behavior."
         )
-    if "is shadowed by earlier rule" in warning:
+    if "is shadowed by earlier" in warning:
         return (
             "Move the narrower rule earlier, or tighten the earlier rule so the later one still "
             "has a chance to match."
+        )
+    if "share priority" in warning:
+        return (
+            "Give the more important rule a higher `priority`, or keep them on the same priority "
+            "only if file order deciding between them is intentional."
         )
     if "sets continue_matching but there is no later rule to continue into" in warning:
         return (

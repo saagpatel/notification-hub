@@ -20,6 +20,7 @@ Last updated: 2026-04-17
   and now suggests likely fixes for each warning.
 - Routing rules now support exact and prefix/text matchers instead of only exact source/project matching.
 - Routing rules can now also opt into `continue_matching` so multiple matching rules can compose.
+- Routing rules can now also use explicit `priority`, so higher-priority rules run before lower-priority ones.
 - Event-log retention now runs automatically on the daemon’s schedule, not just as a manual command.
 - The earlier runtime-hardening and repo-cleanup pass is complete.
 
@@ -43,6 +44,8 @@ Last updated: 2026-04-17
 - Added richer routing matchers like `project_prefix`, `title_contains`, `body_contains`, and `text_contains`.
 - Added `continue_matching` routing behavior so one matching rule can refine level/delivery and still
   let later rules add more constraints.
+- Added explicit routing rule priorities so policy authors can control evaluation order without
+  rewriting the whole file.
 - Added scheduled automatic retention so the live JSONL log can prune itself without relying on a
   separate operator run.
 
@@ -65,7 +68,7 @@ uv run notification-hub retention --max-events 2000
 
 Expected current outcome:
 
-- `pytest`: 182 passed
+- `pytest`: 190 passed
 - `ruff`: clean
 - `pyright`: 0 errors
 - `/health/details`: `status: ok`, watcher active, push available, Slack configured
@@ -81,6 +84,8 @@ Additional behavioral baseline:
 
 - `config/policy.example.toml` includes classifier, suppression, and routing examples
 - Routing rules can now match on `project_prefix`, `title_contains`, `body_contains`, and `text_contains`
+- Higher-priority routing rules now run before lower-priority ones, while same-priority rules still
+  preserve file order
 - Routing rules still stop at the first match by default, but a rule can opt into
   `continue_matching = true` when later rules should keep refining delivery
 - Retention now runs automatically with the daemon’s configured interval and still supports the
@@ -89,7 +94,8 @@ Additional behavioral baseline:
   and preserves an existing config unless `--force` is used
 - `notification-hub policy-check` is available as a non-mutating ruleset audit tool with suggested
   next fixes for the common warning cases, including disabled automatic retention and ineffective
-  `continue_matching` usage, plus redundant rules inside a continue-matching chain
+  `continue_matching` usage, redundant rules inside a continue-matching chain, and same-priority
+  ties that still depend on file order
 - `notification-hub explain` is available as a non-mutating policy preview tool
 - Bootstrap command wiring is verified, but live bootstrap is intentionally not part of the routine
   confidence pass when no user config exists yet because it would create local runtime state

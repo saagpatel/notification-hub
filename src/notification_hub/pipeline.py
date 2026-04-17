@@ -8,7 +8,12 @@ from typing import cast
 
 from notification_hub.channels import send_push, send_slack, send_slack_digest, write_jsonl
 from notification_hub.classifier import ClassificationDecision, explain_classification
-from notification_hub.config import RoutingRule, get_policy_config, has_slack_webhook_configured
+from notification_hub.config import (
+    RoutingRule,
+    get_policy_config,
+    has_slack_webhook_configured,
+    iter_routing_rules_in_evaluation_order,
+)
 from notification_hub.models import Event, Level, StoredEvent
 from notification_hub.suppression import SuppressionEngine
 
@@ -51,7 +56,7 @@ def _resolve_routing(event: Event, classified_level: Level) -> RoutingDecision:
     allow_slack = True
     matched_indices: list[int] = []
     matched_rules: list[RoutingRule] = []
-    for index, rule in enumerate(policy.rules, start=1):
+    for index, rule in iter_routing_rules_in_evaluation_order(policy.rules):
         if rule.source is not None and rule.source != event.source:
             continue
         if rule.project is not None and rule.project != event.project:
@@ -148,6 +153,7 @@ def _routing_rule_to_dict(rule: RoutingRule | None) -> dict[str, object] | None:
         "disable_push": rule.disable_push,
         "disable_slack": rule.disable_slack,
         "continue_matching": rule.continue_matching,
+        "priority": rule.priority,
     }
 
 

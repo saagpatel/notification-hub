@@ -104,12 +104,14 @@ keep_archives = 10
 
 [[routing.rules]]
 project = "notification-hub"
+priority = 20
 force_level = "normal"
 disable_push = true
 continue_matching = true
 
 [[routing.rules]]
 source = "bridge_watcher"
+priority = 10
 disable_slack = true
 
 [[routing.rules]]
@@ -125,6 +127,7 @@ Routing rules are matched in order, and the first matching rule can override the
 disable push/Slack delivery for that event.
 Matchers can now use exact source/project, `project_prefix`, and lowercase `title_contains`,
 `body_contains`, or `text_contains` checks.
+Rules with a higher `priority` run first, and rules with the same priority keep their file order.
 If a rule sets `continue_matching = true`, notification-hub keeps evaluating later rules so a policy
 can compose multiple overrides instead of stopping at the first match.
 Retention is enabled by default with a conservative hourly check. It only rotates the log when the
@@ -155,8 +158,8 @@ uv run notification-hub policy-check
 The audit output is intentionally non-mutating. It reports warnings plus likely next fixes such as
 moving a narrower rule earlier, removing a redundant matcher, or deleting a rule that does not
 change behavior. It also flags disabled automatic retention and `continue_matching` rules that
-cannot actually continue into a later rule, plus redundant rules that add nothing beyond an earlier
-continue-matching chain.
+cannot actually continue into a later rule, redundant rules that add nothing beyond an earlier
+continue-matching chain, and same-priority rules where file order is still breaking the tie.
 
 ## Verification
 
