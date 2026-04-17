@@ -216,6 +216,29 @@ def test_policy_check_maps_shadowed_rule_to_fix_suggestion(
     assert any("Move the narrower rule earlier" in suggestion for suggestion in report["suggestions"])
 
 
+def test_policy_check_maps_shared_priority_warning_to_fix_suggestion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    policy = PolicyConfig(
+        config_found=True,
+        classification=ClassificationPolicy(),
+        suppression=SuppressionPolicy(),
+        routing=RoutingPolicy(
+            rules=(
+                RoutingRule(project="notification-hub", disable_slack=True, priority=10),
+                RoutingRule(project_prefix="notification-", force_level="normal", priority=10),
+            )
+        ),
+    )
+
+    monkeypatch.setattr(ops_mod, "get_policy_config", lambda: policy)
+
+    report = run_policy_check()
+
+    assert report["status"] == "warn"
+    assert any("Give the more important rule a higher `priority`" in suggestion for suggestion in report["suggestions"])
+
+
 def test_policy_check_maps_retention_and_continue_warnings_to_fix_suggestions(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

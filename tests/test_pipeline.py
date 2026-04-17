@@ -292,6 +292,37 @@ class TestClassificationRouting:
         assert explanation.routing.matched_rule_indices == (1, 2)
         assert explanation.routing.reason == "matched routing rules 1, 2; stopped at rule 2"
 
+    def test_higher_priority_rule_runs_before_file_order(self, tmp_log: Path) -> None:
+        policy = PolicyConfig(
+            routing=RoutingPolicy(
+                rules=(
+                    RoutingRule(
+                        project="notification-hub",
+                        disable_slack=True,
+                    ),
+                    RoutingRule(
+                        project_prefix="notification-",
+                        force_level="normal",
+                        priority=10,
+                    ),
+                )
+            )
+        )
+
+        with patch("notification_hub.pipeline.get_policy_config", return_value=policy):
+            explanation = explain_event(
+                _event(
+                    title="Review ready",
+                    body="Approval needed",
+                    project="notification-hub",
+                )
+            )
+
+        assert explanation.routing.level == "normal"
+        assert explanation.routing.matched_rule_index == 2
+        assert explanation.routing.matched_rule_indices == (2,)
+        assert explanation.routing.reason == "matched routing rule 2"
+
     def test_build_event_explanation_report_is_json_ready(self, tmp_log: Path) -> None:
         policy = PolicyConfig(
             routing=RoutingPolicy(
@@ -348,6 +379,7 @@ class TestClassificationRouting:
         matched_rule = cast(dict[str, object], routing["matched_rule"])
         assert matched_rule["project_prefix"] == "notification-"
         assert matched_rule["text_contains"] == "session complete"
+        assert matched_rule["priority"] == 0
 
     def test_explanation_report_includes_all_matched_rules(self, tmp_log: Path) -> None:
         policy = PolicyConfig(

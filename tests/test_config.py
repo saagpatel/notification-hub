@@ -299,7 +299,7 @@ class TestPolicyAnalysis:
         warnings = analyze_policy_config(policy)
 
         assert any("routing rule 1 does not change level or delivery behavior" in warning for warning in warnings)
-        assert any("routing rule 2 is shadowed by earlier rule 1" in warning for warning in warnings)
+        assert any("routing rule 2 is shadowed by earlier evaluation rule 1" in warning for warning in warnings)
 
     def test_warns_on_overlapping_classifier_keywords(self) -> None:
         policy = PolicyConfig(
@@ -351,7 +351,7 @@ class TestPolicyAnalysis:
 
         warnings = analyze_policy_config(policy)
 
-        assert any("routing rule 2 is shadowed by earlier rule 1" in warning for warning in warnings)
+        assert any("routing rule 2 is shadowed by earlier evaluation rule 1" in warning for warning in warnings)
 
     def test_continue_matching_rule_does_not_shadow_later_rule(self) -> None:
         policy = PolicyConfig(
@@ -386,7 +386,11 @@ class TestPolicyAnalysis:
 
         warnings = analyze_policy_config(policy)
 
-        assert any("sets continue_matching but there is no later rule to continue into" in warning for warning in warnings)
+        assert any(
+            "sets continue_matching but there is no later rule to continue into at its priority/order position"
+            in warning
+            for warning in warnings
+        )
 
     def test_warns_when_rule_is_redundant_after_continue_matching_chain(self) -> None:
         policy = PolicyConfig(
@@ -412,5 +416,44 @@ class TestPolicyAnalysis:
         assert any(
             "routing rule 2 does not add behavior beyond earlier continue-matching rule(s) 1"
             in warning
+            for warning in warnings
+        )
+
+    def test_warns_when_rules_share_priority(self) -> None:
+        policy = PolicyConfig(
+            classification=ClassificationPolicy(),
+            suppression=SuppressionPolicy(),
+            routing=RoutingPolicy(
+                rules=(
+                    RoutingRule(project="notification-hub", disable_slack=True, priority=10),
+                    RoutingRule(project_prefix="notification-", force_level="normal", priority=10),
+                )
+            ),
+        )
+
+        warnings = analyze_policy_config(policy)
+
+        assert any(
+            "routing rules 1, 2 share priority 10; file order still decides between them"
+            in warning
+            for warning in warnings
+        )
+
+    def test_priority_changes_evaluation_order_for_shadowing(self) -> None:
+        policy = PolicyConfig(
+            classification=ClassificationPolicy(),
+            suppression=SuppressionPolicy(),
+            routing=RoutingPolicy(
+                rules=(
+                    RoutingRule(project="notification-hub", disable_slack=True),
+                    RoutingRule(project_prefix="notification-", priority=10),
+                )
+            ),
+        )
+
+        warnings = analyze_policy_config(policy)
+
+        assert any(
+            "routing rule 1 is shadowed by earlier evaluation rule 2" in warning
             for warning in warnings
         )

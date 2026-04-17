@@ -135,6 +135,7 @@ class RoutingRule:
     disable_push: bool = False
     disable_slack: bool = False
     continue_matching: bool = False
+    priority: int = 0
 
 
 @dataclass(frozen=True)
@@ -271,9 +272,22 @@ def _parse_routing_rules(value: object) -> tuple[RoutingRule, ...]:
                 disable_push=_as_bool(raw_rule.get("disable_push")),
                 disable_slack=_as_bool(raw_rule.get("disable_slack")),
                 continue_matching=_as_bool(raw_rule.get("continue_matching")),
+                priority=_as_int(raw_rule.get("priority"), 0, minimum=0),
             )
         )
     return tuple(rules)
+
+
+def iter_routing_rules_in_evaluation_order(
+    rules: tuple[RoutingRule, ...],
+) -> tuple[tuple[int, RoutingRule], ...]:
+    """Return rules in runtime evaluation order.
+
+    Higher-priority rules run first. Equal priorities preserve config order.
+    """
+    indexed_rules = list(enumerate(rules, start=1))
+    indexed_rules.sort(key=lambda item: (-item[1].priority, item[0]))
+    return tuple(indexed_rules)
 
 
 def _string_constraint_shadowed_by(
@@ -373,8 +387,20 @@ def analyze_policy_config(policy: PolicyConfig | None = None) -> tuple[str, ...]
                     f"{first_group} wins first"
                 )
 
+    ordered_rules = iter_routing_rules_in_evaluation_order(current_policy.routing.rules)
+    priority_groups: dict[int, list[int]] = {}
+    for index, rule in ordered_rules:
+        priority_groups.setdefault(rule.priority, []).append(index)
+
+    for priority, indexes in priority_groups.items():
+        if len(indexes) > 1:
+            joined = ", ".join(str(value) for value in indexes)
+            warnings.append(
+                f"routing rules {joined} share priority {priority}; file order still decides between them"
+            )
+
     prior_rules: list[tuple[int, RoutingRule]] = []
-    for index, rule in enumerate(current_policy.routing.rules, start=1):
+    for evaluation_position, (index, rule) in enumerate(ordered_rules, start=1):
         if rule.project is not None and rule.project_prefix is not None:
             warnings.append(
                 f"routing rule {index} sets both project and project_prefix; project already implies the prefix"
@@ -385,9 +411,9 @@ def analyze_policy_config(policy: PolicyConfig | None = None) -> tuple[str, ...]
                 f"routing rule {index} does not change level or delivery behavior"
             )
 
-        if rule.continue_matching and index == total_rules:
+        if rule.continue_matching and evaluation_position == total_rules:
             warnings.append(
-                f"routing rule {index} sets continue_matching but there is no later rule to continue into"
+                f"routing rule {index} sets continue_matching but there is no later rule to continue into at its priority/order position"
             )
 
         for prior_index, prior_rule in prior_rules:
@@ -395,7 +421,7 @@ def analyze_policy_config(policy: PolicyConfig | None = None) -> tuple[str, ...]
                 continue
             if _routing_rule_shadowed_by(prior_rule, rule):
                 warnings.append(
-                    f"routing rule {index} is shadowed by earlier rule {prior_index} and will never match"
+                    f"routing rule {index} is shadowed by earlier evaluation rule {prior_index} and will never match"
                 )
                 break
         else:
