@@ -34,13 +34,14 @@ Core modules:
 ## Local Development
 
 ```bash
-uv sync
+uv sync --extra dev
 uv run uvicorn notification_hub.server:app --host 127.0.0.1 --port 9199 --reload
 ```
 
 ## Verification
 
 ```bash
+uv lock --check
 uv run pytest
 uv run ruff check
 uv run pyright
@@ -48,6 +49,7 @@ uv run pyright
 
 The test suite uses temporary runtime paths, so local verification does not write into the live
 machine event log or watch the real bridge file.
+The committed `uv.lock` file keeps local installs and CI in sync.
 
 Runtime diagnostics:
 
