@@ -11,6 +11,8 @@ import notification_hub.channels as channels_mod
 from notification_hub.config import PolicyConfig, RoutingPolicy, RoutingRule
 from notification_hub.models import Event, Level, Source
 from notification_hub.pipeline import (
+    build_event_explanation_report,
+    explain_event,
     get_suppression_engine,
     process_event,
     reset_suppression_engine,
@@ -155,6 +157,56 @@ class TestClassificationRouting:
         assert stored.classified_level == "normal"
         mock_push.assert_not_called()
         mock_slack.assert_not_called()
+
+    def test_explain_event_reports_rule_match_and_channels(self, tmp_log: Path) -> None:
+        policy = PolicyConfig(
+            routing=RoutingPolicy(
+                rules=(
+                    RoutingRule(
+                        project="notification-hub",
+                        force_level="normal",
+                        disable_push=True,
+                    ),
+                )
+            )
+        )
+
+        with patch("notification_hub.pipeline.get_policy_config", return_value=policy):
+            explanation = explain_event(_event(body="Approval needed", project="notification-hub"))
+
+        assert explanation.classification.output_level == "urgent"
+        assert explanation.routing.level == "normal"
+        assert explanation.routing.matched_rule_index == 1
+        assert explanation.push_delivery is False
+        assert explanation.slack_delivery is True
+
+    def test_build_event_explanation_report_is_json_ready(self, tmp_log: Path) -> None:
+        policy = PolicyConfig(
+            routing=RoutingPolicy(
+                rules=(
+                    RoutingRule(
+                        source="bridge_watcher",
+                        disable_slack=True,
+                    ),
+                )
+            )
+        )
+
+        with patch("notification_hub.pipeline.get_policy_config", return_value=policy):
+            report = build_event_explanation_report(
+                _event(body="Session complete", source="bridge_watcher")
+            )
+
+        classification = report["classification"]
+        routing = report["routing"]
+        delivery = report["delivery"]
+        assert isinstance(classification, dict)
+        assert isinstance(routing, dict)
+        assert isinstance(delivery, dict)
+        assert classification["matched_group"] == "normal"
+        assert routing["matched_rule_index"] == 1
+        assert delivery["push"] is False
+        assert delivery["slack"] is False
 
 
 class TestLogging:

@@ -8,6 +8,7 @@ import sys
 from collections.abc import Sequence
 
 from notification_hub.diagnostics import collect_doctor_report
+from notification_hub.models import Event
 from notification_hub.operations import (
     BootstrapConfigReport,
     RetentionReport,
@@ -16,6 +17,7 @@ from notification_hub.operations import (
     run_retention,
     run_smoke_check,
 )
+from notification_hub.pipeline import build_event_explanation_report
 
 
 def _build_parser(prog: str = "notification-hub") -> argparse.ArgumentParser:
@@ -34,6 +36,21 @@ def _build_parser(prog: str = "notification-hub") -> argparse.ArgumentParser:
         "--json",
         action="store_true",
         help="Emit the smoke report as JSON.",
+    )
+
+    explain = subparsers.add_parser(
+        "explain",
+        help="Show how an event would classify, route, and deliver without sending it.",
+    )
+    explain.add_argument("--source", required=True, help="Event source.")
+    explain.add_argument("--level", required=True, help="Source-provided level hint.")
+    explain.add_argument("--title", required=True, help="Event title.")
+    explain.add_argument("--body", required=True, help="Event body.")
+    explain.add_argument("--project", help="Optional project name.")
+    explain.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the explanation report as JSON.",
     )
 
     retention = subparsers.add_parser(
@@ -107,6 +124,29 @@ def _print_smoke_report(report: SmokeReport) -> None:
         print(f"- error: {report['error']}")
 
 
+def _print_explain_report(report: dict[str, object]) -> None:
+    event = report["event"]
+    classification = report["classification"]
+    routing = report["routing"]
+    delivery = report["delivery"]
+    assert isinstance(event, dict)
+    assert isinstance(classification, dict)
+    assert isinstance(routing, dict)
+    assert isinstance(delivery, dict)
+
+    print("notification-hub explain: ok")
+    print(f"- source: {event['source']}")
+    print(f"- input level: {classification['input_level']}")
+    print(f"- classified level: {classification['output_level']}")
+    print(f"- classification reason: {classification['reason']}")
+    if classification["matched_keyword"] is not None:
+        print(f"- matched keyword: {classification['matched_keyword']}")
+    print(f"- routing reason: {routing['reason']}")
+    print(f"- final level: {routing['final_level']}")
+    print(f"- push would send: {delivery['push']}")
+    print(f"- slack would send: {delivery['slack']}")
+
+
 def _print_retention_report(report: RetentionReport) -> None:
     print(f"notification-hub retention: {report['status']}")
     print(f"- rotated: {report['rotated']}")
@@ -149,6 +189,21 @@ def main(argv: Sequence[str] | None = None) -> int:
             _print_smoke_report(report)
         return 0 if report["status"] == "ok" else 1
 
+    if args.command == "explain":
+        event = Event(
+            source=args.source,
+            level=args.level,
+            title=args.title,
+            body=args.body,
+            project=args.project,
+        )
+        report = build_event_explanation_report(event)
+        if args.json:
+            print(json.dumps(report, indent=2, sort_keys=True))
+        else:
+            _print_explain_report(report)
+        return 0
+
     if args.command == "bootstrap-config":
         report = bootstrap_policy_config(force=args.force)
         if args.json:
@@ -173,6 +228,11 @@ def doctor_main(argv: Sequence[str] | None = None) -> int:
 def smoke_main(argv: Sequence[str] | None = None) -> int:
     forwarded = list(argv) if argv is not None else sys.argv[1:]
     return main(["smoke", *forwarded])
+
+
+def explain_main(argv: Sequence[str] | None = None) -> int:
+    forwarded = list(argv) if argv is not None else sys.argv[1:]
+    return main(["explain", *forwarded])
 
 
 def retention_main(argv: Sequence[str] | None = None) -> int:

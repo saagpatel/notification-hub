@@ -15,6 +15,7 @@ Last updated: 2026-04-17
 - The repo now also includes a sample policy config, a smoke command, and a log-retention command.
 - Policy config now also supports ordered routing rules, and a bootstrap command can copy the sample
   config into the live config path.
+- A local explain command can preview classification, routing, and delivery without sending anything.
 - The earlier runtime-hardening and repo-cleanup pass is complete.
 
 ## What Was Cleaned Up
@@ -31,6 +32,7 @@ Last updated: 2026-04-17
 - Added ordered routing rules for per-project and per-source delivery overrides.
 - Added `notification-hub bootstrap-config` so first-time policy setup is a command instead of a
   manual copy step.
+- Added `notification-hub explain` so policy behavior can be previewed before a real event is sent.
 
 ## Verified Baseline
 
@@ -43,17 +45,19 @@ uv run ruff check
 uv run pyright
 curl http://127.0.0.1:9199/health/details
 uv run notification-hub-doctor
+uv run notification-hub-explain --source codex --level info --title "Test" --body "Session complete"
 uv run notification-hub smoke
 uv run notification-hub retention --max-events 2000
 ```
 
 Expected current outcome:
 
-- `pytest`: 160 passed
+- `pytest`: 166 passed
 - `ruff`: clean
 - `pyright`: 0 errors
 - `/health/details`: `status: ok`, watcher active, push available, Slack configured
 - `notification-hub-doctor`: `status: ok`
+- `notification-hub-explain`: returns a non-mutating classification/routing/delivery preview
 - `notification-hub smoke`: `status: ok`
 - `notification-hub retention --max-events 2000`: `status: ok`
 - GitHub Actions `CI` workflow: passing on `main`
@@ -63,6 +67,7 @@ Additional behavioral baseline:
 - `config/policy.example.toml` includes classifier, suppression, and routing examples
 - `notification-hub bootstrap-config` copies that sample into `~/.config/notification-hub/config.toml`
   and preserves an existing config unless `--force` is used
+- `notification-hub explain` is available as a non-mutating policy preview tool
 - Bootstrap command wiring is verified, but live bootstrap is intentionally not part of the routine
   confidence pass when no user config exists yet because it would create local runtime state
 - Retention is still a manual operator action by choice; it is not scheduled automatically

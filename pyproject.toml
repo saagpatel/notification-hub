@@ -24,6 +24,7 @@ dev = [
 notification-hub = "notification_hub.cli:main"
 notification-hub-doctor = "notification_hub.cli:doctor_main"
 notification-hub-smoke = "notification_hub.cli:smoke_main"
+notification-hub-explain = "notification_hub.cli:explain_main"
 notification-hub-retention = "notification_hub.cli:retention_main"
 notification-hub-bootstrap-config = "notification_hub.cli:bootstrap_config_main"
 

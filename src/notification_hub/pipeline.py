@@ -7,8 +7,8 @@ from dataclasses import dataclass
 from typing import cast
 
 from notification_hub.channels import send_push, send_slack, send_slack_digest, write_jsonl
-from notification_hub.classifier import classify
-from notification_hub.config import get_policy_config, has_slack_webhook_configured
+from notification_hub.classifier import ClassificationDecision, explain_classification
+from notification_hub.config import RoutingRule, get_policy_config, has_slack_webhook_configured
 from notification_hub.models import Event, Level, StoredEvent
 from notification_hub.suppression import SuppressionEngine
 
@@ -24,12 +24,24 @@ class RoutingDecision:
     level: Level
     allow_push: bool
     allow_slack: bool
+    matched_rule_index: int | None
+    matched_rule: RoutingRule | None
+    reason: str
+
+
+@dataclass(frozen=True)
+class EventExplanation:
+    classification: ClassificationDecision
+    routing: RoutingDecision
+    log_delivery: bool
+    push_delivery: bool
+    slack_delivery: bool
 
 
 def _resolve_routing(event: Event, classified_level: Level) -> RoutingDecision:
     """Apply the first matching routing rule, if any, to the classified event."""
     policy = get_policy_config().routing
-    for rule in policy.rules:
+    for index, rule in enumerate(policy.rules, start=1):
         if rule.source is not None and rule.source != event.source:
             continue
         if rule.project is not None and rule.project != event.project:
@@ -42,9 +54,75 @@ def _resolve_routing(event: Event, classified_level: Level) -> RoutingDecision:
             level=effective_level,
             allow_push=not rule.disable_push,
             allow_slack=not rule.disable_slack,
+            matched_rule_index=index,
+            matched_rule=rule,
+            reason=f"matched routing rule {index}",
         )
 
-    return RoutingDecision(level=classified_level, allow_push=True, allow_slack=True)
+    return RoutingDecision(
+        level=classified_level,
+        allow_push=True,
+        allow_slack=True,
+        matched_rule_index=None,
+        matched_rule=None,
+        reason="no routing rule matched",
+    )
+
+
+def explain_event(event: Event) -> EventExplanation:
+    """Explain how an event would classify, route, and deliver without side effects."""
+    classification = explain_classification(event)
+    routing = _resolve_routing(event, classification.output_level)
+    push_delivery = routing.level == "urgent" and routing.allow_push
+    slack_delivery = routing.level in ("urgent", "normal") and routing.allow_slack
+    return EventExplanation(
+        classification=classification,
+        routing=routing,
+        log_delivery=True,
+        push_delivery=push_delivery,
+        slack_delivery=slack_delivery,
+    )
+
+
+def _routing_rule_to_dict(rule: RoutingRule | None) -> dict[str, object] | None:
+    """Convert a routing rule to a JSON-ready dictionary."""
+    if rule is None:
+        return None
+    return {
+        "source": rule.source,
+        "project": rule.project,
+        "force_level": rule.force_level,
+        "disable_push": rule.disable_push,
+        "disable_slack": rule.disable_slack,
+    }
+
+
+def build_event_explanation_report(event: Event) -> dict[str, object]:
+    """Build a JSON-ready explanation report for an event."""
+    explanation = explain_event(event)
+    return {
+        "event": event.model_dump(mode="json"),
+        "classification": {
+            "input_level": explanation.classification.input_level,
+            "output_level": explanation.classification.output_level,
+            "reason": explanation.classification.reason,
+            "matched_keyword": explanation.classification.matched_keyword,
+            "matched_group": explanation.classification.matched_group,
+        },
+        "routing": {
+            "final_level": explanation.routing.level,
+            "allow_push": explanation.routing.allow_push,
+            "allow_slack": explanation.routing.allow_slack,
+            "matched_rule_index": explanation.routing.matched_rule_index,
+            "matched_rule": _routing_rule_to_dict(explanation.routing.matched_rule),
+            "reason": explanation.routing.reason,
+        },
+        "delivery": {
+            "log": explanation.log_delivery,
+            "push": explanation.push_delivery,
+            "slack": explanation.slack_delivery,
+        },
+    }
 
 
 def get_suppression_engine() -> SuppressionEngine:
@@ -146,8 +224,8 @@ def process_event(event: Event) -> StoredEvent:
     - Quiet hours: push suppressed 11 PM-7 AM Pacific, queued for morning
     - Rate limit: max 5 push/hr, max 20 Slack/hr, overflow batched into digest
     """
-    classified_level = classify(event)
-    routing = _resolve_routing(event, classified_level)
+    explanation = explain_event(event)
+    routing = explanation.routing
     stored = StoredEvent(
         **event.model_dump(),
         classified_level=routing.level,
