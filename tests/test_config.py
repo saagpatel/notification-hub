@@ -13,6 +13,7 @@ from notification_hub.config import (
     ClassificationPolicy,
     RoutingRule,
     RoutingPolicy,
+    RetentionPolicy,
     SuppressionPolicy,
     PolicyConfig,
     analyze_policy_config,
@@ -160,6 +161,12 @@ max_push_per_hour = 2
 max_slack_per_hour = 7
 max_overflow_buffer = 42
 max_quiet_queue = 12
+
+[retention]
+enabled = false
+interval_minutes = 15
+max_events = 123
+keep_archives = 4
 """.strip(),
             encoding="utf-8",
         )
@@ -176,6 +183,12 @@ max_quiet_queue = 12
         )
         assert policy.suppression.quiet_start_hour == 22
         assert policy.suppression.max_slack_per_hour == 7
+        assert policy.retention == RetentionPolicy(
+            enabled=False,
+            interval_minutes=15,
+            max_events=123,
+            keep_archives=4,
+        )
 
     def test_invalid_toml_falls_back_with_error(
         self,

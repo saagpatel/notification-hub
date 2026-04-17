@@ -62,8 +62,8 @@ to the live daemon or sending any notifications.
 The bootstrap command copies the repo sample policy file into `~/.config/notification-hub/config.toml`
 without overwriting an existing config unless you pass `--force`.
 The retention command archives older log entries into `~/.local/share/notification-hub/archive/`.
-Retention remains a manual operator action by design for now, so log pruning only happens when you
-explicitly run the command.
+The daemon now also performs the same retention check automatically on a schedule, while the manual
+command remains available when you want to force a run immediately.
 
 ## Policy Config
 
@@ -96,6 +96,12 @@ max_slack_per_hour = 20
 max_overflow_buffer = 500
 max_quiet_queue = 200
 
+[retention]
+enabled = true
+interval_minutes = 60
+max_events = 2000
+keep_archives = 10
+
 [[routing.rules]]
 project = "notification-hub"
 force_level = "normal"
@@ -121,6 +127,8 @@ Matchers can now use exact source/project, `project_prefix`, and lowercase `titl
 `body_contains`, or `text_contains` checks.
 If a rule sets `continue_matching = true`, notification-hub keeps evaluating later rules so a policy
 can compose multiple overrides instead of stopping at the first match.
+Retention is enabled by default with a conservative hourly check. It only rotates the log when the
+live JSONL file grows beyond `max_events`, and it keeps up to `keep_archives` archived files.
 
 First-time setup shortcut:
 
@@ -185,7 +193,8 @@ uv run notification-hub retention --max-events 2000
 - LaunchAgent support lives at `~/Library/LaunchAgents/com.saagar.notification-hub.plist`.
 - `GET /health/details` reports whether push delivery is available, whether Slack is configured,
   whether key local files exist, whether a policy config file was loaded, how many policy warnings
-  were found, and current suppression queue counters, without exposing secrets.
+  were found, the current retention settings plus the last retention result, and current
+  suppression queue counters, without exposing secrets.
 
 ## Docs
 

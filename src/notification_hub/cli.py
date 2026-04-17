@@ -109,9 +109,11 @@ def _print_doctor_report(report: dict[str, object]) -> None:
     checks = report["checks"]
     config = report["config"]
     local_api = report["local_api"]
+    retention = report["retention"]
     assert isinstance(checks, dict)
     assert isinstance(config, dict)
     assert isinstance(local_api, dict)
+    assert isinstance(retention, dict)
 
     print(f"notification-hub doctor: {report['status']}")
     print(f"- local API healthy: {checks['local_api_healthy']}")
@@ -121,6 +123,8 @@ def _print_doctor_report(report: dict[str, object]) -> None:
     print(f"- Slack configured: {checks['slack_configured']}")
     print(f"- policy load OK: {checks['policy_load_ok']}")
     print(f"- policy path: {config['path']}")
+    print(f"- retention enabled: {retention['enabled']}")
+    print(f"- retention interval minutes: {retention['interval_minutes']}")
     if config["load_error"] is not None:
         print(f"- policy load error: {config['load_error']}")
     print(f"- health URL: {local_api['url']}")

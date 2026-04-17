@@ -30,6 +30,13 @@ class ConfigStatus(TypedDict):
     warning_count: int
 
 
+class RetentionStatus(TypedDict):
+    enabled: bool
+    interval_minutes: int
+    max_events: int
+    keep_archives: int
+
+
 def _path_exists(path: object) -> bool:
     """Wrapper to keep path checks easy to patch in tests."""
     return bool(getattr(path, "exists")())
@@ -55,10 +62,17 @@ def collect_runtime_readiness() -> dict[str, object]:
         "routing_rule_count": len(policy.routing.rules),
         "warning_count": len(config_mod.analyze_policy_config(policy)),
     }
+    retention: RetentionStatus = {
+        "enabled": policy.retention.enabled,
+        "interval_minutes": policy.retention.interval_minutes,
+        "max_events": policy.retention.max_events,
+        "keep_archives": policy.retention.keep_archives,
+    }
     return {
         "delivery": delivery,
         "paths": paths,
         "config": config,
+        "retention": retention,
     }
 
 
