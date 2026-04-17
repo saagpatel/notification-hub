@@ -95,6 +95,11 @@ def _suggest_fix_for_warning(warning: str) -> str:
             "Remove `continue_matching` on the final rule, or add a later rule if you meant to "
             "compose another routing step."
         )
+    if "does not add behavior beyond earlier continue-matching rule(s)" in warning:
+        return (
+            "Delete the redundant rule, or tighten its matcher or delivery overrides so it changes "
+            "something the earlier continue-matching chain does not already cover."
+        )
     return "Review the warning and simplify the policy rule or classifier entry so its intent is explicit."
 
 

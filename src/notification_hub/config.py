@@ -319,6 +319,39 @@ def _routing_rule_shadowed_by(previous: RoutingRule, current: RoutingRule) -> bo
     )
 
 
+def _continue_chain_redundancy(
+    prior_rules: list[tuple[int, RoutingRule]],
+    current: RoutingRule,
+) -> tuple[int, ...]:
+    """Return prior continue-matching rule indexes that already cover the current rule's effects."""
+    covering_rules: list[tuple[int, RoutingRule]] = [
+        (index, rule)
+        for index, rule in prior_rules
+        if rule.continue_matching and _routing_rule_shadowed_by(rule, current)
+    ]
+    if not covering_rules:
+        return ()
+
+    prior_force_level: str | None = None
+    prior_disable_push = False
+    prior_disable_slack = False
+    for _index, rule in covering_rules:
+        if rule.force_level is not None:
+            prior_force_level = rule.force_level
+        if rule.disable_push:
+            prior_disable_push = True
+        if rule.disable_slack:
+            prior_disable_slack = True
+
+    adds_force_level = current.force_level is not None and current.force_level != prior_force_level
+    adds_push_change = current.disable_push and not prior_disable_push
+    adds_slack_change = current.disable_slack and not prior_disable_slack
+    if adds_force_level or adds_push_change or adds_slack_change:
+        return ()
+
+    return tuple(index for index, _rule in covering_rules)
+
+
 def analyze_policy_config(policy: PolicyConfig | None = None) -> tuple[str, ...]:
     """Return human-readable warnings for overlapping or ineffective policy rules."""
     current_policy = get_policy_config() if policy is None else policy
@@ -340,7 +373,7 @@ def analyze_policy_config(policy: PolicyConfig | None = None) -> tuple[str, ...]
                     f"{first_group} wins first"
                 )
 
-    prior_rules: list[RoutingRule] = []
+    prior_rules: list[tuple[int, RoutingRule]] = []
     for index, rule in enumerate(current_policy.routing.rules, start=1):
         if rule.project is not None and rule.project_prefix is not None:
             warnings.append(
@@ -357,14 +390,22 @@ def analyze_policy_config(policy: PolicyConfig | None = None) -> tuple[str, ...]
                 f"routing rule {index} sets continue_matching but there is no later rule to continue into"
             )
 
-        for prior_index, prior_rule in enumerate(prior_rules, start=1):
+        for prior_index, prior_rule in prior_rules:
+            if prior_rule.continue_matching:
+                continue
             if _routing_rule_shadowed_by(prior_rule, rule):
                 warnings.append(
                     f"routing rule {index} is shadowed by earlier rule {prior_index} and will never match"
                 )
                 break
-        if not rule.continue_matching:
-            prior_rules.append(rule)
+        else:
+            redundant_with = _continue_chain_redundancy(prior_rules, rule)
+            if redundant_with:
+                joined = ", ".join(str(value) for value in redundant_with)
+                warnings.append(
+                    f"routing rule {index} does not add behavior beyond earlier continue-matching rule(s) {joined}"
+                )
+        prior_rules.append((index, rule))
 
     return tuple(warnings)
 
