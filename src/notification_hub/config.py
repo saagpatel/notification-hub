@@ -122,6 +122,7 @@ class RoutingRule:
     force_level: str | None = None
     disable_push: bool = False
     disable_slack: bool = False
+    continue_matching: bool = False
 
 
 @dataclass(frozen=True)
@@ -256,6 +257,7 @@ def _parse_routing_rules(value: object) -> tuple[RoutingRule, ...]:
                 force_level=_as_optional_choice(raw_rule.get("force_level"), VALID_LEVELS),
                 disable_push=_as_bool(raw_rule.get("disable_push")),
                 disable_slack=_as_bool(raw_rule.get("disable_slack")),
+                continue_matching=_as_bool(raw_rule.get("continue_matching")),
             )
         )
     return tuple(rules)
@@ -337,7 +339,8 @@ def analyze_policy_config(policy: PolicyConfig | None = None) -> tuple[str, ...]
                     f"routing rule {index} is shadowed by earlier rule {prior_index} and will never match"
                 )
                 break
-        prior_rules.append(rule)
+        if not rule.continue_matching:
+            prior_rules.append(rule)
 
     return tuple(warnings)
 

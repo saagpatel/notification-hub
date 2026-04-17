@@ -204,6 +204,7 @@ max_quiet_queue = 12
 project = "notification-hub"
 force_level = "normal"
 disable_push = true
+continue_matching = true
 
 [[routing.rules]]
 source = "bridge_watcher"
@@ -226,6 +227,7 @@ text_contains = "session complete"
                 project="notification-hub",
                 force_level="normal",
                 disable_push=True,
+                continue_matching=True,
             ),
             RoutingRule(
                 source="bridge_watcher",
@@ -325,3 +327,19 @@ class TestPolicyAnalysis:
         warnings = analyze_policy_config(policy)
 
         assert any("routing rule 2 is shadowed by earlier rule 1" in warning for warning in warnings)
+
+    def test_continue_matching_rule_does_not_shadow_later_rule(self) -> None:
+        policy = PolicyConfig(
+            classification=ClassificationPolicy(),
+            suppression=SuppressionPolicy(),
+            routing=RoutingPolicy(
+                rules=(
+                    RoutingRule(project_prefix="notification-", continue_matching=True),
+                    RoutingRule(project="notification-hub", disable_slack=True),
+                )
+            ),
+        )
+
+        warnings = analyze_policy_config(policy)
+
+        assert not any("shadowed" in warning for warning in warnings)

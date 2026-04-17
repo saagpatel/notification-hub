@@ -26,6 +26,8 @@ class RoutingDecision:
     allow_slack: bool
     matched_rule_index: int | None
     matched_rule: RoutingRule | None
+    matched_rule_indices: tuple[int, ...]
+    matched_rules: tuple[RoutingRule, ...]
     reason: str
 
 
@@ -39,11 +41,16 @@ class EventExplanation:
 
 
 def _resolve_routing(event: Event, classified_level: Level) -> RoutingDecision:
-    """Apply the first matching routing rule, if any, to the classified event."""
+    """Apply routing rules to the classified event, stopping unless a rule opts to continue."""
     policy = get_policy_config().routing
     title_text = event.title.lower()
     body_text = event.body.lower()
     combined_text = f"{title_text} {body_text}"
+    effective_level = classified_level
+    allow_push = True
+    allow_slack = True
+    matched_indices: list[int] = []
+    matched_rules: list[RoutingRule] = []
     for index, rule in enumerate(policy.rules, start=1):
         if rule.source is not None and rule.source != event.source:
             continue
@@ -59,16 +66,44 @@ def _resolve_routing(event: Event, classified_level: Level) -> RoutingDecision:
         if rule.text_contains is not None and rule.text_contains not in combined_text:
             continue
 
-        effective_level = (
-            classified_level if rule.force_level is None else cast(Level, rule.force_level)
-        )
+        if rule.force_level is not None:
+            effective_level = cast(Level, rule.force_level)
+        if rule.disable_push:
+            allow_push = False
+        if rule.disable_slack:
+            allow_slack = False
+        matched_indices.append(index)
+        matched_rules.append(rule)
+
+        if not rule.continue_matching:
+            if len(matched_indices) == 1:
+                reason = f"matched routing rule {index}"
+            else:
+                reason = (
+                    f"matched routing rules {', '.join(str(value) for value in matched_indices)}; "
+                    f"stopped at rule {index}"
+                )
+            return RoutingDecision(
+                level=effective_level,
+                allow_push=allow_push,
+                allow_slack=allow_slack,
+                matched_rule_index=index,
+                matched_rule=rule,
+                matched_rule_indices=tuple(matched_indices),
+                matched_rules=tuple(matched_rules),
+                reason=reason,
+            )
+
+    if matched_indices:
         return RoutingDecision(
             level=effective_level,
-            allow_push=not rule.disable_push,
-            allow_slack=not rule.disable_slack,
-            matched_rule_index=index,
-            matched_rule=rule,
-            reason=f"matched routing rule {index}",
+            allow_push=allow_push,
+            allow_slack=allow_slack,
+            matched_rule_index=matched_indices[-1],
+            matched_rule=matched_rules[-1],
+            matched_rule_indices=tuple(matched_indices),
+            matched_rules=tuple(matched_rules),
+            reason=f"matched routing rules {', '.join(str(value) for value in matched_indices)}",
         )
 
     return RoutingDecision(
@@ -77,6 +112,8 @@ def _resolve_routing(event: Event, classified_level: Level) -> RoutingDecision:
         allow_slack=True,
         matched_rule_index=None,
         matched_rule=None,
+        matched_rule_indices=(),
+        matched_rules=(),
         reason="no routing rule matched",
     )
 
@@ -110,6 +147,7 @@ def _routing_rule_to_dict(rule: RoutingRule | None) -> dict[str, object] | None:
         "force_level": rule.force_level,
         "disable_push": rule.disable_push,
         "disable_slack": rule.disable_slack,
+        "continue_matching": rule.continue_matching,
     }
 
 
@@ -131,6 +169,10 @@ def build_event_explanation_report(event: Event) -> dict[str, object]:
             "allow_slack": explanation.routing.allow_slack,
             "matched_rule_index": explanation.routing.matched_rule_index,
             "matched_rule": _routing_rule_to_dict(explanation.routing.matched_rule),
+            "matched_rule_indices": list(explanation.routing.matched_rule_indices),
+            "matched_rules": [
+                _routing_rule_to_dict(rule) for rule in explanation.routing.matched_rules
+            ],
             "reason": explanation.routing.reason,
         },
         "delivery": {
