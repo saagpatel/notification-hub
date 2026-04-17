@@ -1,5 +1,19 @@
 # Implementation Roadmap — Notification Hub
 
+## Current Baseline
+
+All roadmap phases listed below are complete, and the post-build cleanup/hardening pass is also complete.
+
+Current repo/runtime status:
+
+- `main` is the active branch and matches `origin/main`
+- GitHub Actions CI now runs `pytest`, `ruff`, and `pyright`
+- `uv.lock` is committed and used as part of the verification baseline
+- LaunchAgent-backed local runtime is healthy, with Slack delivery configured through Keychain
+
+For the best resume checkpoint, use `docs/CURRENT-STATE.md` first and treat the rest of this file
+as implementation history rather than the primary current-state source.
+
 ## Phase 0: FastAPI Skeleton + JSONL Logging + Bridge File Watcher
 
 **Goal:** Minimal running server that accepts events, logs them, and watches the bridge file.

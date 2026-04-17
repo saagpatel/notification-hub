@@ -74,5 +74,6 @@ curl http://127.0.0.1:9199/health/details
 ## Docs
 
 - `README.md`: project overview, setup, and verification
+- `docs/CURRENT-STATE.md`: current repo/runtime status and the safest restart point
 - `IMPLEMENTATION-ROADMAP.md`: phased implementation history
 - `CLAUDE.md`: maintainer notes and portfolio context

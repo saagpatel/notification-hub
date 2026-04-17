@@ -1,0 +1,67 @@
+# Current State
+
+Last updated: 2026-04-17
+
+## Snapshot
+
+`notification-hub` is in a healthy, normal operating state.
+
+- Local `main` matches `origin/main`.
+- GitHub Actions CI is configured and passing on `main`.
+- The daemon is running locally via LaunchAgent on `127.0.0.1:9199`.
+- Slack delivery is configured through macOS Keychain and is working.
+- The earlier runtime-hardening and repo-cleanup pass is complete.
+
+## What Was Cleaned Up
+
+- Isolated tests from real machine runtime state so local `pytest` no longer pollutes the live event log or bridge watcher paths.
+- Hardened Slack-disabled behavior so a missing webhook does not create repeated noisy delivery failures.
+- Added retry behavior for missing Slack webhook lookup so a restored Keychain secret is picked up automatically without relying on a manual restart.
+- Added GitHub Actions CI for `pytest`, `ruff`, and `pyright`.
+- Committed `uv.lock` so local installs and CI resolve the same dependency set.
+- Restored a normal git baseline on `main` and merged the CI/lockfile work back into `main`.
+
+## Verified Baseline
+
+The following checks were re-run after cleanup and merge:
+
+```bash
+uv lock --check
+uv run pytest
+uv run ruff check
+uv run pyright
+curl http://127.0.0.1:9199/health/details
+```
+
+Expected current outcome:
+
+- `pytest`: 136 passed
+- `ruff`: clean
+- `pyright`: 0 errors
+- `/health/details`: `status: ok`, watcher active, push available, Slack configured
+- GitHub Actions `CI` workflow: passing on `main`
+
+## Runtime Notes
+
+- LaunchAgent plist: `~/Library/LaunchAgents/com.saagar.notification-hub.plist`
+- Event log: `~/.local/share/notification-hub/events.jsonl`
+- Bridge file watched by the daemon: `~/.claude/projects/-Users-d/memory/claude_ai_context.md`
+- Slack webhook storage: macOS Keychain, service `slack-webhook`, account `notification-hub`
+
+## Git Notes
+
+- Primary branch: `main`
+- Preserved archive branch: `archive/local-history-pre-import`
+
+The archive branch is intentionally kept as a safety branch for the older pre-import local-only history.
+It is not part of normal day-to-day work.
+
+## Safest Next Step
+
+Start future work from `main`, keep using the existing verification commands, and treat this cleanup pass as complete.
+The next work here should be product or behavior changes, not more repo-baseline repair.
+
+## Optional Follow-Up
+
+- Delete `archive/local-history-pre-import` later if that old local-only history is no longer needed.
+- Remove local untracked junk files like `.DS_Store` if you want a tidier working directory on disk.
