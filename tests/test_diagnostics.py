@@ -7,7 +7,14 @@ from unittest.mock import MagicMock, patch
 import httpx
 from _pytest.capture import CaptureFixture
 
-from notification_hub.cli import bootstrap_config_main, doctor_main, main, retention_main, smoke_main
+from notification_hub.cli import (
+    bootstrap_config_main,
+    doctor_main,
+    explain_main,
+    main,
+    retention_main,
+    smoke_main,
+)
 from notification_hub.diagnostics import collect_doctor_report, collect_runtime_readiness
 
 
@@ -119,6 +126,49 @@ def test_cli_smoke_json_output(capsys: CaptureFixture[str]) -> None:
     assert '"event_id": "abc123"' in captured.out
 
 
+def test_cli_explain_json_output(capsys: CaptureFixture[str]) -> None:
+    with patch(
+        "notification_hub.cli.build_event_explanation_report",
+        return_value={
+            "event": {"source": "codex", "level": "info", "title": "x", "body": "y", "project": None},
+            "classification": {
+                "input_level": "info",
+                "output_level": "urgent",
+                "reason": "matched urgent keyword",
+                "matched_keyword": "approval needed",
+                "matched_group": "urgent",
+            },
+            "routing": {
+                "final_level": "urgent",
+                "allow_push": True,
+                "allow_slack": True,
+                "matched_rule_index": None,
+                "matched_rule": None,
+                "reason": "no routing rule matched",
+            },
+            "delivery": {"log": True, "push": True, "slack": True},
+        },
+    ):
+        exit_code = main(
+            [
+                "explain",
+                "--source",
+                "codex",
+                "--level",
+                "info",
+                "--title",
+                "x",
+                "--body",
+                "y",
+                "--json",
+            ]
+        )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert '"matched_keyword": "approval needed"' in captured.out
+
+
 def test_cli_retention_json_output(capsys: CaptureFixture[str]) -> None:
     with patch(
         "notification_hub.cli.run_retention",
@@ -210,6 +260,49 @@ def test_smoke_and_retention_wrappers_forward_flags(capsys: CaptureFixture[str])
     retention_output = capsys.readouterr()
     assert retention_exit == 0
     assert '"events_before": 3' in retention_output.out
+
+
+def test_explain_wrapper_forwards_flags(capsys: CaptureFixture[str]) -> None:
+    with patch(
+        "notification_hub.cli.build_event_explanation_report",
+        return_value={
+            "event": {"source": "codex", "level": "info", "title": "x", "body": "y", "project": None},
+            "classification": {
+                "input_level": "info",
+                "output_level": "normal",
+                "reason": "matched normal keyword",
+                "matched_keyword": "session complete",
+                "matched_group": "normal",
+            },
+            "routing": {
+                "final_level": "normal",
+                "allow_push": True,
+                "allow_slack": True,
+                "matched_rule_index": 1,
+                "matched_rule": {"project": "notification-hub"},
+                "reason": "matched routing rule 1",
+            },
+            "delivery": {"log": True, "push": False, "slack": True},
+        },
+    ) as mock_explain:
+        exit_code = explain_main(
+            [
+                "--source",
+                "codex",
+                "--level",
+                "info",
+                "--title",
+                "x",
+                "--body",
+                "y",
+                "--json",
+            ]
+        )
+
+    output = capsys.readouterr()
+    assert exit_code == 0
+    assert '"final_level": "normal"' in output.out
+    mock_explain.assert_called_once()
 
 
 def test_bootstrap_wrapper_forwards_flags(capsys: CaptureFixture[str]) -> None:

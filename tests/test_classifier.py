@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from notification_hub.config import ClassificationPolicy, PolicyConfig
-from notification_hub.classifier import classify
+from notification_hub.classifier import classify, explain_classification
 from notification_hub.models import Event, Level
 
 
@@ -113,3 +113,21 @@ def test_uses_policy_config_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
     assert classify(_event(body="Database down in production")) == "urgent"
     assert classify(_event(body="Ship it before lunch")) == "normal"
     assert classify(_event(body="Routine ping from watchdog")) == "info"
+
+
+def test_explain_classification_reports_matched_keyword() -> None:
+    decision = explain_classification(_event(body="Build verification failed on main"))
+
+    assert decision.output_level == "urgent"
+    assert decision.reason == "matched urgent keyword"
+    assert decision.matched_keyword == "verification fail"
+    assert decision.matched_group == "urgent"
+
+
+def test_explain_classification_reports_source_level_fallback() -> None:
+    decision = explain_classification(_event(body="Nothing special here", level="normal"))
+
+    assert decision.output_level == "normal"
+    assert decision.reason == "fell back to source level"
+    assert decision.matched_keyword is None
+    assert decision.matched_group == "source_level"
