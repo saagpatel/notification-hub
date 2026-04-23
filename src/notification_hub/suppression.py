@@ -42,10 +42,14 @@ class SuppressionEngine:
         return False
 
     def is_quiet_hours(self, at: datetime | None = None) -> bool:
-        """Check if current time is in quiet hours (11 PM - 7 AM Pacific)."""
+        """Check if current time is in configured quiet hours."""
         policy = get_policy_config().suppression
         now_pacific = (at or datetime.now(timezone.utc)).astimezone(PACIFIC)
         hour = now_pacific.hour
+        if policy.quiet_start_hour == policy.quiet_end_hour:
+            return False
+        if policy.quiet_start_hour < policy.quiet_end_hour:
+            return policy.quiet_start_hour <= hour < policy.quiet_end_hour
         return hour >= policy.quiet_start_hour or hour < policy.quiet_end_hour
 
     def queue_for_morning(self, event: StoredEvent) -> None:

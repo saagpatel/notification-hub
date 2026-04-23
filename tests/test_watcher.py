@@ -68,6 +68,11 @@ class TestDiffSections:
     def test_no_diff_when_unchanged(self) -> None:
         assert diff_sections(SAMPLE_BRIDGE, SAMPLE_BRIDGE) == []
 
+    def test_detects_repeated_identical_appended_activity(self) -> None:
+        repeated = "- [2026-04-14] bridge-sync: First manual export"
+        new_bridge = SAMPLE_BRIDGE.replace(repeated, f"{repeated}\n{repeated}")
+        assert diff_sections(SAMPLE_BRIDGE, new_bridge) == [repeated]
+
 
 class TestParseActivityLine:
     def test_standard_line(self) -> None:

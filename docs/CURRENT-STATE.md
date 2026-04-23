@@ -1,6 +1,6 @@
 # Current State
 
-Last updated: 2026-04-17
+Last updated: 2026-04-23
 
 ## Snapshot
 
@@ -15,6 +15,7 @@ Last updated: 2026-04-17
 - The repo now also includes a sample policy config, a smoke command, and a log-retention command.
 - Policy config now also supports ordered routing rules, and a bootstrap command can copy the sample
   config into the live config path.
+- Runtime wiring now has repo-owned LaunchAgent and hook templates under `ops/`.
 - A local explain command can preview classification, routing, and delivery without sending anything.
 - A local policy-check command can audit the ruleset for overlaps, shadowing, and no-op rules,
   and now suggests likely fixes for each warning.
@@ -22,6 +23,9 @@ Last updated: 2026-04-17
 - Routing rules can now also opt into `continue_matching` so multiple matching rules can compose.
 - Routing rules can now also use explicit `priority`, so higher-priority rules run before lower-priority ones.
 - Event-log retention now runs automatically on the daemon’s schedule, not just as a manual command.
+- Slack delivery is hardened so transport setup failures degrade quietly instead of escaping event
+  intake.
+- Quiet hours now support overnight, same-day, and disabled windows.
 - The earlier runtime-hardening and repo-cleanup pass is complete.
 
 ## What Was Cleaned Up
@@ -48,6 +52,10 @@ Last updated: 2026-04-17
   rewriting the whole file.
 - Added scheduled automatic retention so the live JSONL log can prune itself without relying on a
   separate operator run.
+- Added repo-owned LaunchAgent and hook templates so live machine wiring can be verified against
+  checked-in source.
+- Hardened Slack delivery failure handling, quiet-hours policy semantics, and repeated bridge-line
+  detection.
 
 ## Verified Baseline
 
@@ -55,20 +63,20 @@ The following checks were re-run after cleanup and merge:
 
 ```bash
 uv lock --check
-uv run pytest
-uv run ruff check
-uv run pyright
+uv run --frozen pytest
+uv run --frozen ruff check
+uv run --frozen pyright
 curl http://127.0.0.1:9199/health/details
-uv run notification-hub-doctor
-uv run notification-hub-policy-check
-uv run notification-hub-explain --source codex --level info --title "Test" --body "Session complete"
-uv run notification-hub smoke
-uv run notification-hub retention --max-events 2000
+uv run --frozen notification-hub-doctor
+uv run --frozen notification-hub-policy-check
+uv run --frozen notification-hub-explain --source codex --level info --title "Test" --body "Session complete"
+uv run --frozen notification-hub smoke
+uv run --frozen notification-hub retention --max-events 2000
 ```
 
 Expected current outcome:
 
-- `pytest`: 190 passed
+- `pytest`: 194 passed
 - `ruff`: clean
 - `pyright`: 0 errors
 - `/health/details`: `status: ok`, watcher active, push available, Slack configured
@@ -79,6 +87,8 @@ Expected current outcome:
 - `notification-hub smoke`: `status: ok`
 - `notification-hub retention --max-events 2000`: `status: ok`
 - GitHub Actions `CI` workflow: passing on `main`
+- Runtime wiring checks: LaunchAgent, Claude hook, and Codex hook match the repo-owned templates
+  after the local refresh step is applied.
 
 Additional behavioral baseline:
 
@@ -103,6 +113,9 @@ Additional behavioral baseline:
 ## Runtime Notes
 
 - LaunchAgent plist: `~/Library/LaunchAgents/com.saagar.notification-hub.plist`
+- LaunchAgent template: `ops/launchagents/com.saagar.notification-hub.plist`
+- Claude hook template: `ops/hooks/claude-notify.sh`
+- Codex hook template: `ops/hooks/codex-notify-local.py`
 - Event log: `~/.local/share/notification-hub/events.jsonl`
 - Bridge file watched by the daemon: `~/.claude/projects/-Users-d/memory/claude_ai_context.md`
 - Slack webhook storage: macOS Keychain, service `slack-webhook`, account `notification-hub`
@@ -119,8 +132,10 @@ It is not part of normal day-to-day work.
 
 ## Safest Next Step
 
-Start future work from `main`, keep using the existing verification commands, and treat this cleanup pass as complete.
-The next work here should build on the new doctor/config surfaces rather than reopening repo-baseline repair.
+Start future work from `main`, keep using the frozen verification commands, and treat the repo-owned
+runtime templates as the source of truth for live launcher and hook wiring.
+The next work here should build on the doctor/config/runtime-wiring surfaces rather than reopening
+repo-baseline repair.
 
 ## Optional Follow-Up
 

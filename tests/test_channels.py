@@ -312,6 +312,26 @@ class TestSendSlack:
             result = send_slack(event)
         assert result is False
 
+    @pytest.mark.parametrize(
+        "error",
+        [
+            FileNotFoundError("missing cert bundle"),
+            OSError("socket setup failed"),
+            RuntimeError("unexpected transport setup failure"),
+        ],
+    )
+    def test_returns_false_on_transport_boundary_error(self, error: Exception) -> None:
+        event = _make_event()
+        with (
+            patch(
+                "notification_hub.channels.get_slack_webhook_url",
+                return_value="https://hooks.slack.com/test",
+            ),
+            patch("notification_hub.channels.httpx.post", side_effect=error),
+        ):
+            result = send_slack(event)
+        assert result is False
+
     def test_digest_sends_when_webhook_configured(self) -> None:
         events = [_make_event(title="E1"), _make_event(title="E2")]
         mock_resp = MagicMock()
@@ -329,6 +349,27 @@ class TestSendSlack:
     def test_digest_empty_returns_true(self) -> None:
         result = send_slack_digest([])
         assert result is True
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            FileNotFoundError("missing cert bundle"),
+            OSError("socket setup failed"),
+            RuntimeError("unexpected transport setup failure"),
+            httpx.ConnectError("refused"),
+        ],
+    )
+    def test_digest_returns_false_on_transport_boundary_error(self, error: Exception) -> None:
+        events = [_make_event(title="E1"), _make_event(title="E2")]
+        with (
+            patch(
+                "notification_hub.channels.get_slack_webhook_url",
+                return_value="https://hooks.slack.com/test",
+            ),
+            patch("notification_hub.channels.httpx.post", side_effect=error),
+        ):
+            result = send_slack_digest(events)
+        assert result is False
 
     def test_webhook_url_never_in_payload(self) -> None:
         event = _make_event(classified_level="urgent")

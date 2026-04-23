@@ -30,6 +30,8 @@ def isolate_runtime_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> It
     monkeypatch.setattr(config_mod, "EVENTS_LOG", events_log)
     monkeypatch.setattr(config_mod, "POLICY_CONFIG", tmp_path / "config.toml")
     monkeypatch.setattr(config_mod, "LAUNCH_AGENT_PLIST", tmp_path / "com.saagar.notification-hub.plist")
+    monkeypatch.setattr(config_mod, "CLAUDE_HOOK", tmp_path / "notify.sh")
+    monkeypatch.setattr(config_mod, "CODEX_HOOK", tmp_path / "notify_local.py")
     monkeypatch.setattr(channels_mod, "EVENTS_DIR", events_dir)
     monkeypatch.setattr(channels_mod, "EVENTS_LOG", events_log)
     monkeypatch.setattr(operations_mod, "EVENTS_DIR", events_dir)

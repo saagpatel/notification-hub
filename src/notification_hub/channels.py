@@ -226,7 +226,7 @@ def send_slack(event: StoredEvent) -> bool:
             return True
         logger.warning("Slack webhook returned %d for %s", resp.status_code, event.event_id)
         return False
-    except httpx.HTTPError as exc:
+    except Exception as exc:
         logger.warning("Slack send failed for %s: %s", event.event_id, exc)
         return False
 
@@ -249,6 +249,6 @@ def send_slack_digest(events: list[StoredEvent]) -> bool:
             return True
         logger.warning("Slack digest webhook returned %d", resp.status_code)
         return False
-    except httpx.HTTPError as exc:
+    except Exception as exc:
         logger.warning("Slack digest failed: %s", exc)
         return False

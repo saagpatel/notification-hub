@@ -16,12 +16,14 @@ captures maintainer-specific context that does not belong in the general setup g
 - LaunchAgent path: `~/Library/LaunchAgents/com.saagar.notification-hub.plist`
 - Event log path: `~/.local/share/notification-hub/events.jsonl`
 - Bridge file path: `~/.claude/projects/-Users-d/memory/claude_ai_context.md`
+- Repo-owned runtime templates: `ops/launchagents/` and `ops/hooks/`
 
 ## Documentation Map
 
 - `README.md`: overview, setup, verification, runtime behavior
 - `docs/CURRENT-STATE.md`: resume-ready current state and verification baseline
 - `IMPLEMENTATION-ROADMAP.md`: phased delivery history
+- `ops/`: source-of-truth templates for machine-local LaunchAgent and hook wiring
 
 <!-- portfolio-context:start -->
 # Portfolio Context

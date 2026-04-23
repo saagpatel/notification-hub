@@ -39,7 +39,7 @@ as implementation history rather than the primary current-state source.
 - [x] Add a small end-to-end smoke command for runtime validation
 - [x] Add project/source-specific routing rules on top of the policy layer
 - [x] Add a bootstrap helper to copy the sample config into the live config path
-- [x] Keep retention manual by default and document that operator posture
+- [x] Run retention automatically on the daemon schedule while keeping manual retention available
 
 ### Current Operator/Config Shape
 
@@ -56,6 +56,9 @@ as implementation history rather than the primary current-state source.
   existing config unless `--force` is used
 - Retention now runs automatically on the daemon schedule, while the manual command still exists for
   immediate operator-triggered passes
+- Runtime wiring is now repo-owned through checked-in LaunchAgent and hook templates under `ops/`
+- Slack transport failures degrade quietly, configurable quiet hours support same-day windows, and
+  repeated identical bridge activity lines are detected as new appends
 
 ## Phase 0: FastAPI Skeleton + JSONL Logging + Bridge File Watcher
 

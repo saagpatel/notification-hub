@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import httpx
 from _pytest.capture import CaptureFixture
+from pytest import MonkeyPatch
 
 from notification_hub.cli import (
     bootstrap_config_main,
@@ -16,7 +18,12 @@ from notification_hub.cli import (
     retention_main,
     smoke_main,
 )
-from notification_hub.diagnostics import collect_doctor_report, collect_runtime_readiness
+import notification_hub.config as config_mod
+from notification_hub.diagnostics import (
+    collect_doctor_report,
+    collect_runtime_readiness,
+    collect_runtime_wiring,
+)
 
 
 def test_collect_runtime_readiness_reports_config_and_paths() -> None:
@@ -40,6 +47,18 @@ def test_collect_runtime_readiness_reports_config_and_paths() -> None:
         ),
         patch("notification_hub.diagnostics.config_mod.analyze_policy_config", return_value=("w1", "w2", "w3")),
         patch("notification_hub.diagnostics._path_exists", side_effect=[True, True, False, True]),
+        patch(
+            "notification_hub.diagnostics.collect_runtime_wiring",
+            return_value={
+                "launch_agent_matches_template": True,
+                "claude_hook_matches_template": True,
+                "codex_hook_matches_template": True,
+                "launch_agent_uses_frozen": True,
+                "claude_hook_uses_safe_json": True,
+                "hook_timeout_configured": True,
+                "codex_hook_executable": True,
+            },
+        ),
     ):
         data = collect_runtime_readiness()
 
@@ -65,6 +84,51 @@ def test_collect_runtime_readiness_reports_config_and_paths() -> None:
         "interval_minutes": 60,
         "max_events": 2000,
         "keep_archives": 10,
+    }
+    assert data["runtime_wiring"] == {
+        "launch_agent_matches_template": True,
+        "claude_hook_matches_template": True,
+        "codex_hook_matches_template": True,
+        "launch_agent_uses_frozen": True,
+        "claude_hook_uses_safe_json": True,
+        "hook_timeout_configured": True,
+        "codex_hook_executable": True,
+    }
+
+
+def test_collect_runtime_wiring_compares_installed_files_to_templates(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    launch_agent = tmp_path / "com.saagar.notification-hub.plist"
+    launch_agent_template = tmp_path / "template.plist"
+    claude_hook = tmp_path / "notify.sh"
+    claude_hook_template = tmp_path / "claude-template.sh"
+    codex_hook = tmp_path / "notify_local.py"
+    codex_hook_template = tmp_path / "codex-template.py"
+
+    launch_agent.write_text("uv run --frozen uvicorn\n", encoding="utf-8")
+    launch_agent_template.write_text("uv run --frozen uvicorn\n", encoding="utf-8")
+    claude_hook.write_text("jq -n --arg repo x\ncurl --max-time 2\n", encoding="utf-8")
+    claude_hook_template.write_text("jq -n --arg repo x\ncurl --max-time 2\n", encoding="utf-8")
+    codex_hook.write_text("urllib.request.urlopen(req, timeout=2)\n", encoding="utf-8")
+    codex_hook_template.write_text("urllib.request.urlopen(req, timeout=2)\n", encoding="utf-8")
+    codex_hook.chmod(0o755)
+
+    monkeypatch.setattr(config_mod, "LAUNCH_AGENT_PLIST", launch_agent)
+    monkeypatch.setattr(config_mod, "LAUNCH_AGENT_TEMPLATE", launch_agent_template)
+    monkeypatch.setattr(config_mod, "CLAUDE_HOOK", claude_hook)
+    monkeypatch.setattr(config_mod, "CLAUDE_HOOK_TEMPLATE", claude_hook_template)
+    monkeypatch.setattr(config_mod, "CODEX_HOOK", codex_hook)
+    monkeypatch.setattr(config_mod, "CODEX_HOOK_TEMPLATE", codex_hook_template)
+
+    assert collect_runtime_wiring() == {
+        "launch_agent_matches_template": True,
+        "claude_hook_matches_template": True,
+        "codex_hook_matches_template": True,
+        "launch_agent_uses_frozen": True,
+        "claude_hook_uses_safe_json": True,
+        "hook_timeout_configured": True,
+        "codex_hook_executable": True,
     }
 
 
@@ -95,6 +159,15 @@ def test_collect_doctor_report_handles_local_api_failure() -> None:
                     "interval_minutes": 60,
                     "max_events": 2000,
                     "keep_archives": 10,
+                },
+                "runtime_wiring": {
+                    "launch_agent_matches_template": True,
+                    "claude_hook_matches_template": True,
+                    "codex_hook_matches_template": True,
+                    "launch_agent_uses_frozen": True,
+                    "claude_hook_uses_safe_json": True,
+                    "hook_timeout_configured": True,
+                    "codex_hook_executable": True,
                 },
             },
         ),

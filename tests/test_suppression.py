@@ -127,6 +127,36 @@ class TestQuietHours:
         ten_59_pm = datetime(2026, 4, 16, 5, 59, tzinfo=timezone.utc)  # 10:59 PM PT = 5:59 UTC
         assert engine.is_quiet_hours(ten_59_pm) is False
 
+    def test_same_day_quiet_window(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        policy = PolicyConfig(
+            suppression=SuppressionPolicy(quiet_start_hour=9, quiet_end_hour=17)
+        )
+        monkeypatch.setattr("notification_hub.suppression.get_policy_config", lambda: policy)
+        engine = SuppressionEngine()
+
+        eight_am = datetime(2026, 4, 15, 15, 0, tzinfo=timezone.utc)
+        nine_am = datetime(2026, 4, 15, 16, 0, tzinfo=timezone.utc)
+        four_pm = datetime(2026, 4, 15, 23, 0, tzinfo=timezone.utc)
+        five_pm = datetime(2026, 4, 16, 0, 0, tzinfo=timezone.utc)
+        assert engine.is_quiet_hours(eight_am) is False
+        assert engine.is_quiet_hours(nine_am) is True
+        assert engine.is_quiet_hours(four_pm) is True
+        assert engine.is_quiet_hours(five_pm) is False
+
+    def test_matching_start_and_end_disables_quiet_hours(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        policy = PolicyConfig(
+            suppression=SuppressionPolicy(quiet_start_hour=7, quiet_end_hour=7)
+        )
+        monkeypatch.setattr("notification_hub.suppression.get_policy_config", lambda: policy)
+        engine = SuppressionEngine()
+
+        midnight = datetime(2026, 4, 15, 7, 0, tzinfo=timezone.utc)
+        noon = datetime(2026, 4, 15, 19, 0, tzinfo=timezone.utc)
+        assert engine.is_quiet_hours(midnight) is False
+        assert engine.is_quiet_hours(noon) is False
+
     def test_queue_and_drain(self) -> None:
         engine = SuppressionEngine()
         event = _stored()

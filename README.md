@@ -34,8 +34,8 @@ Core modules:
 ## Local Development
 
 ```bash
-uv sync --extra dev
-uv run uvicorn notification_hub.server:app --host 127.0.0.1 --port 9199 --reload
+uv sync --frozen --extra dev
+uv run --frozen uvicorn notification_hub.server:app --host 127.0.0.1 --port 9199 --reload
 ```
 
 ## Operator Commands
@@ -132,6 +132,9 @@ If a rule sets `continue_matching = true`, notification-hub keeps evaluating lat
 can compose multiple overrides instead of stopping at the first match.
 Retention is enabled by default with a conservative hourly check. It only rotates the log when the
 live JSONL file grows beyond `max_events`, and it keeps up to `keep_archives` archived files.
+Quiet hours use a start-inclusive, end-exclusive window. When `quiet_start_hour < quiet_end_hour`,
+the window is same-day. When `quiet_start_hour > quiet_end_hour`, the window crosses midnight.
+When both values are equal, quiet hours are disabled.
 
 First-time setup shortcut:
 
@@ -165,9 +168,9 @@ continue-matching chain, and same-priority rules where file order is still break
 
 ```bash
 uv lock --check
-uv run pytest
-uv run ruff check
-uv run pyright
+uv run --frozen pytest
+uv run --frozen ruff check
+uv run --frozen pyright
 ```
 
 The test suite uses temporary runtime paths, so local verification does not write into the live
@@ -179,16 +182,18 @@ Runtime diagnostics:
 ```bash
 curl http://127.0.0.1:9199/health
 curl http://127.0.0.1:9199/health/details
-uv run notification-hub-doctor
-uv run notification-hub policy-check
-uv run notification-hub explain --source codex --level info --title "Test" --body "Approval needed"
-uv run notification-hub smoke
-uv run notification-hub retention --max-events 2000
+uv run --frozen notification-hub-doctor
+uv run --frozen notification-hub policy-check
+uv run --frozen notification-hub explain --source codex --level info --title "Test" --body "Approval needed"
+uv run --frozen notification-hub smoke
+uv run --frozen notification-hub retention --max-events 2000
 ```
 
 ## Runtime Notes
 
 - The daemon is localhost-only.
+- The canonical local Python version is pinned in `.python-version` and matches CI's Python 3.12
+  target.
 - The event log is written to `~/.local/share/notification-hub/events.jsonl`.
 - Slack webhook secrets are read from macOS Keychain and are never stored in repo files.
 - If the Slack webhook is not configured, the daemon stays healthy and continues local delivery
@@ -196,10 +201,24 @@ uv run notification-hub retention --max-events 2000
 - If a Slack webhook is added later, the daemon will retry Keychain lookup automatically within
   about a minute, so a manual restart is usually not required.
 - LaunchAgent support lives at `~/Library/LaunchAgents/com.saagar.notification-hub.plist`.
+- Repo-owned runtime templates live under `ops/`: the LaunchAgent template, Claude Code hook
+  template, and Codex hook template are the source of truth for machine-local wiring.
 - `GET /health/details` reports whether push delivery is available, whether Slack is configured,
   whether key local files exist, whether a policy config file was loaded, how many policy warnings
   were found, the current retention settings plus the last retention result, and current
-  suppression queue counters, without exposing secrets.
+  suppression queue counters, and whether runtime wiring matches the checked-in templates, without
+  exposing secrets.
+
+Refresh local runtime wiring from repo templates:
+
+```bash
+install -m 644 ops/launchagents/com.saagar.notification-hub.plist ~/Library/LaunchAgents/com.saagar.notification-hub.plist
+install -m 755 ops/hooks/claude-notify.sh ~/.claude/hooks/notify.sh
+install -m 755 ops/hooks/codex-notify-local.py ~/.codex/hooks/notify_local.py
+launchctl bootout "gui/$(id -u)" ~/Library/LaunchAgents/com.saagar.notification-hub.plist 2>/dev/null || true
+launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.saagar.notification-hub.plist
+launchctl kickstart -k "gui/$(id -u)/com.saagar.notification-hub"
+```
 
 ## Docs
 

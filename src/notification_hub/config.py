@@ -22,6 +22,12 @@ APP_CONFIG_DIR = Path.home() / ".config" / "notification-hub"
 POLICY_CONFIG = APP_CONFIG_DIR / "config.toml"
 EXAMPLE_POLICY_CONFIG = Path(__file__).resolve().parents[2] / "config" / "policy.example.toml"
 LAUNCH_AGENT_PLIST = Path.home() / "Library" / "LaunchAgents" / "com.saagar.notification-hub.plist"
+CLAUDE_HOOK = Path.home() / ".claude" / "hooks" / "notify.sh"
+CODEX_HOOK = Path.home() / ".codex" / "hooks" / "notify_local.py"
+RUNTIME_TEMPLATE_DIR = Path(__file__).resolve().parents[2] / "ops"
+LAUNCH_AGENT_TEMPLATE = RUNTIME_TEMPLATE_DIR / "launchagents" / "com.saagar.notification-hub.plist"
+CLAUDE_HOOK_TEMPLATE = RUNTIME_TEMPLATE_DIR / "hooks" / "claude-notify.sh"
+CODEX_HOOK_TEMPLATE = RUNTIME_TEMPLATE_DIR / "hooks" / "codex-notify-local.py"
 
 BRIDGE_FILE = Path.home() / ".claude" / "projects" / "-Users-d" / "memory" / "claude_ai_context.md"
 

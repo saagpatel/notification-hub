@@ -54,11 +54,10 @@ def diff_sections(old_content: str, new_content: str) -> list[str]:
     """Find new activity lines across all watched sections."""
     new_lines: list[str] = []
     for section in WATCHED_SECTIONS:
-        old_lines = set(extract_section_lines(old_content, section))
+        old_count = len(extract_section_lines(old_content, section))
         cur_lines = extract_section_lines(new_content, section)
-        for line in cur_lines:
-            if line not in old_lines:
-                new_lines.append(line)
+        if len(cur_lines) > old_count:
+            new_lines.extend(cur_lines[old_count:])
     return new_lines
 
 

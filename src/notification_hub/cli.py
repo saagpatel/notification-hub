@@ -122,6 +122,8 @@ def _print_doctor_report(report: dict[str, object]) -> None:
     print(f"- push notifier available: {checks['push_notifier_available']}")
     print(f"- Slack configured: {checks['slack_configured']}")
     print(f"- policy load OK: {checks['policy_load_ok']}")
+    if "runtime_wiring_current" in checks:
+        print(f"- runtime wiring current: {checks['runtime_wiring_current']}")
     print(f"- policy path: {config['path']}")
     print(f"- retention enabled: {retention['enabled']}")
     print(f"- retention interval minutes: {retention['interval_minutes']}")
