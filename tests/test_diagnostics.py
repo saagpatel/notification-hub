@@ -17,6 +17,7 @@ from notification_hub.cli import (
     policy_check_main,
     retention_main,
     smoke_main,
+    verify_runtime_main,
 )
 import notification_hub.config as config_mod
 from notification_hub.diagnostics import (
@@ -24,6 +25,7 @@ from notification_hub.diagnostics import (
     collect_runtime_readiness,
     collect_runtime_wiring,
 )
+from notification_hub.operations import run_verify_runtime
 
 
 def test_collect_runtime_readiness_reports_config_and_paths() -> None:
@@ -222,6 +224,171 @@ def test_cli_smoke_json_output(capsys: CaptureFixture[str]) -> None:
     assert '"event_id": "abc123"' in captured.out
 
 
+def test_run_verify_runtime_is_read_only_by_default() -> None:
+    with (
+        patch(
+            "notification_hub.operations.collect_doctor_report",
+            return_value={
+                "status": "ok",
+                "checks": {"runtime_wiring_current": True},
+                "local_api": {"reachable": True, "url": "http://127.0.0.1:9199/health/details"},
+                "runtime_wiring": {
+                    "launch_agent_matches_template": True,
+                    "claude_hook_matches_template": True,
+                    "codex_hook_matches_template": True,
+                },
+            },
+        ),
+        patch(
+            "notification_hub.operations.run_policy_check",
+            return_value={
+                "status": "warn",
+                "config_path": "/tmp/config.toml",
+                "config_found": True,
+                "example_path": "/tmp/example.toml",
+                "load_error": None,
+                "warning_count": 1,
+                "suggestion_count": 1,
+                "warnings": ["shadowed rule"],
+                "suggestions": ["move the narrower rule earlier"],
+            },
+        ),
+        patch("notification_hub.operations.run_smoke_check") as mock_smoke,
+    ):
+        report = run_verify_runtime()
+
+    assert report["status"] == "ok"
+    assert report["read_only"] is True
+    assert report["include_smoke"] is False
+    assert report["smoke"] is None
+    assert report["checks"] == {
+        "doctor_ok": True,
+        "policy_check_ok": True,
+        "health_details_reachable": True,
+        "runtime_wiring_current": True,
+        "smoke_ok": True,
+    }
+    mock_smoke.assert_not_called()
+
+
+def test_run_verify_runtime_reports_degraded_policy() -> None:
+    with (
+        patch(
+            "notification_hub.operations.collect_doctor_report",
+            return_value={
+                "status": "ok",
+                "checks": {"runtime_wiring_current": True},
+                "local_api": {"reachable": True, "url": "http://127.0.0.1:9199/health/details"},
+                "runtime_wiring": {"launch_agent_matches_template": True},
+            },
+        ),
+        patch(
+            "notification_hub.operations.run_policy_check",
+            return_value={
+                "status": "degraded",
+                "config_path": "/tmp/config.toml",
+                "config_found": True,
+                "example_path": "/tmp/example.toml",
+                "load_error": "invalid TOML",
+                "warning_count": 0,
+                "suggestion_count": 0,
+                "warnings": [],
+                "suggestions": [],
+            },
+        ),
+    ):
+        report = run_verify_runtime()
+
+    assert report["status"] == "degraded"
+    assert report["checks"]["policy_check_ok"] is False
+
+
+def test_run_verify_runtime_smoke_is_opt_in() -> None:
+    with (
+        patch(
+            "notification_hub.operations.collect_doctor_report",
+            return_value={
+                "status": "ok",
+                "checks": {"runtime_wiring_current": True},
+                "local_api": {"reachable": True, "url": "http://127.0.0.1:9199/health/details"},
+                "runtime_wiring": {"launch_agent_matches_template": True},
+            },
+        ),
+        patch(
+            "notification_hub.operations.run_policy_check",
+            return_value={
+                "status": "ok",
+                "config_path": "/tmp/config.toml",
+                "config_found": True,
+                "example_path": "/tmp/example.toml",
+                "load_error": None,
+                "warning_count": 0,
+                "suggestion_count": 0,
+                "warnings": [],
+                "suggestions": [],
+            },
+        ),
+        patch(
+            "notification_hub.operations.run_smoke_check",
+            return_value={
+                "status": "degraded",
+                "health_url": "http://127.0.0.1:9199/health/details",
+                "event_url": "http://127.0.0.1:9199/events",
+                "event_id": None,
+                "log_verified": False,
+                "response_status": 500,
+                "error": "unexpected status 500",
+            },
+        ) as mock_smoke,
+    ):
+        report = run_verify_runtime(include_smoke=True)
+
+    assert report["status"] == "degraded"
+    assert report["read_only"] is False
+    assert report["include_smoke"] is True
+    assert report["checks"]["smoke_ok"] is False
+    mock_smoke.assert_called_once_with()
+
+
+def test_cli_verify_runtime_json_output(capsys: CaptureFixture[str]) -> None:
+    with patch(
+        "notification_hub.cli.run_verify_runtime",
+        return_value={
+            "status": "ok",
+            "read_only": True,
+            "include_smoke": False,
+            "health_url": "http://127.0.0.1:9199/health/details",
+            "checks": {
+                "doctor_ok": True,
+                "policy_check_ok": True,
+                "health_details_reachable": True,
+                "runtime_wiring_current": True,
+                "smoke_ok": True,
+            },
+            "runtime_wiring": {"launch_agent_matches_template": True},
+            "doctor": {"status": "ok"},
+            "policy_check": {
+                "status": "ok",
+                "config_path": "/tmp/config.toml",
+                "config_found": True,
+                "example_path": "/tmp/example.toml",
+                "load_error": None,
+                "warning_count": 0,
+                "suggestion_count": 0,
+                "warnings": [],
+                "suggestions": [],
+            },
+            "smoke": None,
+        },
+    ) as mock_verify:
+        exit_code = main(["verify-runtime", "--json"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert '"read_only": true' in captured.out
+    mock_verify.assert_called_once_with(include_smoke=False)
+
+
 def test_cli_policy_check_json_output(capsys: CaptureFixture[str]) -> None:
     with patch(
         "notification_hub.cli.run_policy_check",
@@ -382,6 +549,53 @@ def test_smoke_and_retention_wrappers_forward_flags(capsys: CaptureFixture[str])
     retention_output = capsys.readouterr()
     assert retention_exit == 0
     assert '"events_before": 3' in retention_output.out
+
+
+def test_verify_runtime_wrapper_forwards_flags(capsys: CaptureFixture[str]) -> None:
+    with patch(
+        "notification_hub.cli.run_verify_runtime",
+        return_value={
+            "status": "ok",
+            "read_only": False,
+            "include_smoke": True,
+            "health_url": "http://127.0.0.1:9199/health/details",
+            "checks": {
+                "doctor_ok": True,
+                "policy_check_ok": True,
+                "health_details_reachable": True,
+                "runtime_wiring_current": True,
+                "smoke_ok": True,
+            },
+            "runtime_wiring": {"launch_agent_matches_template": True},
+            "doctor": {"status": "ok"},
+            "policy_check": {
+                "status": "ok",
+                "config_path": "/tmp/config.toml",
+                "config_found": True,
+                "example_path": "/tmp/example.toml",
+                "load_error": None,
+                "warning_count": 0,
+                "suggestion_count": 0,
+                "warnings": [],
+                "suggestions": [],
+            },
+            "smoke": {
+                "status": "ok",
+                "health_url": "http://127.0.0.1:9199/health/details",
+                "event_url": "http://127.0.0.1:9199/events",
+                "event_id": "abc123",
+                "log_verified": True,
+                "response_status": 201,
+                "error": None,
+            },
+        },
+    ) as mock_verify:
+        exit_code = verify_runtime_main(["--json", "--include-smoke"])
+
+    output = capsys.readouterr()
+    assert exit_code == 0
+    assert '"include_smoke": true' in output.out
+    mock_verify.assert_called_once_with(include_smoke=True)
 
 
 def test_policy_check_wrapper_forwards_flags(capsys: CaptureFixture[str]) -> None:

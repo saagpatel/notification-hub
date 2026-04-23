@@ -68,6 +68,7 @@ uv run --frozen ruff check
 uv run --frozen pyright
 curl http://127.0.0.1:9199/health/details
 uv run --frozen notification-hub-doctor
+uv run --frozen notification-hub verify-runtime
 uv run --frozen notification-hub-policy-check
 uv run --frozen notification-hub-explain --source codex --level info --title "Test" --body "Session complete"
 uv run --frozen notification-hub smoke
@@ -76,11 +77,12 @@ uv run --frozen notification-hub retention --max-events 2000
 
 Expected current outcome:
 
-- `pytest`: 194 passed
+- `pytest`: 199 passed
 - `ruff`: clean
 - `pyright`: 0 errors
 - `/health/details`: `status: ok`, watcher active, push available, Slack configured
 - `notification-hub-doctor`: `status: ok`
+- `notification-hub verify-runtime`: `status: ok` without posting an event by default
 - `notification-hub-policy-check`: `status: ok` or `warn`, depending on the active policy file,
   plus warning-specific fix suggestions when issues are found
 - `notification-hub-explain`: returns a non-mutating classification/routing/delivery preview

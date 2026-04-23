@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 from datetime import datetime, timezone
-from typing import TypedDict
+from typing import TypedDict, cast
 
 import httpx
 
@@ -20,6 +20,7 @@ from notification_hub.config import (
     analyze_policy_config,
     get_policy_config,
 )
+from notification_hub.diagnostics import collect_doctor_report
 from notification_hub.models import Event
 
 
@@ -61,6 +62,24 @@ class PolicyCheckReport(TypedDict):
     suggestion_count: int
     warnings: list[str]
     suggestions: list[str]
+
+
+class VerifyRuntimeReport(TypedDict):
+    status: str
+    read_only: bool
+    include_smoke: bool
+    health_url: str | None
+    checks: dict[str, bool]
+    runtime_wiring: dict[str, bool]
+    doctor: dict[str, object]
+    policy_check: PolicyCheckReport
+    smoke: SmokeReport | None
+
+
+def _as_dict(value: object) -> dict[str, object]:
+    if isinstance(value, dict):
+        return cast(dict[str, object], value)
+    return {}
 
 
 def _suggest_fix_for_warning(warning: str) -> str:
@@ -295,4 +314,37 @@ def run_policy_check() -> PolicyCheckReport:
         "suggestion_count": len(suggestions),
         "warnings": warnings,
         "suggestions": suggestions,
+    }
+
+
+def run_verify_runtime(*, include_smoke: bool = False) -> VerifyRuntimeReport:
+    """Aggregate the core runtime checks into one operator-facing report."""
+    doctor = collect_doctor_report()
+    policy_check = run_policy_check()
+    smoke = run_smoke_check() if include_smoke else None
+
+    doctor_checks = _as_dict(doctor.get("checks"))
+    local_api = _as_dict(doctor.get("local_api"))
+    runtime_wiring = _as_dict(doctor.get("runtime_wiring"))
+
+    checks = {
+        "doctor_ok": doctor.get("status") == "ok",
+        "policy_check_ok": policy_check["status"] != "degraded",
+        "health_details_reachable": local_api.get("reachable") is True,
+        "runtime_wiring_current": doctor_checks.get("runtime_wiring_current") is True,
+        "smoke_ok": smoke is None or smoke["status"] == "ok",
+    }
+    status = "ok" if all(checks.values()) else "degraded"
+    health_url = local_api.get("url")
+
+    return {
+        "status": status,
+        "read_only": smoke is None,
+        "include_smoke": include_smoke,
+        "health_url": health_url if isinstance(health_url, str) else None,
+        "checks": checks,
+        "runtime_wiring": {key: bool(value) for key, value in runtime_wiring.items()},
+        "doctor": doctor,
+        "policy_check": policy_check,
+        "smoke": smoke,
     }

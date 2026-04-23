@@ -15,10 +15,12 @@ from notification_hub.operations import (
     PolicyCheckReport,
     RetentionReport,
     SmokeReport,
+    VerifyRuntimeReport,
     bootstrap_policy_config,
     run_policy_check,
     run_retention,
     run_smoke_check,
+    run_verify_runtime,
 )
 from notification_hub.pipeline import build_event_explanation_report
 
@@ -39,6 +41,21 @@ def _build_parser(prog: str = "notification-hub") -> argparse.ArgumentParser:
         "--json",
         action="store_true",
         help="Emit the smoke report as JSON.",
+    )
+
+    verify_runtime = subparsers.add_parser(
+        "verify-runtime",
+        help="Run the core live-runtime checks without posting an event by default.",
+    )
+    verify_runtime.add_argument(
+        "--include-smoke",
+        action="store_true",
+        help="Also post a harmless smoke event and verify it lands in the log.",
+    )
+    verify_runtime.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the runtime verification report as JSON.",
     )
 
     policy_check = subparsers.add_parser(
@@ -143,6 +160,23 @@ def _print_smoke_report(report: SmokeReport) -> None:
         print(f"- error: {report['error']}")
 
 
+def _print_verify_runtime_report(report: VerifyRuntimeReport) -> None:
+    checks = report["checks"]
+    smoke = report["smoke"]
+
+    print(f"notification-hub verify-runtime: {report['status']}")
+    print(f"- read only: {report['read_only']}")
+    print(f"- health URL: {report['health_url']}")
+    print(f"- doctor OK: {checks['doctor_ok']}")
+    print(f"- policy check OK: {checks['policy_check_ok']}")
+    print(f"- health details reachable: {checks['health_details_reachable']}")
+    print(f"- runtime wiring current: {checks['runtime_wiring_current']}")
+    print(f"- smoke included: {report['include_smoke']}")
+    if smoke is not None:
+        print(f"- smoke OK: {checks['smoke_ok']}")
+        print(f"- smoke event ID: {smoke['event_id']}")
+
+
 def _print_policy_check_report(report: PolicyCheckReport) -> None:
     print(f"notification-hub policy-check: {report['status']}")
     print(f"- config found: {report['config_found']}")
@@ -225,6 +259,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             _print_smoke_report(report)
         return 0 if report["status"] == "ok" else 1
 
+    if args.command == "verify-runtime":
+        report = run_verify_runtime(include_smoke=args.include_smoke)
+        if args.json:
+            print(json.dumps(report, indent=2, sort_keys=True))
+        else:
+            _print_verify_runtime_report(report)
+        return 0 if report["status"] == "ok" else 1
+
     if args.command == "policy-check":
         report = run_policy_check()
         if args.json:
@@ -272,6 +314,11 @@ def doctor_main(argv: Sequence[str] | None = None) -> int:
 def smoke_main(argv: Sequence[str] | None = None) -> int:
     forwarded = list(argv) if argv is not None else sys.argv[1:]
     return main(["smoke", *forwarded])
+
+
+def verify_runtime_main(argv: Sequence[str] | None = None) -> int:
+    forwarded = list(argv) if argv is not None else sys.argv[1:]
+    return main(["verify-runtime", *forwarded])
 
 
 def policy_check_main(argv: Sequence[str] | None = None) -> int:
