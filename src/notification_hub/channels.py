@@ -23,6 +23,7 @@ _SOURCE_LABELS: dict[str, str] = {
     "codex": "Codex",
     "claude_ai": "Claude.ai",
     "bridge_watcher": "Bridge",
+    "personal-ops": "Personal Ops",
 }
 
 # Slack emoji for level badges
@@ -38,6 +39,7 @@ _SOURCE_EMOJI: dict[str, str] = {
     "codex": ":gear:",
     "claude_ai": ":brain:",
     "bridge_watcher": ":bridge_at_night:",
+    "personal-ops": ":clipboard:",
 }
 
 _PUSH_NOTIFIER_CANDIDATES: tuple[str, ...] = (

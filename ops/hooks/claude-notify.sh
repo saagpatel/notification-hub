@@ -21,6 +21,7 @@ if [ "$ELAPSED" -lt 30 ]; then exit 0; fi
 CWD=$(echo "$INPUT" | jq -r '.cwd // "."')
 REPO=$(basename "$CWD")
 BRANCH=$(git -C "$CWD" branch --show-current 2>/dev/null || echo "")
+REPO=${REPO:0:100}
 
 terminal-notifier \
   -title "Claude Code" \
@@ -40,8 +41,8 @@ HUB_PAYLOAD=$(jq -n \
     source: $source,
     level: $level,
     title: $title,
-    body: ($repo + (if $branch == "" then "" else " (" + $branch + ")" end) + ": Done (" + $elapsed + "s)"),
-    project: $repo
+    body: (($repo + (if $branch == "" then "" else " (" + $branch + ")" end) + ": Done (" + $elapsed + "s)")[:2000]),
+    project: ($repo[:100])
   }')
 
 curl -s --max-time 2 -X POST http://127.0.0.1:9199/events \

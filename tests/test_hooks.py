@@ -119,6 +119,89 @@ def test_codex_hook_template_posts_valid_payload_with_project_from_cwd() -> None
     assert event.project == "notification-hub"
 
 
+def test_codex_hook_template_clamps_payload_to_event_schema() -> None:
+    module = _load_codex_template({"message": "done"})
+    captured: dict[str, object] = {}
+
+    def _capture_urlopen(req: object, timeout: int) -> object:
+        captured["timeout"] = timeout
+        captured["data"] = getattr(req, "data")
+        return object()
+
+    with patch.object(module.urllib.request, "urlopen", side_effect=_capture_urlopen):
+        module.post_to_hub(
+            "complete",
+            "T" * 250,
+            "B" * 2500,
+            "P" * 150,
+        )
+
+    payload_data = cast(bytes, captured["data"])
+    payload = json.loads(payload_data.decode())
+    event = Event.model_validate(payload)
+    assert len(event.title) <= 200
+    assert len(event.body) <= 2000
+    assert event.project is not None
+    assert len(event.project) <= 100
+
+
+def test_claude_hook_template_clamps_long_repo_names(tmp_path: Path) -> None:
+    transcript = tmp_path / "transcript.jsonl"
+    transcript.write_text('[{"timestamp":"2026-04-23T01:00:00.000Z"}]\n', encoding="utf-8")
+    cwd = tmp_path / ("repo-" + ("x" * 160))
+    cwd.mkdir()
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    payload_path = tmp_path / "payload.json"
+    (bin_dir / "terminal-notifier").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    (bin_dir / "git").write_text(
+        '#!/bin/sh\nprintf "%%s\\n" "%s"\n' % ("b" * 250,),
+        encoding="utf-8",
+    )
+    (bin_dir / "curl").write_text(
+        """#!/bin/sh
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-d" ]; then
+    shift
+    printf "%s" "$1" > "$CURL_PAYLOAD"
+    exit 0
+  fi
+  shift
+done
+exit 1
+""",
+        encoding="utf-8",
+    )
+    for script in bin_dir.iterdir():
+        script.chmod(0o755)
+
+    hook_input = json.dumps({"transcript_path": str(transcript), "cwd": str(cwd)})
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "CURL_PAYLOAD": str(payload_path),
+    }
+    subprocess.run(
+        ["bash", str(CLAUDE_TEMPLATE)],
+        input=hook_input,
+        text=True,
+        env=env,
+        check=True,
+        timeout=5,
+    )
+    for _ in range(20):
+        if payload_path.exists():
+            break
+        time.sleep(0.05)
+
+    payload = json.loads(payload_path.read_text(encoding="utf-8"))
+    event = Event.model_validate(payload)
+    assert event.project is not None
+    assert len(event.project) <= 100
+    assert len(event.body) <= 2000
+
+
 def test_launch_agent_template_uses_frozen_runtime() -> None:
     text = LAUNCH_AGENT_TEMPLATE.read_text(encoding="utf-8")
     assert "/opt/homebrew/bin/uv" in text

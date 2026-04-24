@@ -45,6 +45,17 @@ COMPLETE_MARKERS = (
     "done",
 )
 
+MAX_TITLE_LENGTH = 200
+MAX_BODY_LENGTH = 2000
+MAX_PROJECT_LENGTH = 100
+
+
+def clamp_text(value: str, max_length: int) -> str:
+    value = value.strip()
+    if len(value) <= max_length:
+        return value
+    return value[: max_length - 3].rstrip() + "..."
+
 
 def iter_string_values(value: object) -> Iterable[str]:
     if isinstance(value, str):
@@ -102,10 +113,10 @@ def project_from_payload(payload: dict) -> str | None:
     for key in ("project", "project_name", "repo", "repository"):
         value = payload.get(key)
         if isinstance(value, str) and value.strip():
-            return value.strip()
+            return clamp_text(value, MAX_PROJECT_LENGTH)
     cwd = payload.get("cwd")
     if isinstance(cwd, str) and cwd.strip():
-        return Path(cwd).name
+        return clamp_text(Path(cwd).name, MAX_PROJECT_LENGTH)
     return None
 
 
@@ -115,11 +126,11 @@ def post_to_hub(level: str, title: str, message: str, project: str | None = None
     payload = {
         "source": "codex",
         "level": hub_level,
-        "title": title,
-        "body": message,
+        "title": clamp_text(title, MAX_TITLE_LENGTH) or "Codex notification",
+        "body": clamp_text(message, MAX_BODY_LENGTH) or "Codex notification.",
     }
     if project is not None:
-        payload["project"] = project
+        payload["project"] = clamp_text(project, MAX_PROJECT_LENGTH)
     body = json.dumps(payload).encode()
     req = urllib.request.Request(
         "http://127.0.0.1:9199/events",

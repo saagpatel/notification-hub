@@ -5,11 +5,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
-from typing import TypedDict, cast
+from typing import Any, TypedDict, cast
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 
 from notification_hub.config import BRIDGE_FILE, get_policy_config
 from notification_hub.diagnostics import collect_runtime_readiness
@@ -164,6 +166,47 @@ app = FastAPI(
     redoc_url=None,
     openapi_url=None,
 )
+
+
+def _validation_error_summary(errors: Sequence[Any]) -> list[dict[str, object]]:
+    summary: list[dict[str, object]] = []
+    for error in errors:
+        if not isinstance(error, dict):
+            continue
+        typed_error = cast(dict[str, object], error)
+        loc = typed_error.get("loc")
+        item: dict[str, object] = {
+            "type": typed_error.get("type"),
+            "loc": loc,
+        }
+        ctx = typed_error.get("ctx")
+        if isinstance(ctx, dict):
+            item["ctx"] = ctx
+        if (
+            typed_error.get("type") == "literal_error"
+            and isinstance(loc, tuple)
+            and loc[-1] in {"source", "level"}
+        ):
+            input_value = typed_error.get("input")
+            if isinstance(input_value, str):
+                item["input"] = input_value[:80]
+        summary.append(item)
+    return summary
+
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_exception_handler(
+    request: Request,
+    exc: RequestValidationError,
+) -> JSONResponse:
+    """Log event validation failures without logging request bodies."""
+    if request.url.path == "/events":
+        logger.warning(
+            "Rejected event payload from %s: %s",
+            request.client.host if request.client else "unknown",
+            _validation_error_summary(exc.errors()),
+        )
+    return JSONResponse(status_code=422, content={"detail": exc.errors()})
 
 
 @app.post("/events", response_model=EventResponse, status_code=201)

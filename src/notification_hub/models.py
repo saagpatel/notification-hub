@@ -10,7 +10,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_validator
 
 
-Source = Literal["codex", "cc", "claude_ai", "bridge_watcher"]
+Source = Literal["codex", "cc", "claude_ai", "bridge_watcher", "personal-ops"]
 Level = Literal["urgent", "normal", "info"]
 
 _CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\r\n]")

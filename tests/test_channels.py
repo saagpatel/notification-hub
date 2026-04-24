@@ -32,7 +32,7 @@ def tmp_log(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 def _as_source(value: object) -> Source:
-    if value in ("cc", "codex", "claude_ai", "bridge_watcher"):
+    if value in ("cc", "codex", "claude_ai", "bridge_watcher", "personal-ops"):
         return value
     return "cc"
 

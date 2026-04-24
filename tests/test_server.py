@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import contextmanager
+import logging
 from unittest.mock import patch
 
 import pytest
@@ -195,6 +196,49 @@ async def test_create_event_invalid_source(client: AsyncClient) -> None:
     assert resp.status_code == 422
 
 
+async def test_create_event_validation_logs_invalid_source_value(
+    client: AsyncClient,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    payload = {
+        "source": "codex-hook",
+        "level": "normal",
+        "title": "Bad source",
+        "body": "Invalid source should be summarized",
+    }
+    with caplog.at_level(logging.WARNING, logger="notification_hub.server"):
+        resp = await client.post("/events", json=payload)
+
+    assert resp.status_code == 422
+    combined = "\n".join(record.getMessage() for record in caplog.records)
+    assert "source" in combined
+    assert "codex-hook" in combined
+    assert "Invalid source should be summarized" not in combined
+
+
+async def test_create_event_validation_logs_field_without_body(
+    client: AsyncClient,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    payload = {
+        "source": "codex",
+        "level": "normal",
+        "title": "Bad project",
+        "body": "Do not log this body",
+        "project": "p" * 101,
+    }
+    with caplog.at_level(logging.WARNING, logger="notification_hub.server"):
+        resp = await client.post("/events", json=payload)
+
+    assert resp.status_code == 422
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("Rejected event payload" in message for message in messages)
+    combined = "\n".join(messages)
+    assert "project" in combined
+    assert "string_too_long" in combined
+    assert "Do not log this body" not in combined
+
+
 async def test_create_event_invalid_level(client: AsyncClient) -> None:
     payload = {
         "source": "cc",
@@ -229,7 +273,7 @@ async def test_create_event_empty_body(client: AsyncClient) -> None:
 
 
 async def test_create_event_all_sources(client: AsyncClient) -> None:
-    for source in ("cc", "codex", "claude_ai", "bridge_watcher"):
+    for source in ("cc", "codex", "claude_ai", "bridge_watcher", "personal-ops"):
         payload = {
             "source": source,
             "level": "info",

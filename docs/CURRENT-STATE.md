@@ -28,6 +28,9 @@ Last updated: 2026-04-24
 - Slack delivery is hardened so transport setup failures degrade quietly instead of escaping event
   intake.
 - Quiet hours now support overnight, same-day, and disabled windows.
+- Runtime notification hooks clamp outgoing payloads to the event schema before posting.
+- Event validation failures are logged with sanitized field/type details, not request bodies.
+- `personal-ops` is accepted as a first-class event source.
 - The earlier runtime-hardening and repo-cleanup pass is complete.
 
 ## What Was Cleaned Up
@@ -58,6 +61,11 @@ Last updated: 2026-04-24
   checked-in source.
 - Hardened Slack delivery failure handling, quiet-hours policy semantics, and repeated bridge-line
   detection.
+- Hardened Claude and Codex notification hooks against oversized title/body/project fields.
+- Added sanitized `/events` validation diagnostics so future `422` investigations identify the
+  failing field without exposing notification text.
+- Added `personal-ops` to the accepted source contract after live diagnostics showed that producer
+  was being rejected.
 
 ## Verified Baseline
 
@@ -81,7 +89,7 @@ uv run --frozen notification-hub retention --max-events 2000
 
 Expected current outcome:
 
-- `pytest`: 208 passed
+- `pytest`: 212 passed
 - `ruff`: clean
 - `pyright`: 0 errors
 - `/health/details`: `status: ok`, watcher active, push available, Slack configured
