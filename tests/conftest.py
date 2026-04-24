@@ -21,6 +21,7 @@ def isolate_runtime_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> It
     """Keep tests away from the real machine event log, bridge file, and server globals."""
     events_dir = tmp_path / "notification-hub"
     events_log = events_dir / "events.jsonl"
+    daemon_log_dir = tmp_path / "logs" / "notification-hub"
     bridge_dir = tmp_path / "bridge"
     bridge_dir.mkdir()
     bridge_file = bridge_dir / "claude_ai_context.md"
@@ -28,6 +29,9 @@ def isolate_runtime_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> It
 
     monkeypatch.setattr(config_mod, "EVENTS_DIR", events_dir)
     monkeypatch.setattr(config_mod, "EVENTS_LOG", events_log)
+    monkeypatch.setattr(config_mod, "DAEMON_LOG_DIR", daemon_log_dir)
+    monkeypatch.setattr(config_mod, "DAEMON_STDOUT_LOG", daemon_log_dir / "stdout.log")
+    monkeypatch.setattr(config_mod, "DAEMON_STDERR_LOG", daemon_log_dir / "stderr.log")
     monkeypatch.setattr(config_mod, "POLICY_CONFIG", tmp_path / "config.toml")
     monkeypatch.setattr(config_mod, "LAUNCH_AGENT_PLIST", tmp_path / "com.saagar.notification-hub.plist")
     monkeypatch.setattr(config_mod, "CLAUDE_HOOK", tmp_path / "notify.sh")
@@ -36,6 +40,8 @@ def isolate_runtime_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> It
     monkeypatch.setattr(channels_mod, "EVENTS_LOG", events_log)
     monkeypatch.setattr(operations_mod, "EVENTS_DIR", events_dir)
     monkeypatch.setattr(operations_mod, "EVENTS_LOG", events_log)
+    monkeypatch.setattr(operations_mod, "DAEMON_STDOUT_LOG", daemon_log_dir / "stdout.log")
+    monkeypatch.setattr(operations_mod, "DAEMON_STDERR_LOG", daemon_log_dir / "stderr.log")
 
     monkeypatch.setattr(config_mod, "BRIDGE_FILE", bridge_file)
     monkeypatch.setattr(server_mod, "BRIDGE_FILE", bridge_file)

@@ -18,6 +18,9 @@ PORT = 9199
 
 EVENTS_DIR = Path.home() / ".local" / "share" / "notification-hub"
 EVENTS_LOG = EVENTS_DIR / "events.jsonl"
+DAEMON_LOG_DIR = Path.home() / "Library" / "Logs" / "notification-hub"
+DAEMON_STDOUT_LOG = DAEMON_LOG_DIR / "stdout.log"
+DAEMON_STDERR_LOG = DAEMON_LOG_DIR / "stderr.log"
 APP_CONFIG_DIR = Path.home() / ".config" / "notification-hub"
 POLICY_CONFIG = APP_CONFIG_DIR / "config.toml"
 EXAMPLE_POLICY_CONFIG = Path(__file__).resolve().parents[2] / "config" / "policy.example.toml"

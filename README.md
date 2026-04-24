@@ -47,6 +47,8 @@ uv run notification-hub-doctor --json
 uv run notification-hub smoke
 uv run notification-hub status
 uv run notification-hub-status --json
+uv run notification-hub logs
+uv run notification-hub-logs --json
 uv run notification-hub verify-runtime
 uv run notification-hub-verify-runtime --json
 uv run notification-hub policy-check
@@ -60,6 +62,8 @@ Slack Keychain setup, and policy-config load status.
 The smoke command posts a harmless `info` event and verifies it lands in the live JSONL log.
 The status command shows the compact day-to-day runtime view and suggests the next repair action
 when something is degraded.
+The logs command shows recent stored events plus daemon stdout/stderr tails without changing local
+runtime state.
 The verify-runtime command combines doctor, policy-check, `/health/details`, and runtime wiring
 checks into one read-only report by default. Pass `--include-smoke` when you intentionally want it
 to post a harmless smoke event too.
@@ -193,6 +197,7 @@ curl http://127.0.0.1:9199/health
 curl http://127.0.0.1:9199/health/details
 uv run --frozen notification-hub-doctor
 uv run --frozen notification-hub status
+uv run --frozen notification-hub logs
 uv run --frozen notification-hub verify-runtime
 uv run --frozen notification-hub policy-check
 uv run --frozen notification-hub explain --source codex --level info --title "Test" --body "Approval needed"

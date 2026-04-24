@@ -13,6 +13,7 @@ from notification_hub.cli import (
     bootstrap_config_main,
     doctor_main,
     explain_main,
+    logs_main,
     main,
     policy_check_main,
     retention_main,
@@ -362,6 +363,40 @@ def test_cli_status_json_output(capsys: CaptureFixture[str]) -> None:
     assert exit_code == 0
     assert '"next_action": "No action needed."' in captured.out
     mock_status.assert_called_once_with()
+
+
+def test_cli_logs_json_output(capsys: CaptureFixture[str]) -> None:
+    with patch(
+        "notification_hub.cli.run_logs",
+        return_value={
+            "status": "ok",
+            "events_log": "/tmp/events.jsonl",
+            "stdout_log": "/tmp/stdout.log",
+            "stderr_log": "/tmp/stderr.log",
+            "recent_events": [
+                {
+                    "event_id": "abc123",
+                    "timestamp": "2026-04-24T00:00:00+00:00",
+                    "source": "codex",
+                    "level": "info",
+                    "classified_level": "info",
+                    "project": "notification-hub",
+                    "title": "done",
+                    "body": "finished",
+                }
+            ],
+            "stdout_tail": ["out"],
+            "stderr_tail": ["err"],
+            "missing_paths": [],
+            "error": None,
+        },
+    ) as mock_logs:
+        exit_code = main(["logs", "--json", "--events", "1", "--lines", "1"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert '"event_id": "abc123"' in captured.out
+    mock_logs.assert_called_once_with(events=1, lines=1)
 
 
 def test_run_verify_runtime_is_read_only_by_default() -> None:
@@ -717,6 +752,29 @@ def test_status_wrapper_forwards_flags(capsys: CaptureFixture[str]) -> None:
     assert exit_code == 0
     assert '"status": "ok"' in output.out
     mock_status.assert_called_once_with()
+
+
+def test_logs_wrapper_forwards_flags(capsys: CaptureFixture[str]) -> None:
+    with patch(
+        "notification_hub.cli.run_logs",
+        return_value={
+            "status": "ok",
+            "events_log": "/tmp/events.jsonl",
+            "stdout_log": "/tmp/stdout.log",
+            "stderr_log": "/tmp/stderr.log",
+            "recent_events": [],
+            "stdout_tail": [],
+            "stderr_tail": [],
+            "missing_paths": [],
+            "error": None,
+        },
+    ) as mock_logs:
+        exit_code = logs_main(["--json", "--events", "2", "--lines", "3"])
+
+    output = capsys.readouterr()
+    assert exit_code == 0
+    assert '"status": "ok"' in output.out
+    mock_logs.assert_called_once_with(events=2, lines=3)
 
 
 def test_verify_runtime_wrapper_forwards_flags(capsys: CaptureFixture[str]) -> None:

@@ -17,6 +17,7 @@ Last updated: 2026-04-24
   config into the live config path.
 - Runtime wiring now has repo-owned LaunchAgent and hook templates under `ops/`.
 - A compact local status command is available for the day-to-day runtime view.
+- A local logs command is available for recent event and daemon log inspection.
 - A local explain command can preview classification, routing, and delivery without sending anything.
 - A local policy-check command can audit the ruleset for overlaps, shadowing, and no-op rules,
   and now suggests likely fixes for each warning.
@@ -70,6 +71,7 @@ uv run --frozen pyright
 curl http://127.0.0.1:9199/health/details
 uv run --frozen notification-hub-doctor
 uv run --frozen notification-hub status
+uv run --frozen notification-hub logs
 uv run --frozen notification-hub verify-runtime
 uv run --frozen notification-hub-policy-check
 uv run --frozen notification-hub-explain --source codex --level info --title "Test" --body "Session complete"
@@ -79,12 +81,13 @@ uv run --frozen notification-hub retention --max-events 2000
 
 Expected current outcome:
 
-- `pytest`: 203 passed
+- `pytest`: 208 passed
 - `ruff`: clean
 - `pyright`: 0 errors
 - `/health/details`: `status: ok`, watcher active, push available, Slack configured
 - `notification-hub-doctor`: `status: ok`
 - `notification-hub status`: `status: ok` with a compact read-only runtime summary
+- `notification-hub logs`: `status: ok` with recent event and daemon log tails
 - `notification-hub verify-runtime`: `status: ok` without posting an event by default
 - `notification-hub-policy-check`: `status: ok` or `warn`, depending on the active policy file,
   plus warning-specific fix suggestions when issues are found

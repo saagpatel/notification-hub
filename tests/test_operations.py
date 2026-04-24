@@ -21,6 +21,7 @@ from notification_hub.config import (
 from notification_hub.models import StoredEvent
 from notification_hub.operations import (
     bootstrap_policy_config,
+    run_logs,
     run_policy_check,
     run_retention,
     run_smoke_check,
@@ -56,6 +57,91 @@ def test_smoke_check_reports_http_failure() -> None:
     assert report["status"] == "degraded"
     assert report["response_status"] is None
     assert report["event_id"] is None
+
+
+def test_logs_report_tails_events_and_daemon_logs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events_dir = tmp_path / "notification-hub"
+    events_dir.mkdir()
+    events_log = events_dir / "events.jsonl"
+    events = [
+        StoredEvent(
+            event_id=f"id-{i}",
+            source="codex",
+            level="info",
+            title=f"title {i}",
+            body=f"body {i}",
+            project="notification-hub",
+        )
+        for i in range(3)
+    ]
+    events_log.write_text("\n".join(event.model_dump_json() for event in events) + "\n", encoding="utf-8")
+    stdout_log = tmp_path / "stdout.log"
+    stderr_log = tmp_path / "stderr.log"
+    stdout_log.write_text("out 1\nout 2\nout 3\n", encoding="utf-8")
+    stderr_log.write_text("err 1\nerr 2\nerr 3\n", encoding="utf-8")
+
+    monkeypatch.setattr(ops_mod, "EVENTS_LOG", events_log)
+    monkeypatch.setattr(ops_mod, "DAEMON_STDOUT_LOG", stdout_log)
+    monkeypatch.setattr(ops_mod, "DAEMON_STDERR_LOG", stderr_log)
+
+    report = run_logs(events=2, lines=2)
+
+    assert report["status"] == "ok"
+    assert [event["event_id"] for event in report["recent_events"]] == ["id-1", "id-2"]
+    assert report["stdout_tail"] == ["out 2", "out 3"]
+    assert report["stderr_tail"] == ["err 2", "err 3"]
+    assert report["missing_paths"] == []
+
+
+def test_logs_report_degrades_on_invalid_event_log(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events_log = tmp_path / "events.jsonl"
+    events_log.write_text("{not-json}\n", encoding="utf-8")
+    stdout_log = tmp_path / "stdout.log"
+    stderr_log = tmp_path / "stderr.log"
+    stdout_log.write_text("", encoding="utf-8")
+    stderr_log.write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(ops_mod, "EVENTS_LOG", events_log)
+    monkeypatch.setattr(ops_mod, "DAEMON_STDOUT_LOG", stdout_log)
+    monkeypatch.setattr(ops_mod, "DAEMON_STDERR_LOG", stderr_log)
+
+    report = run_logs()
+
+    assert report["status"] == "degraded"
+    assert report["recent_events"] == []
+    assert report["error"] is not None
+
+
+def test_logs_report_handles_zero_limits(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events_log = tmp_path / "events.jsonl"
+    events_log.write_text(
+        StoredEvent(source="codex", level="info", title="title", body="body").model_dump_json() + "\n",
+        encoding="utf-8",
+    )
+    stdout_log = tmp_path / "stdout.log"
+    stderr_log = tmp_path / "stderr.log"
+    stdout_log.write_text("out\n", encoding="utf-8")
+    stderr_log.write_text("err\n", encoding="utf-8")
+
+    monkeypatch.setattr(ops_mod, "EVENTS_LOG", events_log)
+    monkeypatch.setattr(ops_mod, "DAEMON_STDOUT_LOG", stdout_log)
+    monkeypatch.setattr(ops_mod, "DAEMON_STDERR_LOG", stderr_log)
+
+    report = run_logs(events=0, lines=0)
+
+    assert report["status"] == "ok"
+    assert report["recent_events"] == []
+    assert report["stdout_tail"] == []
+    assert report["stderr_tail"] == []
 
 
 def test_retention_noop_when_log_missing() -> None:

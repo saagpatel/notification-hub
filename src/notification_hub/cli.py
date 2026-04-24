@@ -12,12 +12,14 @@ from notification_hub.diagnostics import collect_doctor_report
 from notification_hub.models import Event
 from notification_hub.operations import (
     BootstrapConfigReport,
+    LogsReport,
     PolicyCheckReport,
     RetentionReport,
     SmokeReport,
     StatusReport,
     VerifyRuntimeReport,
     bootstrap_policy_config,
+    run_logs,
     run_policy_check,
     run_retention,
     run_smoke_check,
@@ -50,6 +52,25 @@ def _build_parser(prog: str = "notification-hub") -> argparse.ArgumentParser:
         "--json",
         action="store_true",
         help="Emit the status report as JSON.",
+    )
+
+    logs = subparsers.add_parser("logs", help="Show recent events and daemon log tails.")
+    logs.add_argument(
+        "--events",
+        type=int,
+        default=5,
+        help="Number of recent stored events to show.",
+    )
+    logs.add_argument(
+        "--lines",
+        type=int,
+        default=20,
+        help="Number of daemon stdout/stderr lines to show.",
+    )
+    logs.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the logs report as JSON.",
     )
 
     verify_runtime = subparsers.add_parser(
@@ -184,6 +205,30 @@ def _print_status_report(report: StatusReport) -> None:
     print(f"- next action: {report['next_action']}")
 
 
+def _print_logs_report(report: LogsReport) -> None:
+    print(f"notification-hub logs: {report['status']}")
+    print(f"- events log: {report['events_log']}")
+    print(f"- stdout log: {report['stdout_log']}")
+    print(f"- stderr log: {report['stderr_log']}")
+    if report["missing_paths"]:
+        print(f"- missing paths: {len(report['missing_paths'])}")
+    if report["error"] is not None:
+        print(f"- error: {report['error']}")
+
+    print("- recent events:")
+    for event in report["recent_events"]:
+        project = f" ({event['project']})" if event["project"] else ""
+        print(f"  - {event['timestamp']} [{event['level']}] {event['source']}{project}: {event['title']}")
+
+    print("- stdout tail:")
+    for line in report["stdout_tail"]:
+        print(f"  {line}")
+
+    print("- stderr tail:")
+    for line in report["stderr_tail"]:
+        print(f"  {line}")
+
+
 def _print_verify_runtime_report(report: VerifyRuntimeReport) -> None:
     checks = report["checks"]
     smoke = report["smoke"]
@@ -291,6 +336,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             _print_status_report(report)
         return 0 if report["status"] == "ok" else 1
 
+    if args.command == "logs":
+        report = run_logs(events=args.events, lines=args.lines)
+        if args.json:
+            print(json.dumps(report, indent=2, sort_keys=True))
+        else:
+            _print_logs_report(report)
+        return 0 if report["status"] == "ok" else 1
+
     if args.command == "verify-runtime":
         report = run_verify_runtime(include_smoke=args.include_smoke)
         if args.json:
@@ -351,6 +404,11 @@ def smoke_main(argv: Sequence[str] | None = None) -> int:
 def status_main(argv: Sequence[str] | None = None) -> int:
     forwarded = list(argv) if argv is not None else sys.argv[1:]
     return main(["status", *forwarded])
+
+
+def logs_main(argv: Sequence[str] | None = None) -> int:
+    forwarded = list(argv) if argv is not None else sys.argv[1:]
+    return main(["logs", *forwarded])
 
 
 def verify_runtime_main(argv: Sequence[str] | None = None) -> int:

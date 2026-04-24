@@ -5,12 +5,15 @@ from __future__ import annotations
 import os
 import shutil
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import TypedDict, cast
 
 import httpx
 
 from notification_hub.channels import ensure_log_dir, read_jsonl
 from notification_hub.config import (
+    DAEMON_STDERR_LOG,
+    DAEMON_STDOUT_LOG,
     EVENTS_DIR,
     EVENTS_LOG,
     EXAMPLE_POLICY_CONFIG,
@@ -21,7 +24,7 @@ from notification_hub.config import (
     get_policy_config,
 )
 from notification_hub.diagnostics import collect_doctor_report
-from notification_hub.models import Event
+from notification_hub.models import Event, StoredEvent
 
 
 class SmokeReport(TypedDict):
@@ -42,6 +45,29 @@ class RetentionReport(TypedDict):
     events_after: int
     archived_events: int
     deleted_archives: list[str]
+
+
+class RecentEventReport(TypedDict):
+    event_id: str
+    timestamp: str
+    source: str
+    level: str
+    classified_level: str | None
+    project: str | None
+    title: str
+    body: str
+
+
+class LogsReport(TypedDict):
+    status: str
+    events_log: str
+    stdout_log: str
+    stderr_log: str
+    recent_events: list[RecentEventReport]
+    stdout_tail: list[str]
+    stderr_tail: list[str]
+    missing_paths: list[str]
+    error: str | None
 
 
 class BootstrapConfigReport(TypedDict):
@@ -121,6 +147,26 @@ def _as_str(value: object) -> str | None:
     if isinstance(value, str):
         return value
     return None
+
+
+def _tail_text_file(path: Path, *, lines: int) -> list[str]:
+    if lines <= 0 or not path.exists():
+        return []
+    with path.open("r", encoding="utf-8", errors="replace") as handle:
+        return [line.rstrip("\n") for line in handle.readlines()[-lines:]]
+
+
+def _event_report(event: StoredEvent) -> RecentEventReport:
+    return {
+        "event_id": event.event_id,
+        "timestamp": event.timestamp.isoformat(),
+        "source": event.source,
+        "level": event.level,
+        "classified_level": event.classified_level,
+        "project": event.project,
+        "title": event.title,
+        "body": event.body,
+    }
 
 
 def _suggest_fix_for_warning(warning: str) -> str:
@@ -218,6 +264,47 @@ def run_smoke_check() -> SmokeReport:
             "response_status": None,
             "error": str(exc),
         }
+
+
+def run_logs(*, events: int = 5, lines: int = 20) -> LogsReport:
+    """Return recent event and daemon log entries without mutating local runtime state."""
+    missing_paths = [
+        str(path)
+        for path in (EVENTS_LOG, DAEMON_STDOUT_LOG, DAEMON_STDERR_LOG)
+        if not path.exists()
+    ]
+
+    try:
+        stored_events = read_jsonl(path=EVENTS_LOG)
+        event_limit = max(events, 0)
+        recent_stored_events = stored_events[-event_limit:] if event_limit else []
+        recent_events = [_event_report(event) for event in recent_stored_events]
+        stdout_tail = _tail_text_file(DAEMON_STDOUT_LOG, lines=lines)
+        stderr_tail = _tail_text_file(DAEMON_STDERR_LOG, lines=lines)
+    except (OSError, ValueError) as exc:
+        return {
+            "status": "degraded",
+            "events_log": str(EVENTS_LOG),
+            "stdout_log": str(DAEMON_STDOUT_LOG),
+            "stderr_log": str(DAEMON_STDERR_LOG),
+            "recent_events": [],
+            "stdout_tail": [],
+            "stderr_tail": [],
+            "missing_paths": missing_paths,
+            "error": str(exc),
+        }
+
+    return {
+        "status": "ok",
+        "events_log": str(EVENTS_LOG),
+        "stdout_log": str(DAEMON_STDOUT_LOG),
+        "stderr_log": str(DAEMON_STDERR_LOG),
+        "recent_events": recent_events,
+        "stdout_tail": stdout_tail,
+        "stderr_tail": stderr_tail,
+        "missing_paths": missing_paths,
+        "error": None,
+    }
 
 
 def run_retention(*, max_events: int, keep_archives: int) -> RetentionReport:
