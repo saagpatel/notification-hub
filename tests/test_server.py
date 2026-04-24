@@ -273,7 +273,7 @@ async def test_create_event_empty_body(client: AsyncClient) -> None:
 
 
 async def test_create_event_all_sources(client: AsyncClient) -> None:
-    for source in ("cc", "codex", "claude_ai", "bridge_watcher", "personal-ops"):
+    for source in ("cc", "codex", "claude_ai", "bridge_watcher", "personal-ops", "notion-os"):
         payload = {
             "source": source,
             "level": "info",
@@ -283,6 +283,20 @@ async def test_create_event_all_sources(client: AsyncClient) -> None:
         with _mock_channels():
             resp = await client.post("/events", json=payload)
         assert resp.status_code == 201, f"Failed for source: {source}"
+
+
+async def test_create_event_normalizes_warn_level(client: AsyncClient) -> None:
+    payload = {
+        "source": "notion-os",
+        "level": "warn",
+        "title": "Warning alias",
+        "body": "Producer sent warn instead of normal",
+    }
+    with _mock_channels():
+        resp = await client.post("/events", json=payload)
+
+    assert resp.status_code == 201
+    assert resp.json()["level"] == "normal"
 
 
 def test_run_retention_once_updates_runtime_status(monkeypatch: pytest.MonkeyPatch) -> None:

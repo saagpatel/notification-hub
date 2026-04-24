@@ -62,8 +62,8 @@ Slack Keychain setup, and policy-config load status.
 The smoke command posts a harmless `info` event and verifies it lands in the live JSONL log.
 The status command shows the compact day-to-day runtime view and suggests the next repair action
 when something is degraded.
-The logs command shows recent stored events plus daemon stdout/stderr tails without changing local
-runtime state.
+The logs command shows recent stored events, daemon stdout/stderr tails, and a summary of accepted
+versus rejected `/events` posts without changing local runtime state.
 The verify-runtime command combines doctor, policy-check, `/health/details`, and runtime wiring
 checks into one read-only report by default. Pass `--include-smoke` when you intentionally want it
 to post a harmless smoke event too.

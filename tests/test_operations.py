@@ -80,8 +80,28 @@ def test_logs_report_tails_events_and_daemon_logs(
     events_log.write_text("\n".join(event.model_dump_json() for event in events) + "\n", encoding="utf-8")
     stdout_log = tmp_path / "stdout.log"
     stderr_log = tmp_path / "stderr.log"
-    stdout_log.write_text("out 1\nout 2\nout 3\n", encoding="utf-8")
-    stderr_log.write_text("err 1\nerr 2\nerr 3\n", encoding="utf-8")
+    stdout_log.write_text(
+        '\n'.join(
+            [
+                'INFO:     127.0.0.1:1 - "POST /events HTTP/1.1" 201 Created',
+                'INFO:     127.0.0.1:2 - "POST /events HTTP/1.1" 422 Unprocessable Entity',
+                'INFO:     127.0.0.1:3 - "GET /health/details HTTP/1.1" 200 OK',
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    stderr_log.write_text(
+        "\n".join(
+            [
+                "err 1",
+                "Rejected event payload from 127.0.0.1: [{'type': 'literal_error'}]",
+                "err 3",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
     monkeypatch.setattr(ops_mod, "EVENTS_LOG", events_log)
     monkeypatch.setattr(ops_mod, "DAEMON_STDOUT_LOG", stdout_log)
@@ -91,8 +111,17 @@ def test_logs_report_tails_events_and_daemon_logs(
 
     assert report["status"] == "ok"
     assert [event["event_id"] for event in report["recent_events"]] == ["id-1", "id-2"]
-    assert report["stdout_tail"] == ["out 2", "out 3"]
-    assert report["stderr_tail"] == ["err 2", "err 3"]
+    assert report["daemon_summary"]["accepted_event_posts"] == 0
+    assert report["daemon_summary"]["rejected_event_posts"] == 1
+    assert report["daemon_summary"]["validation_error_count"] == 1
+    assert report["stdout_tail"] == [
+        'INFO:     127.0.0.1:2 - "POST /events HTTP/1.1" 422 Unprocessable Entity',
+        'INFO:     127.0.0.1:3 - "GET /health/details HTTP/1.1" 200 OK',
+    ]
+    assert report["stderr_tail"] == [
+        "Rejected event payload from 127.0.0.1: [{'type': 'literal_error'}]",
+        "err 3",
+    ]
     assert report["missing_paths"] == []
 
 

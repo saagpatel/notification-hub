@@ -385,6 +385,13 @@ def test_cli_logs_json_output(capsys: CaptureFixture[str]) -> None:
                     "body": "finished",
                 }
             ],
+            "daemon_summary": {
+                "access_status_counts": {"201": 1},
+                "accepted_event_posts": 1,
+                "rejected_event_posts": 0,
+                "validation_error_count": 0,
+                "recent_validation_errors": [],
+            },
             "stdout_tail": ["out"],
             "stderr_tail": ["err"],
             "missing_paths": [],
@@ -763,6 +770,13 @@ def test_logs_wrapper_forwards_flags(capsys: CaptureFixture[str]) -> None:
             "stdout_log": "/tmp/stdout.log",
             "stderr_log": "/tmp/stderr.log",
             "recent_events": [],
+            "daemon_summary": {
+                "access_status_counts": {},
+                "accepted_event_posts": 0,
+                "rejected_event_posts": 0,
+                "validation_error_count": 0,
+                "recent_validation_errors": [],
+            },
             "stdout_tail": [],
             "stderr_tail": [],
             "missing_paths": [],

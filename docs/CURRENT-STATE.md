@@ -17,7 +17,8 @@ Last updated: 2026-04-24
   config into the live config path.
 - Runtime wiring now has repo-owned LaunchAgent and hook templates under `ops/`.
 - A compact local status command is available for the day-to-day runtime view.
-- A local logs command is available for recent event and daemon log inspection.
+- A local logs command is available for recent event and daemon log inspection, including accepted
+  versus rejected `/events` counts from the visible daemon tail.
 - A local explain command can preview classification, routing, and delivery without sending anything.
 - A local policy-check command can audit the ruleset for overlaps, shadowing, and no-op rules,
   and now suggests likely fixes for each warning.
@@ -31,6 +32,8 @@ Last updated: 2026-04-24
 - Runtime notification hooks clamp outgoing payloads to the event schema before posting.
 - Event validation failures are logged with sanitized field/type details, not request bodies.
 - `personal-ops` is accepted as a first-class event source.
+- `notion-os` is accepted as a first-class event source, and incoming `warn`/`warning` level aliases
+  normalize to `normal`.
 - The earlier runtime-hardening and repo-cleanup pass is complete.
 
 ## What Was Cleaned Up
@@ -66,6 +69,9 @@ Last updated: 2026-04-24
   failing field without exposing notification text.
 - Added `personal-ops` to the accepted source contract after live diagnostics showed that producer
   was being rejected.
+- Added `notion-os` and warning-level normalization after burn-in diagnostics showed those producer
+  shapes were active.
+- Added daemon access summary counts to `notification-hub logs`.
 
 ## Verified Baseline
 
@@ -89,7 +95,7 @@ uv run --frozen notification-hub retention --max-events 2000
 
 Expected current outcome:
 
-- `pytest`: 212 passed
+- `pytest`: 213 passed
 - `ruff`: clean
 - `pyright`: 0 errors
 - `/health/details`: `status: ok`, watcher active, push available, Slack configured

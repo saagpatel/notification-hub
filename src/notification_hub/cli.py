@@ -215,6 +215,17 @@ def _print_logs_report(report: LogsReport) -> None:
     if report["error"] is not None:
         print(f"- error: {report['error']}")
 
+    summary = report["daemon_summary"]
+    print("- daemon summary:")
+    print(f"  accepted event posts: {summary['accepted_event_posts']}")
+    print(f"  rejected event posts: {summary['rejected_event_posts']}")
+    print(f"  validation errors: {summary['validation_error_count']}")
+    if summary["access_status_counts"]:
+        counts = ", ".join(
+            f"{status}={count}" for status, count in sorted(summary["access_status_counts"].items())
+        )
+        print(f"  status counts: {counts}")
+
     print("- recent events:")
     for event in report["recent_events"]:
         project = f" ({event['project']})" if event["project"] else ""

@@ -103,7 +103,9 @@ DEFAULT_RETENTION_INTERVAL_MINUTES = 60
 DEFAULT_RETENTION_MAX_EVENTS = 2000
 DEFAULT_RETENTION_KEEP_ARCHIVES = 10
 VALID_LEVELS = frozenset(("urgent", "normal", "info"))
-VALID_SOURCES = frozenset(("codex", "cc", "claude_ai", "bridge_watcher", "personal-ops"))
+VALID_SOURCES = frozenset(
+    ("codex", "cc", "claude_ai", "bridge_watcher", "personal-ops", "notion-os")
+)
 
 
 @dataclass(frozen=True)

@@ -10,7 +10,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_validator
 
 
-Source = Literal["codex", "cc", "claude_ai", "bridge_watcher", "personal-ops"]
+Source = Literal["codex", "cc", "claude_ai", "bridge_watcher", "personal-ops", "notion-os"]
 Level = Literal["urgent", "normal", "info"]
 
 _CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\r\n]")
@@ -25,6 +25,14 @@ class Event(BaseModel):
     body: str = Field(min_length=1, max_length=2000)
     project: str | None = Field(default=None, max_length=100)
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    @field_validator("level", mode="before")
+    @classmethod
+    def normalize_level_aliases(cls, v: object) -> object:
+        """Normalize common producer aliases into the hub's routing levels."""
+        if isinstance(v, str) and v.lower() in {"warn", "warning"}:
+            return "normal"
+        return v
 
     @field_validator("title", "body")
     @classmethod

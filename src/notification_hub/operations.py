@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
@@ -64,10 +65,19 @@ class LogsReport(TypedDict):
     stdout_log: str
     stderr_log: str
     recent_events: list[RecentEventReport]
+    daemon_summary: DaemonLogSummary
     stdout_tail: list[str]
     stderr_tail: list[str]
     missing_paths: list[str]
     error: str | None
+
+
+class DaemonLogSummary(TypedDict):
+    access_status_counts: dict[str, int]
+    accepted_event_posts: int
+    rejected_event_posts: int
+    validation_error_count: int
+    recent_validation_errors: list[str]
 
 
 class BootstrapConfigReport(TypedDict):
@@ -154,6 +164,32 @@ def _tail_text_file(path: Path, *, lines: int) -> list[str]:
         return []
     with path.open("r", encoding="utf-8", errors="replace") as handle:
         return [line.rstrip("\n") for line in handle.readlines()[-lines:]]
+
+
+_EVENT_ACCESS_RE = re.compile(r'"POST /events HTTP/1\.1" (?P<status>\d{3})')
+
+
+def _summarize_daemon_logs(stdout_tail: list[str], stderr_tail: list[str]) -> DaemonLogSummary:
+    status_counts: dict[str, int] = {}
+    for line in stdout_tail:
+        match = _EVENT_ACCESS_RE.search(line)
+        if match is None:
+            continue
+        status = match.group("status")
+        status_counts[status] = status_counts.get(status, 0) + 1
+
+    validation_errors = [
+        line for line in stderr_tail if line.startswith("Rejected event payload")
+    ]
+    return {
+        "access_status_counts": status_counts,
+        "accepted_event_posts": sum(
+            count for status, count in status_counts.items() if status.startswith("2")
+        ),
+        "rejected_event_posts": status_counts.get("422", 0),
+        "validation_error_count": len(validation_errors),
+        "recent_validation_errors": validation_errors[-5:],
+    }
 
 
 def _event_report(event: StoredEvent) -> RecentEventReport:
@@ -288,6 +324,7 @@ def run_logs(*, events: int = 5, lines: int = 20) -> LogsReport:
             "stdout_log": str(DAEMON_STDOUT_LOG),
             "stderr_log": str(DAEMON_STDERR_LOG),
             "recent_events": [],
+            "daemon_summary": _summarize_daemon_logs([], []),
             "stdout_tail": [],
             "stderr_tail": [],
             "missing_paths": missing_paths,
@@ -300,6 +337,7 @@ def run_logs(*, events: int = 5, lines: int = 20) -> LogsReport:
         "stdout_log": str(DAEMON_STDOUT_LOG),
         "stderr_log": str(DAEMON_STDERR_LOG),
         "recent_events": recent_events,
+        "daemon_summary": _summarize_daemon_logs(stdout_tail, stderr_tail),
         "stdout_tail": stdout_tail,
         "stderr_tail": stderr_tail,
         "missing_paths": missing_paths,
