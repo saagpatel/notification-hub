@@ -17,6 +17,7 @@ from notification_hub.cli import (
     policy_check_main,
     retention_main,
     smoke_main,
+    status_main,
     verify_runtime_main,
 )
 import notification_hub.config as config_mod
@@ -25,7 +26,7 @@ from notification_hub.diagnostics import (
     collect_runtime_readiness,
     collect_runtime_wiring,
 )
-from notification_hub.operations import run_verify_runtime
+from notification_hub.operations import run_status, run_verify_runtime
 
 
 def test_collect_runtime_readiness_reports_config_and_paths() -> None:
@@ -222,6 +223,145 @@ def test_cli_smoke_json_output(capsys: CaptureFixture[str]) -> None:
     captured = capsys.readouterr()
     assert exit_code == 0
     assert '"event_id": "abc123"' in captured.out
+
+
+def test_run_status_summarizes_healthy_runtime() -> None:
+    with patch(
+        "notification_hub.operations.run_verify_runtime",
+        return_value={
+            "status": "ok",
+            "read_only": True,
+            "include_smoke": False,
+            "health_url": "http://127.0.0.1:9199/health/details",
+            "checks": {
+                "doctor_ok": True,
+                "policy_check_ok": True,
+                "health_details_reachable": True,
+                "runtime_wiring_current": True,
+                "smoke_ok": True,
+            },
+            "runtime_wiring": {"launch_agent_matches_template": True},
+            "doctor": {
+                "status": "ok",
+                "checks": {"policy_load_ok": True, "runtime_wiring_current": True},
+                "config": {"exists": False},
+                "delivery": {
+                    "push_notifier_available": True,
+                    "slack_webhook_configured": True,
+                },
+                "local_api": {
+                    "payload": {
+                        "events_processed": 12,
+                        "watcher_active": True,
+                        "uptime_seconds": 123.4,
+                        "retention": {"enabled": True, "last_status": "ok"},
+                    }
+                },
+            },
+            "policy_check": {
+                "status": "ok",
+                "config_path": "/tmp/config.toml",
+                "config_found": False,
+                "example_path": "/tmp/example.toml",
+                "load_error": None,
+                "warning_count": 0,
+                "suggestion_count": 0,
+                "warnings": [],
+                "suggestions": [],
+            },
+            "smoke": None,
+        },
+    ):
+        report = run_status()
+
+    assert report == {
+        "status": "ok",
+        "health_url": "http://127.0.0.1:9199/health/details",
+        "daemon_reachable": True,
+        "watcher_active": True,
+        "events_processed": 12,
+        "uptime_seconds": 123.4,
+        "policy_config_found": False,
+        "policy_warning_count": 0,
+        "retention_enabled": True,
+        "retention_last_status": "ok",
+        "runtime_wiring_current": True,
+        "push_notifier_available": True,
+        "slack_configured": True,
+        "next_action": "No action needed.",
+    }
+
+
+def test_run_status_suggests_runtime_wiring_repair() -> None:
+    with patch(
+        "notification_hub.operations.run_verify_runtime",
+        return_value={
+            "status": "degraded",
+            "read_only": True,
+            "include_smoke": False,
+            "health_url": "http://127.0.0.1:9199/health/details",
+            "checks": {
+                "doctor_ok": False,
+                "policy_check_ok": True,
+                "health_details_reachable": True,
+                "runtime_wiring_current": False,
+                "smoke_ok": True,
+            },
+            "runtime_wiring": {"launch_agent_matches_template": False},
+            "doctor": {
+                "status": "degraded",
+                "checks": {"policy_load_ok": True, "runtime_wiring_current": False},
+                "config": {"exists": True},
+                "delivery": {},
+                "local_api": {"payload": {}},
+            },
+            "policy_check": {
+                "status": "ok",
+                "config_path": "/tmp/config.toml",
+                "config_found": True,
+                "example_path": "/tmp/example.toml",
+                "load_error": None,
+                "warning_count": 0,
+                "suggestion_count": 0,
+                "warnings": [],
+                "suggestions": [],
+            },
+            "smoke": None,
+        },
+    ):
+        report = run_status()
+
+    assert report["status"] == "degraded"
+    assert report["runtime_wiring_current"] is False
+    assert report["next_action"] == "Refresh runtime templates from ops/, then run verify-runtime again."
+
+
+def test_cli_status_json_output(capsys: CaptureFixture[str]) -> None:
+    with patch(
+        "notification_hub.cli.run_status",
+        return_value={
+            "status": "ok",
+            "health_url": "http://127.0.0.1:9199/health/details",
+            "daemon_reachable": True,
+            "watcher_active": True,
+            "events_processed": 12,
+            "uptime_seconds": 123.4,
+            "policy_config_found": False,
+            "policy_warning_count": 0,
+            "retention_enabled": True,
+            "retention_last_status": "ok",
+            "runtime_wiring_current": True,
+            "push_notifier_available": True,
+            "slack_configured": True,
+            "next_action": "No action needed.",
+        },
+    ) as mock_status:
+        exit_code = main(["status", "--json"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert '"next_action": "No action needed."' in captured.out
+    mock_status.assert_called_once_with()
 
 
 def test_run_verify_runtime_is_read_only_by_default() -> None:
@@ -549,6 +689,34 @@ def test_smoke_and_retention_wrappers_forward_flags(capsys: CaptureFixture[str])
     retention_output = capsys.readouterr()
     assert retention_exit == 0
     assert '"events_before": 3' in retention_output.out
+
+
+def test_status_wrapper_forwards_flags(capsys: CaptureFixture[str]) -> None:
+    with patch(
+        "notification_hub.cli.run_status",
+        return_value={
+            "status": "ok",
+            "health_url": "http://127.0.0.1:9199/health/details",
+            "daemon_reachable": True,
+            "watcher_active": True,
+            "events_processed": 12,
+            "uptime_seconds": 123.4,
+            "policy_config_found": False,
+            "policy_warning_count": 0,
+            "retention_enabled": True,
+            "retention_last_status": "ok",
+            "runtime_wiring_current": True,
+            "push_notifier_available": True,
+            "slack_configured": True,
+            "next_action": "No action needed.",
+        },
+    ) as mock_status:
+        exit_code = status_main(["--json"])
+
+    output = capsys.readouterr()
+    assert exit_code == 0
+    assert '"status": "ok"' in output.out
+    mock_status.assert_called_once_with()
 
 
 def test_verify_runtime_wrapper_forwards_flags(capsys: CaptureFixture[str]) -> None:

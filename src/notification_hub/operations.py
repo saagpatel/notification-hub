@@ -76,10 +76,51 @@ class VerifyRuntimeReport(TypedDict):
     smoke: SmokeReport | None
 
 
+class StatusReport(TypedDict):
+    status: str
+    health_url: str | None
+    daemon_reachable: bool
+    watcher_active: bool | None
+    events_processed: int | None
+    uptime_seconds: float | None
+    policy_config_found: bool | None
+    policy_warning_count: int
+    retention_enabled: bool | None
+    retention_last_status: str | None
+    runtime_wiring_current: bool
+    push_notifier_available: bool | None
+    slack_configured: bool | None
+    next_action: str
+
+
 def _as_dict(value: object) -> dict[str, object]:
     if isinstance(value, dict):
         return cast(dict[str, object], value)
     return {}
+
+
+def _as_bool(value: object) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    return None
+
+
+def _as_int(value: object) -> int | None:
+    if isinstance(value, int):
+        return value
+    return None
+
+
+def _as_float(value: object) -> float | None:
+    if isinstance(value, int | float):
+        return float(value)
+    return None
+
+
+def _as_str(value: object) -> str | None:
+    if isinstance(value, str):
+        return value
+    return None
 
 
 def _suggest_fix_for_warning(warning: str) -> str:
@@ -347,4 +388,49 @@ def run_verify_runtime(*, include_smoke: bool = False) -> VerifyRuntimeReport:
         "doctor": doctor,
         "policy_check": policy_check,
         "smoke": smoke,
+    }
+
+
+def run_status() -> StatusReport:
+    """Return a compact read-only operator summary for the live daemon."""
+    verification = run_verify_runtime()
+    checks = verification["checks"]
+    doctor = _as_dict(verification["doctor"])
+    doctor_checks = _as_dict(doctor.get("checks"))
+    local_api = _as_dict(doctor.get("local_api"))
+    payload = _as_dict(local_api.get("payload"))
+    config = _as_dict(doctor.get("config"))
+    delivery = _as_dict(doctor.get("delivery"))
+    retention = _as_dict(payload.get("retention"))
+
+    daemon_reachable = checks["health_details_reachable"]
+    runtime_wiring_current = checks["runtime_wiring_current"]
+    policy_load_ok = doctor_checks.get("policy_load_ok") is True
+
+    if verification["status"] == "ok":
+        next_action = "No action needed."
+    elif not daemon_reachable:
+        next_action = "Start or restart the LaunchAgent, then run verify-runtime again."
+    elif not runtime_wiring_current:
+        next_action = "Refresh runtime templates from ops/, then run verify-runtime again."
+    elif not policy_load_ok or not checks["policy_check_ok"]:
+        next_action = "Run notification-hub policy-check and fix the reported policy issue."
+    else:
+        next_action = "Run notification-hub verify-runtime --json for the detailed failing check."
+
+    return {
+        "status": verification["status"],
+        "health_url": verification["health_url"],
+        "daemon_reachable": daemon_reachable,
+        "watcher_active": _as_bool(payload.get("watcher_active")),
+        "events_processed": _as_int(payload.get("events_processed")),
+        "uptime_seconds": _as_float(payload.get("uptime_seconds")),
+        "policy_config_found": _as_bool(config.get("exists")),
+        "policy_warning_count": verification["policy_check"]["warning_count"],
+        "retention_enabled": _as_bool(retention.get("enabled")),
+        "retention_last_status": _as_str(retention.get("last_status")),
+        "runtime_wiring_current": runtime_wiring_current,
+        "push_notifier_available": _as_bool(delivery.get("push_notifier_available")),
+        "slack_configured": _as_bool(delivery.get("slack_webhook_configured")),
+        "next_action": next_action,
     }

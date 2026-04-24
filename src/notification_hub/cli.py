@@ -15,11 +15,13 @@ from notification_hub.operations import (
     PolicyCheckReport,
     RetentionReport,
     SmokeReport,
+    StatusReport,
     VerifyRuntimeReport,
     bootstrap_policy_config,
     run_policy_check,
     run_retention,
     run_smoke_check,
+    run_status,
     run_verify_runtime,
 )
 from notification_hub.pipeline import build_event_explanation_report
@@ -41,6 +43,13 @@ def _build_parser(prog: str = "notification-hub") -> argparse.ArgumentParser:
         "--json",
         action="store_true",
         help="Emit the smoke report as JSON.",
+    )
+
+    status = subparsers.add_parser("status", help="Show a compact read-only runtime summary.")
+    status.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the status report as JSON.",
     )
 
     verify_runtime = subparsers.add_parser(
@@ -160,6 +169,21 @@ def _print_smoke_report(report: SmokeReport) -> None:
         print(f"- error: {report['error']}")
 
 
+def _print_status_report(report: StatusReport) -> None:
+    print(f"notification-hub status: {report['status']}")
+    print(f"- daemon reachable: {report['daemon_reachable']}")
+    print(f"- watcher active: {report['watcher_active']}")
+    print(f"- runtime wiring current: {report['runtime_wiring_current']}")
+    print(f"- policy config found: {report['policy_config_found']}")
+    print(f"- policy warnings: {report['policy_warning_count']}")
+    print(f"- retention enabled: {report['retention_enabled']}")
+    print(f"- retention last status: {report['retention_last_status']}")
+    print(f"- events processed: {report['events_processed']}")
+    print(f"- Slack configured: {report['slack_configured']}")
+    print(f"- push notifier available: {report['push_notifier_available']}")
+    print(f"- next action: {report['next_action']}")
+
+
 def _print_verify_runtime_report(report: VerifyRuntimeReport) -> None:
     checks = report["checks"]
     smoke = report["smoke"]
@@ -259,6 +283,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             _print_smoke_report(report)
         return 0 if report["status"] == "ok" else 1
 
+    if args.command == "status":
+        report = run_status()
+        if args.json:
+            print(json.dumps(report, indent=2, sort_keys=True))
+        else:
+            _print_status_report(report)
+        return 0 if report["status"] == "ok" else 1
+
     if args.command == "verify-runtime":
         report = run_verify_runtime(include_smoke=args.include_smoke)
         if args.json:
@@ -314,6 +346,11 @@ def doctor_main(argv: Sequence[str] | None = None) -> int:
 def smoke_main(argv: Sequence[str] | None = None) -> int:
     forwarded = list(argv) if argv is not None else sys.argv[1:]
     return main(["smoke", *forwarded])
+
+
+def status_main(argv: Sequence[str] | None = None) -> int:
+    forwarded = list(argv) if argv is not None else sys.argv[1:]
+    return main(["status", *forwarded])
 
 
 def verify_runtime_main(argv: Sequence[str] | None = None) -> int:

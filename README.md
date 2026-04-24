@@ -45,6 +45,8 @@ uv run notification-hub doctor
 uv run notification-hub-doctor
 uv run notification-hub-doctor --json
 uv run notification-hub smoke
+uv run notification-hub status
+uv run notification-hub-status --json
 uv run notification-hub verify-runtime
 uv run notification-hub-verify-runtime --json
 uv run notification-hub policy-check
@@ -56,6 +58,8 @@ uv run notification-hub retention --max-events 2000
 The doctor command checks the local API, LaunchAgent presence, bridge file path, push notifier,
 Slack Keychain setup, and policy-config load status.
 The smoke command posts a harmless `info` event and verifies it lands in the live JSONL log.
+The status command shows the compact day-to-day runtime view and suggests the next repair action
+when something is degraded.
 The verify-runtime command combines doctor, policy-check, `/health/details`, and runtime wiring
 checks into one read-only report by default. Pass `--include-smoke` when you intentionally want it
 to post a harmless smoke event too.
@@ -188,6 +192,7 @@ Runtime diagnostics:
 curl http://127.0.0.1:9199/health
 curl http://127.0.0.1:9199/health/details
 uv run --frozen notification-hub-doctor
+uv run --frozen notification-hub status
 uv run --frozen notification-hub verify-runtime
 uv run --frozen notification-hub policy-check
 uv run --frozen notification-hub explain --source codex --level info --title "Test" --body "Approval needed"
