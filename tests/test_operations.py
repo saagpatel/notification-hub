@@ -148,6 +148,42 @@ def test_logs_report_degrades_on_invalid_event_log(
     assert report["error"] is not None
 
 
+def test_logs_report_counts_validation_errors_since_latest_daemon_start(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events_log = tmp_path / "events.jsonl"
+    events_log.write_text("", encoding="utf-8")
+    stdout_log = tmp_path / "stdout.log"
+    stderr_log = tmp_path / "stderr.log"
+    stdout_log.write_text("", encoding="utf-8")
+    stderr_log.write_text(
+        "\n".join(
+            [
+                "Rejected event payload from 127.0.0.1: [{'type': 'old_error'}]",
+                "INFO:     Started server process [123]",
+                "INFO:     Waiting for application startup.",
+                "INFO:     Application startup complete.",
+                "INFO:     Uvicorn running on http://127.0.0.1:9199 (Press CTRL+C to quit)",
+                "Rejected event payload from 127.0.0.1: [{'type': 'current_error'}]",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(ops_mod, "EVENTS_LOG", events_log)
+    monkeypatch.setattr(ops_mod, "DAEMON_STDOUT_LOG", stdout_log)
+    monkeypatch.setattr(ops_mod, "DAEMON_STDERR_LOG", stderr_log)
+
+    report = run_logs(events=0, lines=20)
+
+    assert report["daemon_summary"]["validation_error_count"] == 1
+    assert report["daemon_summary"]["recent_validation_errors"] == [
+        "Rejected event payload from 127.0.0.1: [{'type': 'current_error'}]"
+    ]
+
+
 def test_logs_report_handles_zero_limits(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

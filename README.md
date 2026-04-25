@@ -67,7 +67,8 @@ when something is degraded.
 The logs command shows recent stored events, daemon stdout/stderr tails, and a summary of accepted
 versus rejected `/events` posts without changing local runtime state.
 The burn-in command summarizes recent accepted/rejected event posts and repeated event signatures
-so noisy producers are easy to spot.
+so noisy producers are easy to spot. Validation-error counts are scoped to the latest visible daemon
+start so fixed pre-restart errors do not keep appearing as current burn-in failures.
 The verify-runtime command combines doctor, policy-check, `/health/details`, and runtime wiring
 checks into one read-only report by default. Pass `--include-smoke` when you intentionally want it
 to post a harmless smoke event too.

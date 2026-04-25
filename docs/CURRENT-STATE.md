@@ -20,7 +20,7 @@ Last updated: 2026-04-24
 - A local logs command is available for recent event and daemon log inspection, including accepted
   versus rejected `/events` counts from the visible daemon tail.
 - A local burn-in command is available for recent accepted/rejected event counts and repeated
-  event signatures.
+  event signatures, with validation-error summaries scoped to the latest visible daemon start.
 - A local explain command can preview classification, routing, and delivery without sending anything.
 - A local policy-check command can audit the ruleset for overlaps, shadowing, and no-op rules,
   and now suggests likely fixes for each warning.
@@ -77,6 +77,8 @@ Last updated: 2026-04-24
 - Added narrow intake burst suppression for exact repeated `personal-ops` reminder events before
   they are written to the JSONL log.
 - Added `notification-hub burn-in` as a read-only recent-runtime summary for noisy producers.
+- Scoped burn-in/log validation-error summaries to the latest visible daemon start so resolved
+  pre-restart `422` diagnostics do not appear as current failures.
 
 ## Verified Baseline
 

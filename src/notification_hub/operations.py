@@ -188,6 +188,21 @@ def _tail_text_file(path: Path, *, lines: int) -> list[str]:
 
 
 _EVENT_ACCESS_RE = re.compile(r'"POST /events HTTP/1\.1" (?P<status>\d{3})')
+_DAEMON_START_MARKERS = (
+    "INFO:     Started server process",
+    "INFO:     Uvicorn running on ",
+)
+
+
+def _lines_since_latest_daemon_start(lines: list[str]) -> list[str]:
+    """Return log lines scoped to the latest visible daemon start marker."""
+    latest_start_index: int | None = None
+    for index, line in enumerate(lines):
+        if any(line.startswith(marker) for marker in _DAEMON_START_MARKERS):
+            latest_start_index = index
+    if latest_start_index is None:
+        return lines
+    return lines[latest_start_index + 1 :]
 
 
 def _summarize_daemon_logs(stdout_tail: list[str], stderr_tail: list[str]) -> DaemonLogSummary:
@@ -199,9 +214,8 @@ def _summarize_daemon_logs(stdout_tail: list[str], stderr_tail: list[str]) -> Da
         status = match.group("status")
         status_counts[status] = status_counts.get(status, 0) + 1
 
-    validation_errors = [
-        line for line in stderr_tail if line.startswith("Rejected event payload")
-    ]
+    current_stderr_tail = _lines_since_latest_daemon_start(stderr_tail)
+    validation_errors = [line for line in current_stderr_tail if line.startswith("Rejected event payload")]
     return {
         "access_status_counts": status_counts,
         "accepted_event_posts": sum(
