@@ -12,6 +12,8 @@ from notification_hub.models import Level, StoredEvent
 logger = logging.getLogger(__name__)
 
 PACIFIC = ZoneInfo("America/Los_Angeles")
+BURST_DEDUP_SOURCES = frozenset(("personal-ops",))
+BURST_DEDUP_WINDOW = timedelta(minutes=5)
 
 
 class SuppressionEngine:
@@ -20,6 +22,9 @@ class SuppressionEngine:
     def __init__(self) -> None:
         # Dedup: (project, level) -> last event timestamp
         self._dedup_log: dict[tuple[str | None, Level], datetime] = {}
+        # Burst dedup: exact producer signature -> last event timestamp
+        self._burst_dedup_log: dict[tuple[str, str | None, str, str, Level], datetime] = {}
+        self._burst_duplicates = 0
         # Rate counters: channel -> list of timestamps
         self._push_times: list[datetime] = []
         self._slack_times: list[datetime] = []
@@ -27,6 +32,27 @@ class SuppressionEngine:
         self._quiet_queue: list[StoredEvent] = []
         # Rate limit overflow buffer
         self._overflow_buffer: list[StoredEvent] = []
+
+    def is_burst_duplicate(self, event: StoredEvent) -> bool:
+        """Suppress exact duplicate producer bursts before storage and delivery."""
+        if event.source not in BURST_DEDUP_SOURCES:
+            return False
+        effective_level = event.classified_level or event.level
+        key = (event.source, event.project, event.title, event.body, effective_level)
+        now = datetime.now(timezone.utc)
+        cutoff = now - BURST_DEDUP_WINDOW
+        self._burst_dedup_log = {
+            signature: seen_at
+            for signature, seen_at in self._burst_dedup_log.items()
+            if seen_at > cutoff
+        }
+        last_seen = self._burst_dedup_log.get(key)
+        if last_seen and (now - last_seen) < BURST_DEDUP_WINDOW:
+            self._burst_duplicates += 1
+            logger.debug("Burst suppressed: %s/%s/%s", event.source, event.project, event.title)
+            return True
+        self._burst_dedup_log[key] = now
+        return False
 
     def is_duplicate(self, event: StoredEvent) -> bool:
         """Check if this (project, classified_level) combo was seen within the dedup window."""
@@ -148,6 +174,8 @@ class SuppressionEngine:
         self._slack_times = self._prune_old(self._slack_times, timedelta(hours=1))
         return {
             "dedup_entries": len(self._dedup_log),
+            "burst_dedup_entries": len(self._burst_dedup_log),
+            "burst_duplicates": self._burst_duplicates,
             "queued_for_morning": len(self._quiet_queue),
             "overflow_buffered": len(self._overflow_buffer),
             "pushes_last_hour": len(self._push_times),

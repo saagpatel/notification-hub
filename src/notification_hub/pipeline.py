@@ -278,12 +278,13 @@ def _deliver_slack(event: StoredEvent) -> None:
 def process_event(event: Event) -> StoredEvent:
     """Full pipeline: classify, log, suppress, and route to channels.
 
-    All events are written to JSONL. Routing by classified level:
+    Accepted non-burst events are written to JSONL. Routing by classified level:
     - urgent: JSONL + push (with sound) + Slack
     - normal: JSONL + Slack
     - info: JSONL only
 
     Suppression layers:
+    - Burst dedup: exact repeated local producer fan-out = skip storage/delivery
     - Dedup: same (project, classified_level) within 30 min = skip delivery
     - Quiet hours: push suppressed 11 PM-7 AM Pacific, queued for morning
     - Rate limit: max 5 push/hr, max 20 Slack/hr, overflow batched into digest
@@ -295,7 +296,13 @@ def process_event(event: Event) -> StoredEvent:
         classified_level=routing.level,
     )
 
-    # Always log to JSONL regardless of suppression
+    # Exact producer burst suppression happens before storage so repeated local
+    # reminder fan-out does not flood the JSONL event log.
+    if _suppression.is_burst_duplicate(stored):
+        logger.debug("Event %s suppressed by burst dedup before storage", stored.event_id)
+        return stored
+
+    # Persist accepted non-burst events before downstream delivery suppression.
     write_jsonl(stored)
     logger.info(
         "Event %s: %s [source=%s, classified=%s]",

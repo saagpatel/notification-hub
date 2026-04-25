@@ -21,6 +21,7 @@ from notification_hub.config import (
 from notification_hub.models import StoredEvent
 from notification_hub.operations import (
     bootstrap_policy_config,
+    run_burn_in,
     run_logs,
     run_policy_check,
     run_retention,
@@ -171,6 +172,69 @@ def test_logs_report_handles_zero_limits(
     assert report["recent_events"] == []
     assert report["stdout_tail"] == []
     assert report["stderr_tail"] == []
+
+
+def test_burn_in_reports_repeated_signatures_and_daemon_counts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events_log = tmp_path / "events.jsonl"
+    events = [
+        StoredEvent(
+            source="personal-ops",
+            level="info",
+            classified_level="info",
+            title="Approval expires soon",
+            body="Approval expires soon: review or cancel",
+            project="personal-ops",
+        ),
+        StoredEvent(
+            source="personal-ops",
+            level="info",
+            classified_level="info",
+            title="Approval expires soon",
+            body="Approval expires soon: review or cancel",
+            project="personal-ops",
+        ),
+        StoredEvent(
+            source="codex",
+            level="normal",
+            classified_level="normal",
+            title="Codex finished a turn",
+            body="A Codex turn completed.",
+            project="notification-hub",
+        ),
+    ]
+    events_log.write_text("\n".join(event.model_dump_json() for event in events) + "\n", encoding="utf-8")
+    stdout_log = tmp_path / "stdout.log"
+    stderr_log = tmp_path / "stderr.log"
+    stdout_log.write_text(
+        '\n'.join(
+            [
+                'INFO:     127.0.0.1:1 - "POST /events HTTP/1.1" 201 Created',
+                'INFO:     127.0.0.1:2 - "POST /events HTTP/1.1" 422 Unprocessable Entity',
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    stderr_log.write_text(
+        "Rejected event payload from 127.0.0.1: [{'type': 'literal_error'}]\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(ops_mod, "EVENTS_LOG", events_log)
+    monkeypatch.setattr(ops_mod, "DAEMON_STDOUT_LOG", stdout_log)
+    monkeypatch.setattr(ops_mod, "DAEMON_STDERR_LOG", stderr_log)
+
+    report = run_burn_in(minutes=10, lines=10)
+
+    assert report["status"] == "ok"
+    assert report["events_seen"] == 3
+    assert report["accepted_event_posts"] == 1
+    assert report["rejected_event_posts"] == 1
+    assert report["validation_error_count"] == 1
+    assert report["repeated_signatures"][0]["count"] == 2
+    assert report["repeated_signatures"][0]["source"] == "personal-ops"
 
 
 def test_retention_noop_when_log_missing() -> None:

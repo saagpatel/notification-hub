@@ -49,6 +49,8 @@ uv run notification-hub status
 uv run notification-hub-status --json
 uv run notification-hub logs
 uv run notification-hub-logs --json
+uv run notification-hub burn-in --minutes 10
+uv run notification-hub-burn-in --json
 uv run notification-hub verify-runtime
 uv run notification-hub-verify-runtime --json
 uv run notification-hub policy-check
@@ -64,6 +66,8 @@ The status command shows the compact day-to-day runtime view and suggests the ne
 when something is degraded.
 The logs command shows recent stored events, daemon stdout/stderr tails, and a summary of accepted
 versus rejected `/events` posts without changing local runtime state.
+The burn-in command summarizes recent accepted/rejected event posts and repeated event signatures
+so noisy producers are easy to spot.
 The verify-runtime command combines doctor, policy-check, `/health/details`, and runtime wiring
 checks into one read-only report by default. Pass `--include-smoke` when you intentionally want it
 to post a harmless smoke event too.
@@ -77,6 +81,15 @@ without overwriting an existing config unless you pass `--force`.
 The retention command archives older log entries into `~/.local/share/notification-hub/archive/`.
 The daemon now also performs the same retention check automatically on a schedule, while the manual
 command remains available when you want to force a run immediately.
+
+## Event Contract
+
+Accepted event sources are `codex`, `cc`, `claude_ai`, `bridge_watcher`, `personal-ops`,
+and `notion-os`.
+Accepted levels are `urgent`, `normal`, and `info`; incoming `warn` and `warning` aliases are
+normalized to `normal`.
+Exact repeated `personal-ops` reminder bursts are accepted by the API but suppressed before JSONL
+storage and notification delivery when they repeat inside the burst-dedup window.
 
 ## Policy Config
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TypedDict, cast
 
@@ -78,6 +78,27 @@ class DaemonLogSummary(TypedDict):
     rejected_event_posts: int
     validation_error_count: int
     recent_validation_errors: list[str]
+
+
+class RepeatedSignatureReport(TypedDict):
+    count: int
+    source: str
+    project: str | None
+    level: str
+    title: str
+    body: str
+
+
+class BurnInReport(TypedDict):
+    status: str
+    minutes: int
+    events_seen: int
+    accepted_event_posts: int
+    rejected_event_posts: int
+    validation_error_count: int
+    repeated_signatures: list[RepeatedSignatureReport]
+    daemon_summary: DaemonLogSummary
+    error: str | None
 
 
 class BootstrapConfigReport(TypedDict):
@@ -341,6 +362,66 @@ def run_logs(*, events: int = 5, lines: int = 20) -> LogsReport:
         "stdout_tail": stdout_tail,
         "stderr_tail": stderr_tail,
         "missing_paths": missing_paths,
+        "error": None,
+    }
+
+
+def run_burn_in(*, minutes: int = 10, lines: int = 200) -> BurnInReport:
+    """Summarize recent accepted/rejected events and repeated signatures."""
+    window_minutes = max(minutes, 1)
+    tail_lines = max(lines, 0)
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=window_minutes)
+    try:
+        stored_events = read_jsonl(path=EVENTS_LOG)
+        recent_events = [
+            event
+            for event in stored_events
+            if event.timestamp.astimezone(timezone.utc) >= cutoff
+        ]
+        signatures: dict[tuple[str, str | None, str, str, str], int] = {}
+        for event in recent_events:
+            effective_level = event.classified_level or event.level
+            key = (event.source, event.project, effective_level, event.title, event.body)
+            signatures[key] = signatures.get(key, 0) + 1
+
+        repeated: list[RepeatedSignatureReport] = [
+            {
+                "count": count,
+                "source": source,
+                "project": project,
+                "level": level,
+                "title": title,
+                "body": body,
+            }
+            for (source, project, level, title, body), count in signatures.items()
+            if count > 1
+        ]
+        repeated.sort(key=lambda item: item["count"], reverse=True)
+        stdout_tail = _tail_text_file(DAEMON_STDOUT_LOG, lines=tail_lines)
+        stderr_tail = _tail_text_file(DAEMON_STDERR_LOG, lines=tail_lines)
+        daemon_summary = _summarize_daemon_logs(stdout_tail, stderr_tail)
+    except (OSError, ValueError) as exc:
+        return {
+            "status": "degraded",
+            "minutes": window_minutes,
+            "events_seen": 0,
+            "accepted_event_posts": 0,
+            "rejected_event_posts": 0,
+            "validation_error_count": 0,
+            "repeated_signatures": [],
+            "daemon_summary": _summarize_daemon_logs([], []),
+            "error": str(exc),
+        }
+
+    return {
+        "status": "ok",
+        "minutes": window_minutes,
+        "events_seen": len(recent_events),
+        "accepted_event_posts": daemon_summary["accepted_event_posts"],
+        "rejected_event_posts": daemon_summary["rejected_event_posts"],
+        "validation_error_count": daemon_summary["validation_error_count"],
+        "repeated_signatures": repeated[:10],
+        "daemon_summary": daemon_summary,
         "error": None,
     }
 

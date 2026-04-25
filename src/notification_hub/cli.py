@@ -12,6 +12,7 @@ from notification_hub.diagnostics import collect_doctor_report
 from notification_hub.models import Event
 from notification_hub.operations import (
     BootstrapConfigReport,
+    BurnInReport,
     LogsReport,
     PolicyCheckReport,
     RetentionReport,
@@ -19,6 +20,7 @@ from notification_hub.operations import (
     StatusReport,
     VerifyRuntimeReport,
     bootstrap_policy_config,
+    run_burn_in,
     run_logs,
     run_policy_check,
     run_retention,
@@ -71,6 +73,28 @@ def _build_parser(prog: str = "notification-hub") -> argparse.ArgumentParser:
         "--json",
         action="store_true",
         help="Emit the logs report as JSON.",
+    )
+
+    burn_in = subparsers.add_parser(
+        "burn-in",
+        help="Summarize recent runtime acceptance and repeated event signatures.",
+    )
+    burn_in.add_argument(
+        "--minutes",
+        type=int,
+        default=10,
+        help="Recent event window to summarize.",
+    )
+    burn_in.add_argument(
+        "--lines",
+        type=int,
+        default=200,
+        help="Daemon log tail size used for accepted/rejected counts.",
+    )
+    burn_in.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the burn-in report as JSON.",
     )
 
     verify_runtime = subparsers.add_parser(
@@ -240,6 +264,26 @@ def _print_logs_report(report: LogsReport) -> None:
         print(f"  {line}")
 
 
+def _print_burn_in_report(report: BurnInReport) -> None:
+    print(f"notification-hub burn-in: {report['status']}")
+    print(f"- window: {report['minutes']} minutes")
+    print(f"- events seen: {report['events_seen']}")
+    print(f"- accepted event posts: {report['accepted_event_posts']}")
+    print(f"- rejected event posts: {report['rejected_event_posts']}")
+    print(f"- validation errors: {report['validation_error_count']}")
+    if report["error"] is not None:
+        print(f"- error: {report['error']}")
+    print("- repeated signatures:")
+    if not report["repeated_signatures"]:
+        print("  none")
+    for item in report["repeated_signatures"]:
+        project = f" ({item['project']})" if item["project"] else ""
+        print(
+            f"  - x{item['count']} {item['source']}{project} "
+            f"[{item['level']}]: {item['title']}"
+        )
+
+
 def _print_verify_runtime_report(report: VerifyRuntimeReport) -> None:
     checks = report["checks"]
     smoke = report["smoke"]
@@ -355,6 +399,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             _print_logs_report(report)
         return 0 if report["status"] == "ok" else 1
 
+    if args.command == "burn-in":
+        report = run_burn_in(minutes=args.minutes, lines=args.lines)
+        if args.json:
+            print(json.dumps(report, indent=2, sort_keys=True))
+        else:
+            _print_burn_in_report(report)
+        return 0 if report["status"] == "ok" else 1
+
     if args.command == "verify-runtime":
         report = run_verify_runtime(include_smoke=args.include_smoke)
         if args.json:
@@ -420,6 +472,11 @@ def status_main(argv: Sequence[str] | None = None) -> int:
 def logs_main(argv: Sequence[str] | None = None) -> int:
     forwarded = list(argv) if argv is not None else sys.argv[1:]
     return main(["logs", *forwarded])
+
+
+def burn_in_main(argv: Sequence[str] | None = None) -> int:
+    forwarded = list(argv) if argv is not None else sys.argv[1:]
+    return main(["burn-in", *forwarded])
 
 
 def verify_runtime_main(argv: Sequence[str] | None = None) -> int:

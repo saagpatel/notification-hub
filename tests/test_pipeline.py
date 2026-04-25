@@ -450,6 +450,29 @@ class TestDedup:
         assert mock_push.call_count == 1
         assert mock_slack.call_count == 1
 
+    def test_personal_ops_exact_burst_duplicate_is_not_logged_or_delivered(
+        self,
+        tmp_log: Path,
+    ) -> None:
+        p1, p2, p3 = _patch_channels()
+        event = _event(
+            source="personal-ops",
+            level="info",
+            title="Approval expires soon",
+            body="Approval expires soon: review or cancel",
+            project="personal-ops",
+        )
+
+        with p1 as mock_push, p2 as mock_slack, p3, _patch_daytime():
+            first = process_event(event)
+            second = process_event(event)
+
+        assert first.event_id != second.event_id
+        assert tmp_log.read_text(encoding="utf-8").count("\n") == 1
+        mock_push.assert_not_called()
+        mock_slack.assert_not_called()
+        assert get_suppression_engine().snapshot()["burst_duplicates"] == 1
+
     def test_different_projects_not_deduped(self, tmp_log: Path) -> None:
         p1, p2, p3 = _patch_channels()
         with p1 as mock_push, p2, p3, _patch_daytime():

@@ -10,6 +10,7 @@ from _pytest.capture import CaptureFixture
 from pytest import MonkeyPatch
 
 from notification_hub.cli import (
+    burn_in_main,
     bootstrap_config_main,
     doctor_main,
     explain_main,
@@ -789,6 +790,73 @@ def test_logs_wrapper_forwards_flags(capsys: CaptureFixture[str]) -> None:
     assert exit_code == 0
     assert '"status": "ok"' in output.out
     mock_logs.assert_called_once_with(events=2, lines=3)
+
+
+def test_cli_burn_in_json_output(capsys: CaptureFixture[str]) -> None:
+    with patch(
+        "notification_hub.cli.run_burn_in",
+        return_value={
+            "status": "ok",
+            "minutes": 10,
+            "events_seen": 3,
+            "accepted_event_posts": 2,
+            "rejected_event_posts": 0,
+            "validation_error_count": 0,
+            "repeated_signatures": [
+                {
+                    "count": 2,
+                    "source": "personal-ops",
+                    "project": "personal-ops",
+                    "level": "info",
+                    "title": "Approval expires soon",
+                    "body": "Approval expires soon: review or cancel",
+                }
+            ],
+            "daemon_summary": {
+                "access_status_counts": {"201": 2},
+                "accepted_event_posts": 2,
+                "rejected_event_posts": 0,
+                "validation_error_count": 0,
+                "recent_validation_errors": [],
+            },
+            "error": None,
+        },
+    ) as mock_burn_in:
+        exit_code = main(["burn-in", "--json", "--minutes", "10", "--lines", "20"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert '"events_seen": 3' in captured.out
+    mock_burn_in.assert_called_once_with(minutes=10, lines=20)
+
+
+def test_burn_in_wrapper_forwards_flags(capsys: CaptureFixture[str]) -> None:
+    with patch(
+        "notification_hub.cli.run_burn_in",
+        return_value={
+            "status": "ok",
+            "minutes": 5,
+            "events_seen": 0,
+            "accepted_event_posts": 0,
+            "rejected_event_posts": 0,
+            "validation_error_count": 0,
+            "repeated_signatures": [],
+            "daemon_summary": {
+                "access_status_counts": {},
+                "accepted_event_posts": 0,
+                "rejected_event_posts": 0,
+                "validation_error_count": 0,
+                "recent_validation_errors": [],
+            },
+            "error": None,
+        },
+    ) as mock_burn_in:
+        exit_code = burn_in_main(["--minutes", "5", "--lines", "10"])
+
+    output = capsys.readouterr()
+    assert exit_code == 0
+    assert "notification-hub burn-in: ok" in output.out
+    mock_burn_in.assert_called_once_with(minutes=5, lines=10)
 
 
 def test_verify_runtime_wrapper_forwards_flags(capsys: CaptureFixture[str]) -> None:
