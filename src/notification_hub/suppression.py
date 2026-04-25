@@ -6,14 +6,37 @@ import logging
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from notification_hub.config import get_policy_config
+from notification_hub.config import NoiseRule, get_policy_config
 from notification_hub.models import Level, StoredEvent
 
 logger = logging.getLogger(__name__)
 
 PACIFIC = ZoneInfo("America/Los_Angeles")
-BURST_DEDUP_SOURCES = frozenset(("personal-ops",))
-BURST_DEDUP_WINDOW = timedelta(minutes=5)
+DEFAULT_NOISE_RULES = (
+    NoiseRule(source="personal-ops", window_minutes=5),
+)
+
+
+def _noise_rule_matches(rule: NoiseRule, event: StoredEvent, effective_level: Level) -> bool:
+    title_text = event.title.lower()
+    body_text = event.body.lower()
+    combined_text = f"{title_text} {body_text}"
+    if rule.source is not None and rule.source != event.source:
+        return False
+    if rule.project is not None and rule.project != event.project:
+        return False
+    if rule.project_prefix is not None:
+        if event.project is None or not event.project.startswith(rule.project_prefix):
+            return False
+    if rule.level is not None and rule.level != effective_level:
+        return False
+    if rule.title_contains is not None and rule.title_contains not in title_text:
+        return False
+    if rule.body_contains is not None and rule.body_contains not in body_text:
+        return False
+    if rule.text_contains is not None and rule.text_contains not in combined_text:
+        return False
+    return True
 
 
 class SuppressionEngine:
@@ -23,7 +46,7 @@ class SuppressionEngine:
         # Dedup: (project, level) -> last event timestamp
         self._dedup_log: dict[tuple[str | None, Level], datetime] = {}
         # Burst dedup: exact producer signature -> last event timestamp
-        self._burst_dedup_log: dict[tuple[str, str | None, str, str, Level], datetime] = {}
+        self._burst_dedup_log: dict[tuple[int, str, str | None, str, str, Level], datetime] = {}
         self._burst_duplicates = 0
         # Rate counters: channel -> list of timestamps
         self._push_times: list[datetime] = []
@@ -35,23 +58,34 @@ class SuppressionEngine:
 
     def is_burst_duplicate(self, event: StoredEvent) -> bool:
         """Suppress exact duplicate producer bursts before storage and delivery."""
-        if event.source not in BURST_DEDUP_SOURCES:
-            return False
         effective_level = event.classified_level or event.level
-        key = (event.source, event.project, event.title, event.body, effective_level)
+        rules = get_policy_config().noise.rules or DEFAULT_NOISE_RULES
+        matching_rules = [
+            (index, rule)
+            for index, rule in enumerate(rules, start=1)
+            if _noise_rule_matches(rule, event, effective_level)
+        ]
+        if not matching_rules:
+            return False
+
         now = datetime.now(timezone.utc)
-        cutoff = now - BURST_DEDUP_WINDOW
+        max_window = max(rule.window_minutes for _index, rule in matching_rules)
+        cutoff = now - timedelta(minutes=max_window)
         self._burst_dedup_log = {
             signature: seen_at
             for signature, seen_at in self._burst_dedup_log.items()
             if seen_at > cutoff
         }
-        last_seen = self._burst_dedup_log.get(key)
-        if last_seen and (now - last_seen) < BURST_DEDUP_WINDOW:
-            self._burst_duplicates += 1
-            logger.debug("Burst suppressed: %s/%s/%s", event.source, event.project, event.title)
-            return True
-        self._burst_dedup_log[key] = now
+        for index, rule in matching_rules:
+            key = (index, event.source, event.project, event.title, event.body, effective_level)
+            last_seen = self._burst_dedup_log.get(key)
+            if last_seen and (now - last_seen) < timedelta(minutes=rule.window_minutes):
+                self._burst_duplicates += 1
+                logger.debug("Burst suppressed: %s/%s/%s", event.source, event.project, event.title)
+                return True
+        for index, _rule in matching_rules:
+            key = (index, event.source, event.project, event.title, event.body, effective_level)
+            self._burst_dedup_log[key] = now
         return False
 
     def is_duplicate(self, event: StoredEvent) -> bool:

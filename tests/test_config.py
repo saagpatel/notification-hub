@@ -11,6 +11,8 @@ import pytest
 import notification_hub.config as config_mod
 from notification_hub.config import (
     ClassificationPolicy,
+    NoisePolicy,
+    NoiseRule,
     RoutingRule,
     RoutingPolicy,
     RetentionPolicy,
@@ -162,6 +164,12 @@ max_slack_per_hour = 7
 max_overflow_buffer = 42
 max_quiet_queue = 12
 
+[[noise.rules]]
+source = "personal-ops"
+title_contains = "approval expires soon"
+level = "info"
+window_minutes = 10
+
 [retention]
 enabled = false
 interval_minutes = 15
@@ -183,6 +191,16 @@ keep_archives = 4
         )
         assert policy.suppression.quiet_start_hour == 22
         assert policy.suppression.max_slack_per_hour == 7
+        assert policy.noise == NoisePolicy(
+            rules=(
+                NoiseRule(
+                    source="personal-ops",
+                    title_contains="approval expires soon",
+                    level="info",
+                    window_minutes=10,
+                ),
+            )
+        )
         assert policy.retention == RetentionPolicy(
             enabled=False,
             interval_minutes=15,

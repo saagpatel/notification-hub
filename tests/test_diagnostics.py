@@ -802,6 +802,22 @@ def test_cli_burn_in_json_output(capsys: CaptureFixture[str]) -> None:
             "accepted_event_posts": 2,
             "rejected_event_posts": 0,
             "validation_error_count": 0,
+            "health": {
+                "accepted_event_posts": 2,
+                "rejected_event_posts": 0,
+                "validation_error_count": 0,
+                "status": "ok",
+            },
+            "noise_candidates": [
+                {
+                    "count": 2,
+                    "source": "personal-ops",
+                    "project": "personal-ops",
+                    "level": "info",
+                    "title": "Approval expires soon",
+                    "body": "Approval expires soon: review or cancel",
+                }
+            ],
             "repeated_signatures": [
                 {
                     "count": 2,
@@ -812,6 +828,8 @@ def test_cli_burn_in_json_output(capsys: CaptureFixture[str]) -> None:
                     "body": "Approval expires soon: review or cancel",
                 }
             ],
+            "slack_eligible_events": 0,
+            "slack_volume": [],
             "daemon_summary": {
                 "access_status_counts": {"201": 2},
                 "accepted_event_posts": 2,
@@ -840,7 +858,16 @@ def test_burn_in_wrapper_forwards_flags(capsys: CaptureFixture[str]) -> None:
             "accepted_event_posts": 0,
             "rejected_event_posts": 0,
             "validation_error_count": 0,
+            "health": {
+                "accepted_event_posts": 0,
+                "rejected_event_posts": 0,
+                "validation_error_count": 0,
+                "status": "ok",
+            },
+            "noise_candidates": [],
             "repeated_signatures": [],
+            "slack_eligible_events": 0,
+            "slack_volume": [],
             "daemon_summary": {
                 "access_status_counts": {},
                 "accepted_event_posts": 0,

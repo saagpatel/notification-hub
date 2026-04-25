@@ -89,8 +89,10 @@ Accepted event sources are `codex`, `cc`, `claude_ai`, `bridge_watcher`, `person
 and `notion-os`.
 Accepted levels are `urgent`, `normal`, and `info`; incoming `warn` and `warning` aliases are
 normalized to `normal`.
-Exact repeated `personal-ops` reminder bursts are accepted by the API but suppressed before JSONL
-storage and notification delivery when they repeat inside the burst-dedup window.
+Exact repeated producer bursts that match configured noise rules are accepted by the API but
+suppressed before JSONL storage and notification delivery when they repeat inside the configured
+noise window. Without a live policy config, the built-in default keeps suppressing repeated
+`personal-ops` reminder bursts.
 
 ## Policy Config
 
@@ -122,6 +124,18 @@ max_push_per_hour = 5
 max_slack_per_hour = 20
 max_overflow_buffer = 500
 max_quiet_queue = 200
+
+[[noise.rules]]
+source = "personal-ops"
+title_contains = "approval expires soon"
+level = "info"
+window_minutes = 5
+
+[[noise.rules]]
+source = "notion-os"
+title_contains = "external-signal-sync complete"
+level = "info"
+window_minutes = 10
 
 [retention]
 enabled = true

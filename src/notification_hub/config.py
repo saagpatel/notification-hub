@@ -127,6 +127,23 @@ class SuppressionPolicy:
 
 
 @dataclass(frozen=True)
+class NoiseRule:
+    source: str | None = None
+    project: str | None = None
+    project_prefix: str | None = None
+    title_contains: str | None = None
+    body_contains: str | None = None
+    text_contains: str | None = None
+    level: str | None = None
+    window_minutes: int = 5
+
+
+@dataclass(frozen=True)
+class NoisePolicy:
+    rules: tuple[NoiseRule, ...] = ()
+
+
+@dataclass(frozen=True)
 class RetentionPolicy:
     enabled: bool = DEFAULT_RETENTION_ENABLED
     interval_minutes: int = DEFAULT_RETENTION_INTERVAL_MINUTES
@@ -161,6 +178,7 @@ class PolicyConfig:
     load_error: str | None = None
     classification: ClassificationPolicy = field(default_factory=ClassificationPolicy)
     suppression: SuppressionPolicy = field(default_factory=SuppressionPolicy)
+    noise: NoisePolicy = field(default_factory=NoisePolicy)
     retention: RetentionPolicy = field(default_factory=RetentionPolicy)
     routing: RoutingPolicy = field(default_factory=RoutingPolicy)
 
@@ -284,6 +302,64 @@ def _parse_routing_rules(value: object) -> tuple[RoutingRule, ...]:
                 disable_slack=_as_bool(raw_rule.get("disable_slack")),
                 continue_matching=_as_bool(raw_rule.get("continue_matching")),
                 priority=_as_int(raw_rule.get("priority"), 0, minimum=0),
+            )
+        )
+    return tuple(rules)
+
+
+def _rule_has_matcher(
+    *,
+    source: str | None,
+    project: str | None,
+    project_prefix: str | None,
+    title_contains: str | None,
+    body_contains: str | None,
+    text_contains: str | None,
+) -> bool:
+    return (
+        source is not None
+        or project is not None
+        or project_prefix is not None
+        or title_contains is not None
+        or body_contains is not None
+        or text_contains is not None
+    )
+
+
+def _parse_noise_rules(value: object) -> tuple[NoiseRule, ...]:
+    """Parse noise suppression rules from `[[noise.rules]]` TOML input."""
+    if not isinstance(value, list):
+        return ()
+
+    rules: list[NoiseRule] = []
+    for item in cast(list[object], value):
+        raw_rule = _as_mapping(item)
+        source = _as_optional_choice(raw_rule.get("source"), VALID_SOURCES)
+        project = _as_optional_string(raw_rule.get("project"))
+        project_prefix = _as_optional_string(raw_rule.get("project_prefix"))
+        title_contains = _as_optional_lower_string(raw_rule.get("title_contains"))
+        body_contains = _as_optional_lower_string(raw_rule.get("body_contains"))
+        text_contains = _as_optional_lower_string(raw_rule.get("text_contains"))
+        if not _rule_has_matcher(
+            source=source,
+            project=project,
+            project_prefix=project_prefix,
+            title_contains=title_contains,
+            body_contains=body_contains,
+            text_contains=text_contains,
+        ):
+            continue
+
+        rules.append(
+            NoiseRule(
+                source=source,
+                project=project,
+                project_prefix=project_prefix,
+                title_contains=title_contains,
+                body_contains=body_contains,
+                text_contains=text_contains,
+                level=_as_optional_choice(raw_rule.get("level"), VALID_LEVELS),
+                window_minutes=_as_int(raw_rule.get("window_minutes"), 5, minimum=1),
             )
         )
     return tuple(rules)
@@ -458,6 +534,7 @@ def _build_policy_config(
     root = _as_mapping(raw_config)
     classifier = _as_mapping(root.get("classifier"))
     suppression = _as_mapping(root.get("suppression"))
+    noise = _as_mapping(root.get("noise"))
     retention = _as_mapping(root.get("retention"))
     routing = _as_mapping(root.get("routing"))
 
@@ -518,6 +595,7 @@ def _build_policy_config(
                 minimum=1,
             ),
         ),
+        noise=NoisePolicy(rules=_parse_noise_rules(noise.get("rules"))),
         retention=RetentionPolicy(
             enabled=_as_bool(retention.get("enabled"), DEFAULT_RETENTION_ENABLED),
             interval_minutes=_as_int(

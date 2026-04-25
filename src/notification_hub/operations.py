@@ -89,6 +89,19 @@ class RepeatedSignatureReport(TypedDict):
     body: str
 
 
+class BurnInHealthReport(TypedDict):
+    accepted_event_posts: int
+    rejected_event_posts: int
+    validation_error_count: int
+    status: str
+
+
+class SlackVolumeReport(TypedDict):
+    count: int
+    source: str
+    level: str
+
+
 class BurnInReport(TypedDict):
     status: str
     minutes: int
@@ -96,7 +109,11 @@ class BurnInReport(TypedDict):
     accepted_event_posts: int
     rejected_event_posts: int
     validation_error_count: int
+    health: BurnInHealthReport
+    noise_candidates: list[RepeatedSignatureReport]
     repeated_signatures: list[RepeatedSignatureReport]
+    slack_eligible_events: int
+    slack_volume: list[SlackVolumeReport]
     daemon_summary: DaemonLogSummary
     error: str | None
 
@@ -381,7 +398,7 @@ def run_logs(*, events: int = 5, lines: int = 20) -> LogsReport:
 
 
 def run_burn_in(*, minutes: int = 10, lines: int = 200) -> BurnInReport:
-    """Summarize recent accepted/rejected events and repeated signatures."""
+    """Summarize recent health failures and repeated/noisy event signatures."""
     window_minutes = max(minutes, 1)
     tail_lines = max(lines, 0)
     cutoff = datetime.now(timezone.utc) - timedelta(minutes=window_minutes)
@@ -411,6 +428,22 @@ def run_burn_in(*, minutes: int = 10, lines: int = 200) -> BurnInReport:
             if count > 1
         ]
         repeated.sort(key=lambda item: item["count"], reverse=True)
+        slack_counts: dict[tuple[str, str], int] = {}
+        for event in recent_events:
+            effective_level = event.classified_level or event.level
+            if effective_level not in ("urgent", "normal"):
+                continue
+            key = (event.source, effective_level)
+            slack_counts[key] = slack_counts.get(key, 0) + 1
+        slack_volume: list[SlackVolumeReport] = [
+            {
+                "count": count,
+                "source": source,
+                "level": level,
+            }
+            for (source, level), count in slack_counts.items()
+        ]
+        slack_volume.sort(key=lambda item: item["count"], reverse=True)
         stdout_tail = _tail_text_file(DAEMON_STDOUT_LOG, lines=tail_lines)
         stderr_tail = _tail_text_file(DAEMON_STDERR_LOG, lines=tail_lines)
         daemon_summary = _summarize_daemon_logs(stdout_tail, stderr_tail)
@@ -422,11 +455,27 @@ def run_burn_in(*, minutes: int = 10, lines: int = 200) -> BurnInReport:
             "accepted_event_posts": 0,
             "rejected_event_posts": 0,
             "validation_error_count": 0,
+            "health": {
+                "accepted_event_posts": 0,
+                "rejected_event_posts": 0,
+                "validation_error_count": 0,
+                "status": "degraded",
+            },
+            "noise_candidates": [],
             "repeated_signatures": [],
+            "slack_eligible_events": 0,
+            "slack_volume": [],
             "daemon_summary": _summarize_daemon_logs([], []),
             "error": str(exc),
         }
 
+    health_status = (
+        "ok"
+        if daemon_summary["rejected_event_posts"] == 0
+        and daemon_summary["validation_error_count"] == 0
+        else "degraded"
+    )
+    noise_candidates = repeated[:10]
     return {
         "status": "ok",
         "minutes": window_minutes,
@@ -434,7 +483,16 @@ def run_burn_in(*, minutes: int = 10, lines: int = 200) -> BurnInReport:
         "accepted_event_posts": daemon_summary["accepted_event_posts"],
         "rejected_event_posts": daemon_summary["rejected_event_posts"],
         "validation_error_count": daemon_summary["validation_error_count"],
-        "repeated_signatures": repeated[:10],
+        "health": {
+            "accepted_event_posts": daemon_summary["accepted_event_posts"],
+            "rejected_event_posts": daemon_summary["rejected_event_posts"],
+            "validation_error_count": daemon_summary["validation_error_count"],
+            "status": health_status,
+        },
+        "noise_candidates": noise_candidates,
+        "repeated_signatures": noise_candidates,
+        "slack_eligible_events": sum(item["count"] for item in slack_volume),
+        "slack_volume": slack_volume[:10],
         "daemon_summary": daemon_summary,
         "error": None,
     }

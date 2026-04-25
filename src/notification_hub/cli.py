@@ -271,17 +271,24 @@ def _print_burn_in_report(report: BurnInReport) -> None:
     print(f"- accepted event posts: {report['accepted_event_posts']}")
     print(f"- rejected event posts: {report['rejected_event_posts']}")
     print(f"- validation errors: {report['validation_error_count']}")
+    print(f"- health: {report['health']['status']}")
+    print(f"- Slack-eligible events: {report['slack_eligible_events']}")
     if report["error"] is not None:
         print(f"- error: {report['error']}")
-    print("- repeated signatures:")
-    if not report["repeated_signatures"]:
+    print("- noise candidates:")
+    if not report["noise_candidates"]:
         print("  none")
-    for item in report["repeated_signatures"]:
+    for item in report["noise_candidates"]:
         project = f" ({item['project']})" if item["project"] else ""
         print(
             f"  - x{item['count']} {item['source']}{project} "
             f"[{item['level']}]: {item['title']}"
         )
+    print("- Slack volume:")
+    if not report["slack_volume"]:
+        print("  none")
+    for item in report["slack_volume"]:
+        print(f"  - x{item['count']} {item['source']} [{item['level']}]")
 
 
 def _print_verify_runtime_report(report: VerifyRuntimeReport) -> None:

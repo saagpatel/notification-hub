@@ -21,6 +21,8 @@ Last updated: 2026-04-24
   versus rejected `/events` counts from the visible daemon tail.
 - A local burn-in command is available for recent accepted/rejected event counts and repeated
   event signatures, with validation-error summaries scoped to the latest visible daemon start.
+  Burn-in now reports health failures separately from repeated-event noise candidates and includes
+  Slack-eligible volume by source/level.
 - A local explain command can preview classification, routing, and delivery without sending anything.
 - A local policy-check command can audit the ruleset for overlaps, shadowing, and no-op rules,
   and now suggests likely fixes for each warning.
@@ -79,6 +81,8 @@ Last updated: 2026-04-24
 - Added `notification-hub burn-in` as a read-only recent-runtime summary for noisy producers.
 - Scoped burn-in/log validation-error summaries to the latest visible daemon start so resolved
   pre-restart `422` diagnostics do not appear as current failures.
+- Added configurable noise rules so repeated accepted producer events can be suppressed by
+  source/project/text/level/window instead of relying only on hard-coded producer behavior.
 
 ## Verified Baseline
 
@@ -103,15 +107,15 @@ uv run --frozen notification-hub retention --max-events 2000
 
 Expected current outcome:
 
-- `pytest`: 217 passed
+- `pytest`: 218 passed
 - `ruff`: clean
 - `pyright`: 0 errors
 - `/health/details`: `status: ok`, watcher active, push available, Slack configured
 - `notification-hub-doctor`: `status: ok`
 - `notification-hub status`: `status: ok` with a compact read-only runtime summary
 - `notification-hub logs`: `status: ok` with recent event and daemon log tails
-- `notification-hub burn-in`: `status: ok` with accepted/rejected event counts and repeated
-  signatures
+- `notification-hub burn-in`: `status: ok` with health counters, repeated-event noise candidates,
+  and Slack-eligible event volume
 - `notification-hub verify-runtime`: `status: ok` without posting an event by default
 - `notification-hub-policy-check`: `status: ok` or `warn`, depending on the active policy file,
   plus warning-specific fix suggestions when issues are found

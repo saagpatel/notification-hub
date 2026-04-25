@@ -269,8 +269,23 @@ def test_burn_in_reports_repeated_signatures_and_daemon_counts(
     assert report["accepted_event_posts"] == 1
     assert report["rejected_event_posts"] == 1
     assert report["validation_error_count"] == 1
+    assert report["health"] == {
+        "accepted_event_posts": 1,
+        "rejected_event_posts": 1,
+        "validation_error_count": 1,
+        "status": "degraded",
+    }
+    assert report["noise_candidates"] == report["repeated_signatures"]
     assert report["repeated_signatures"][0]["count"] == 2
     assert report["repeated_signatures"][0]["source"] == "personal-ops"
+    assert report["slack_eligible_events"] == 1
+    assert report["slack_volume"] == [
+        {
+            "count": 1,
+            "source": "codex",
+            "level": "normal",
+        }
+    ]
 
 
 def test_retention_noop_when_log_missing() -> None:

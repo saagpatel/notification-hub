@@ -23,6 +23,18 @@ max_slack_per_hour = 20
 max_overflow_buffer = 500
 max_quiet_queue = 200
 
+[[noise.rules]]
+source = "personal-ops"
+title_contains = "approval expires soon"
+level = "info"
+window_minutes = 5
+
+[[noise.rules]]
+source = "notion-os"
+title_contains = "external-signal-sync complete"
+level = "info"
+window_minutes = 10
+
 [retention]
 enabled = true
 interval_minutes = 60

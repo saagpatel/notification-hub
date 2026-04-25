@@ -7,8 +7,8 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from notification_hub.config import PolicyConfig, SuppressionPolicy
-from notification_hub.models import Level, StoredEvent
+from notification_hub.config import NoisePolicy, NoiseRule, PolicyConfig, SuppressionPolicy
+from notification_hub.models import Level, Source, StoredEvent
 from notification_hub.suppression import SuppressionEngine
 
 PACIFIC = ZoneInfo("America/Los_Angeles")
@@ -17,12 +17,13 @@ PACIFIC = ZoneInfo("America/Los_Angeles")
 def _stored(
     project: str | None = "test-proj",
     level: Level = "info",
+    source: Source = "cc",
     title: str = "Test",
     body: str = "Test body",
     classified_level: Level | None = None,
 ) -> StoredEvent:
     return StoredEvent(
-        source="cc",
+        source=source,
         level=level,
         title=title,
         body=body,
@@ -80,6 +81,55 @@ class TestDedup:
         engine.is_duplicate(e1)
         e2 = _stored(project="ink", level="info", classified_level=None)
         assert engine.is_duplicate(e2) is True
+
+
+class TestBurstDedup:
+    def test_default_noise_rule_suppresses_exact_personal_ops_duplicate(self) -> None:
+        engine = SuppressionEngine()
+        event = _stored(source="personal-ops", project="personal-ops", title="Approval expires soon")
+
+        assert engine.is_burst_duplicate(event) is False
+        assert engine.is_burst_duplicate(event) is True
+        assert engine.snapshot()["burst_duplicates"] == 1
+
+    def test_configured_noise_rule_can_match_notion_syncs(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        policy = PolicyConfig(
+            noise=NoisePolicy(
+                rules=(
+                    NoiseRule(
+                        source="notion-os",
+                        title_contains="external-signal-sync",
+                        level="info",
+                        window_minutes=10,
+                    ),
+                )
+            )
+        )
+        monkeypatch.setattr("notification_hub.suppression.get_policy_config", lambda: policy)
+        engine = SuppressionEngine()
+        event = _stored(
+            source="notion-os",
+            project=None,
+            level="info",
+            title="external-signal-sync complete",
+            body="Dry-run [all]: 0 events",
+        )
+
+        assert engine.is_burst_duplicate(event) is False
+        assert engine.is_burst_duplicate(event) is True
+
+    def test_configured_noise_rule_does_not_match_different_level(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        policy = PolicyConfig(
+            noise=NoisePolicy(
+                rules=(NoiseRule(source="codex", level="info", window_minutes=10),)
+            )
+        )
+        monkeypatch.setattr("notification_hub.suppression.get_policy_config", lambda: policy)
+        engine = SuppressionEngine()
+        event = _stored(source="codex", level="normal", title="Codex finished a turn")
+
+        assert engine.is_burst_duplicate(event) is False
+        assert engine.is_burst_duplicate(event) is False
 
 
 class TestQuietHours:
