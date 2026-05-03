@@ -1,0 +1,5 @@
+# codex-os-managed
+uv lock --check
+uv run --frozen pytest
+uv run --frozen ruff check
+uv run --frozen pyright
