@@ -6,6 +6,7 @@ import argparse
 import json
 import sys
 from collections.abc import Sequence
+from pathlib import Path
 from typing import cast
 
 from notification_hub.diagnostics import collect_doctor_report
@@ -13,9 +14,13 @@ from notification_hub.models import Event
 from notification_hub.operations import (
     BootstrapConfigReport,
     BurnInReport,
+    CoordinationSnapshotReport,
     DeliveryCheckReport,
     InboxReport,
     LogsReport,
+    PersonalOpsActionExportReport,
+    PersonalOpsImportReport,
+    ActionPackageValidationReport,
     PolicyCheckReport,
     RetentionReport,
     SmokeReport,
@@ -23,9 +28,13 @@ from notification_hub.operations import (
     VerifyRuntimeReport,
     bootstrap_policy_config,
     run_burn_in,
+    run_coordination_snapshot,
     run_delivery_check,
     run_inbox,
     run_logs,
+    run_personal_ops_action_export,
+    run_personal_ops_import_stub,
+    validate_action_package,
     run_policy_check,
     run_retention,
     run_smoke_check,
@@ -188,6 +197,110 @@ def _build_parser(prog: str = "notification-hub") -> argparse.ArgumentParser:
         help="Emit the inbox report as JSON.",
     )
 
+    coordination_snapshot = subparsers.add_parser(
+        "coordination-snapshot",
+        help="Build a bridge-ready snapshot from runtime status and inbox state.",
+    )
+    coordination_snapshot.add_argument(
+        "--hours",
+        type=int,
+        default=24,
+        help="Recent inbox window to summarize.",
+    )
+    coordination_snapshot.add_argument(
+        "--limit",
+        type=int,
+        default=10,
+        help="Maximum items per inbox section.",
+    )
+    coordination_snapshot.add_argument(
+        "--output",
+        help="Optional JSON output path. Stdout remains the default.",
+    )
+    coordination_snapshot.add_argument(
+        "--save-bridge-db",
+        action="store_true",
+        help="Also save the bridge_snapshot payload into bridge-db as a Codex snapshot.",
+    )
+    coordination_snapshot.add_argument(
+        "--bridge-db-path",
+        help="Optional bridge-db SQLite path. Defaults to BRIDGE_DB_PATH or the standard local path.",
+    )
+    coordination_snapshot.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the full snapshot report as JSON.",
+    )
+
+    personal_ops_actions = subparsers.add_parser(
+        "personal-ops-actions",
+        help="Prepare personal-ops action proposals from inbox rollups without writing them.",
+    )
+    personal_ops_actions.add_argument(
+        "--hours",
+        type=int,
+        default=24,
+        help="Recent inbox window to summarize.",
+    )
+    personal_ops_actions.add_argument(
+        "--limit",
+        type=int,
+        default=10,
+        help="Maximum action proposals to emit.",
+    )
+    personal_ops_actions.add_argument(
+        "--output",
+        help="Optional JSON output path. Stdout remains the default.",
+    )
+    personal_ops_actions.add_argument(
+        "--save-review-package",
+        action="store_true",
+        help="Save a review package under the local notification-hub action export directory.",
+    )
+    personal_ops_actions.add_argument(
+        "--review-dir",
+        help="Optional directory for saved review packages.",
+    )
+    personal_ops_actions.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the full action export as JSON.",
+    )
+
+    validate_action_package_parser = subparsers.add_parser(
+        "validate-action-package",
+        help="Validate a saved personal-ops action review package without importing it.",
+    )
+    validate_action_package_parser.add_argument(
+        "path",
+        help="Path to a saved personal-ops action review package JSON file.",
+    )
+    validate_action_package_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the validation report as JSON.",
+    )
+
+    personal_ops_import = subparsers.add_parser(
+        "personal-ops-import",
+        help="Validate a personal-ops action package and stop before mutation.",
+    )
+    personal_ops_import.add_argument(
+        "path",
+        help="Path to a saved personal-ops action review package JSON file.",
+    )
+    personal_ops_import.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=True,
+        help="Validate only. This is currently always true.",
+    )
+    personal_ops_import.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the import report as JSON.",
+    )
+
     explain = subparsers.add_parser(
         "explain",
         help="Show how an event would classify, route, and deliver without sending it.",
@@ -314,6 +427,13 @@ def _print_inbox_report(report: InboxReport) -> None:
         project = f" ({item['project']})" if item["project"] else ""
         print(f"  - x{item['count']} {item['source']}{project}: {item['title']}")
 
+    print("- rollups:")
+    if not report["rollups"]:
+        print("  none")
+    for item in report["rollups"]:
+        project = f" ({item['project']})" if item["project"] else ""
+        print(f"  - x{item['count']} [{item['intent']}] {item['source']}{project}: {item['title']}")
+
 
 def _print_status_report(report: StatusReport) -> None:
     print(f"notification-hub status: {report['status']}")
@@ -329,6 +449,86 @@ def _print_status_report(report: StatusReport) -> None:
     print(f"- Slack delivery failures: {report['slack_delivery_failures']}")
     print(f"- push notifier available: {report['push_notifier_available']}")
     print(f"- next action: {report['next_action']}")
+
+
+def _write_json_report(report: object, output_path: str | None) -> None:
+    content = json.dumps(report, indent=2, sort_keys=True)
+    if output_path is None:
+        print(content)
+        return
+
+    path = Path(output_path).expanduser()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"{content}\n", encoding="utf-8")
+    print(str(path))
+
+
+def _print_coordination_snapshot_report(report: CoordinationSnapshotReport) -> None:
+    inbox = report["inbox"]
+    runtime_status = report["runtime_status"]
+
+    print(f"notification-hub coordination-snapshot: {report['status']}")
+    print(f"- schema: {report['schema_version']}")
+    print(f"- bridge target: {report['bridge_target_system']}")
+    print(f"- snapshot date: {report['bridge_snapshot_date']}")
+    print(f"- bridge save: {report['bridge_save']['status']}")
+    if report["bridge_save"]["snapshot_id"] is not None:
+        print(f"- bridge snapshot ID: {report['bridge_save']['snapshot_id']}")
+    print(f"- runtime: {runtime_status['status']}")
+    print(f"- inbox events seen: {inbox['events_seen']}")
+    print(f"- needs attention: {len(inbox['needs_attention'])}")
+    print(f"- waiting or blocked: {len(inbox['waiting_or_blocked'])}")
+    print(f"- ready: {len(inbox['ready'])}")
+    print(f"- rollups: {len(inbox['rollups'])}")
+    print(f"- noise candidates: {len(inbox['noise_candidates'])}")
+    print("- follow-up:")
+    for item in report["follow_up"]:
+        print(f"  - {item}")
+    if report["error"] is not None:
+        print(f"- error: {report['error']}")
+
+
+def _print_personal_ops_action_export_report(report: PersonalOpsActionExportReport) -> None:
+    print(f"notification-hub personal-ops-actions: {report['status']}")
+    print(f"- schema: {report['schema_version']}")
+    print(f"- window: {report['hours']} hours")
+    print(f"- actions: {len(report['actions'])}")
+    print(f"- review package: {report['review_package']['status']}")
+    if report["review_package"]["path"] is not None:
+        print(f"- review path: {report['review_package']['path']}")
+    if report["error"] is not None:
+        print(f"- error: {report['error']}")
+    for action in report["actions"]:
+        project = f" ({action['project']})" if action["project"] else ""
+        print(
+            f"  - [{action['priority']}/{action['state']}] "
+            f"{action['source']}{project}: {action['title']} x{action['count']}"
+        )
+        print(f"    next: {action['suggested_next_action']}")
+
+
+def _print_action_package_validation_report(report: ActionPackageValidationReport) -> None:
+    print(f"notification-hub validate-action-package: {report['status']}")
+    print(f"- path: {report['path']}")
+    print(f"- schema: {report['schema_version']}")
+    print(f"- actions: {report['valid_action_count']}/{report['action_count']} valid")
+    print(f"- warnings: {report['warning_count']}")
+    print(f"- errors: {report['error_count']}")
+    for warning in report["warnings"]:
+        print(f"- warning: {warning}")
+    for error in report["errors"]:
+        print(f"- error: {error}")
+
+
+def _print_personal_ops_import_report(report: PersonalOpsImportReport) -> None:
+    print(f"notification-hub personal-ops-import: {report['status']}")
+    print(f"- path: {report['path']}")
+    print(f"- dry run: {report['dry_run']}")
+    print(f"- applied: {report['applied']}")
+    print(f"- valid actions: {report['validation']['valid_action_count']}")
+    print(f"- next action: {report['next_action']}")
+    if report["error"] is not None:
+        print(f"- error: {report['error']}")
 
 
 def _print_logs_report(report: LogsReport) -> None:
@@ -555,6 +755,52 @@ def main(argv: Sequence[str] | None = None) -> int:
             _print_inbox_report(report)
         return 0 if report["status"] == "ok" else 1
 
+    if args.command == "coordination-snapshot":
+        report = run_coordination_snapshot(
+            hours=args.hours,
+            limit=args.limit,
+            save_bridge_db=args.save_bridge_db,
+            bridge_db_path=Path(args.bridge_db_path).expanduser() if args.bridge_db_path else None,
+        )
+        if args.output is not None:
+            _write_json_report(report, args.output)
+        elif args.json:
+            print(json.dumps(report, indent=2, sort_keys=True))
+        else:
+            _print_coordination_snapshot_report(report)
+        return 0 if report["status"] == "ok" else 1
+
+    if args.command == "personal-ops-actions":
+        report = run_personal_ops_action_export(
+            hours=args.hours,
+            limit=args.limit,
+            save_review_package=args.save_review_package,
+            review_dir=Path(args.review_dir).expanduser() if args.review_dir else None,
+        )
+        if args.output is not None:
+            _write_json_report(report, args.output)
+        elif args.json:
+            print(json.dumps(report, indent=2, sort_keys=True))
+        else:
+            _print_personal_ops_action_export_report(report)
+        return 0 if report["status"] == "ok" else 1
+
+    if args.command == "validate-action-package":
+        report = validate_action_package(Path(args.path))
+        if args.json:
+            print(json.dumps(report, indent=2, sort_keys=True))
+        else:
+            _print_action_package_validation_report(report)
+        return 0 if report["status"] == "ok" else 1
+
+    if args.command == "personal-ops-import":
+        report = run_personal_ops_import_stub(path=Path(args.path), dry_run=args.dry_run)
+        if args.json:
+            print(json.dumps(report, indent=2, sort_keys=True))
+        else:
+            _print_personal_ops_import_report(report)
+        return 0 if report["status"] == "ok" else 1
+
     if args.command == "policy-check":
         report = run_policy_check()
         if args.json:
@@ -632,6 +878,26 @@ def delivery_check_main(argv: Sequence[str] | None = None) -> int:
 def inbox_main(argv: Sequence[str] | None = None) -> int:
     forwarded = list(argv) if argv is not None else sys.argv[1:]
     return main(["inbox", *forwarded])
+
+
+def coordination_snapshot_main(argv: Sequence[str] | None = None) -> int:
+    forwarded = list(argv) if argv is not None else sys.argv[1:]
+    return main(["coordination-snapshot", *forwarded])
+
+
+def personal_ops_actions_main(argv: Sequence[str] | None = None) -> int:
+    forwarded = list(argv) if argv is not None else sys.argv[1:]
+    return main(["personal-ops-actions", *forwarded])
+
+
+def validate_action_package_main(argv: Sequence[str] | None = None) -> int:
+    forwarded = list(argv) if argv is not None else sys.argv[1:]
+    return main(["validate-action-package", *forwarded])
+
+
+def personal_ops_import_main(argv: Sequence[str] | None = None) -> int:
+    forwarded = list(argv) if argv is not None else sys.argv[1:]
+    return main(["personal-ops-import", *forwarded])
 
 
 def policy_check_main(argv: Sequence[str] | None = None) -> int:

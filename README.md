@@ -49,6 +49,14 @@ uv run notification-hub status
 uv run notification-hub-status --json
 uv run notification-hub inbox
 uv run notification-hub-inbox --json
+uv run notification-hub coordination-snapshot
+uv run notification-hub-coordination-snapshot --json
+uv run notification-hub coordination-snapshot --save-bridge-db
+uv run notification-hub personal-ops-actions
+uv run notification-hub-personal-ops-actions --json
+uv run notification-hub personal-ops-actions --save-review-package
+uv run notification-hub validate-action-package path/to/actions.json
+uv run notification-hub personal-ops-import path/to/actions.json
 uv run notification-hub logs
 uv run notification-hub-logs --json
 uv run notification-hub burn-in --minutes 10
@@ -70,7 +78,20 @@ The smoke command posts a harmless `info` event and verifies it lands in the liv
 The status command shows the compact day-to-day runtime view and suggests the next repair action
 when something is degraded, including recent Slack delivery failures found in daemon logs.
 The inbox command groups recent events by coordination intent so attention, blocked/waiting work,
-ready work, completions, and noisy producers are easy to scan.
+ready work, completions, repeated rollups, and noisy producers are easy to scan.
+The coordination-snapshot command combines inbox state and runtime status into bridge-ready JSON.
+By default it only prints the snapshot; pass `--output path/to/snapshot.json` when you want a
+durable file for a bridge-db import step.
+Pass `--save-bridge-db` when you intentionally want to insert the snapshot into bridge-db as a Codex
+system snapshot. Use `--bridge-db-path` to target a non-default database during testing.
+The personal-ops-actions command turns inbox rollups into action proposals for review. It does not
+write to personal-ops; pass `--output path/to/actions.json` when you want a handoff file.
+Pass `--save-review-package` when you want notification-hub to stage a local review package under
+`~/.local/share/notification-hub/action-exports/`; this still does not import or apply actions.
+The validate-action-package command checks a saved review package before any future import/apply
+step consumes it.
+The personal-ops-import command currently validates the package and stops before mutation. It is the
+safe placeholder for the future operator-gated apply step.
 The logs command shows recent stored events, daemon stdout/stderr tails, and a summary of accepted
 versus rejected `/events` posts plus Slack delivery failures without changing local runtime state.
 The burn-in command summarizes recent accepted/rejected event posts and repeated event signatures
@@ -104,6 +125,20 @@ Events may optionally include an `intent` value for coordination semantics. Supp
 `needs_attention`, `blocked`, `waiting_on_user`, `ready_to_review`, `ready_to_merge`,
 `handoff_created`, `automation_failed`, `completed`, and `informational`. When omitted, the inbox
 uses deterministic title/body/source-level rules to infer intent.
+The inbox report also includes `rollups` for repeated source/project/title/body patterns, so repeated
+approval drafts and completion pings can be reviewed as one grouped signal.
+Personal-ops action exports are proposal-only: they include priority, state, suggested next action,
+and evidence IDs, but they do not create tasks, send messages, approve drafts, or mutate external
+systems.
+Review packages are local JSON files for an operator-mediated import step. They are intentionally
+separate from any future personal-ops apply command.
+Validation checks the schema version, required action fields, duplicate action IDs, priority/state
+values, and action counts without mutating personal-ops.
+The import stub reports `applied: false` even when validation passes, so no personal-ops task,
+approval, or send path is touched.
+Coordination snapshots target bridge-db's `codex` snapshot shape: the emitted
+`bridge_snapshot` object can be passed as snapshot data after operator review, or saved directly
+with the explicit `--save-bridge-db` flag.
 Exact repeated producer bursts that match configured noise rules are accepted by the API but
 suppressed before JSONL storage and notification delivery when they repeat inside the configured
 noise window. Without a live policy config, the built-in default keeps suppressing repeated
@@ -241,6 +276,12 @@ curl http://127.0.0.1:9199/health/details
 uv run --frozen notification-hub-doctor
 uv run --frozen notification-hub status
 uv run --frozen notification-hub inbox
+uv run --frozen notification-hub coordination-snapshot
+uv run --frozen notification-hub coordination-snapshot --save-bridge-db
+uv run --frozen notification-hub personal-ops-actions
+uv run --frozen notification-hub personal-ops-actions --save-review-package
+uv run --frozen notification-hub validate-action-package path/to/actions.json
+uv run --frozen notification-hub personal-ops-import path/to/actions.json
 uv run --frozen notification-hub logs
 uv run --frozen notification-hub verify-runtime
 uv run --frozen notification-hub delivery-check --slack

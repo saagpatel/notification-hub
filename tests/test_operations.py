@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -22,11 +23,15 @@ from notification_hub.models import StoredEvent
 from notification_hub.operations import (
     bootstrap_policy_config,
     run_burn_in,
+    run_coordination_snapshot,
     run_inbox,
     run_logs,
+    run_personal_ops_action_export,
+    run_personal_ops_import_stub,
     run_policy_check,
     run_retention,
     run_smoke_check,
+    validate_action_package,
 )
 
 
@@ -84,6 +89,13 @@ def test_inbox_groups_recent_events_by_coordination_intent() -> None:
             body="A Codex turn completed.",
             project="notification-hub",
         ),
+        StoredEvent(
+            source="codex",
+            level="normal",
+            title="Codex finished a turn",
+            body="A Codex turn completed.",
+            project="notification-hub",
+        ),
     ]
 
     with (
@@ -93,7 +105,7 @@ def test_inbox_groups_recent_events_by_coordination_intent() -> None:
             return_value={
                 "status": "ok",
                 "minutes": 1440,
-                "events_seen": 3,
+                "events_seen": 4,
                 "accepted_event_posts": 3,
                 "rejected_event_posts": 0,
                 "validation_error_count": 0,
@@ -133,11 +145,319 @@ def test_inbox_groups_recent_events_by_coordination_intent() -> None:
         report = run_inbox(hours=24, limit=5)
 
     assert report["status"] == "ok"
-    assert report["events_seen"] == 3
+    assert report["events_seen"] == 4
     assert report["waiting_or_blocked"][0]["intent"] == "waiting_on_user"
     assert report["ready"][0]["intent"] == "ready_to_review"
     assert report["completed"][0]["intent"] == "completed"
     assert report["noise_candidates"][0]["title"] == "Codex finished a turn"
+    assert report["rollups"][0]["count"] == 2
+    assert report["rollups"][0]["title"] == "Codex finished a turn"
+
+
+def test_coordination_snapshot_wraps_inbox_and_runtime_for_bridge_db() -> None:
+    inbox_report: dict[str, object] = {
+        "status": "ok",
+        "hours": 2,
+        "events_seen": 1,
+        "needs_attention": [],
+        "waiting_or_blocked": [],
+        "ready": [
+            {
+                "event_id": "abc123",
+                "timestamp": "2026-05-09T00:00:00+00:00",
+                "source": "codex",
+                "project": "notification-hub",
+                "level": "normal",
+                "intent": "ready_to_review",
+                "title": "Review ready",
+                "body": "Ready to review",
+            }
+        ],
+        "completed": [],
+        "rollups": [],
+        "noise_candidates": [],
+        "error": None,
+    }
+    status_report = {
+        "status": "ok",
+        "health_url": "http://127.0.0.1:9199/health/details",
+        "daemon_reachable": True,
+        "watcher_active": True,
+        "events_processed": 10,
+        "uptime_seconds": 123.4,
+        "policy_config_found": True,
+        "policy_warning_count": 0,
+        "retention_enabled": True,
+        "retention_last_status": "ok",
+        "runtime_wiring_current": True,
+        "push_notifier_available": True,
+        "slack_configured": True,
+        "slack_delivery_failures": 0,
+        "next_action": "No action needed.",
+    }
+
+    with (
+        patch("notification_hub.operations.run_inbox", return_value=inbox_report),
+        patch("notification_hub.operations.run_status", return_value=status_report),
+    ):
+        report = run_coordination_snapshot(hours=2, limit=3)
+
+    assert report["status"] == "ok"
+    assert report["bridge_target_system"] == "codex"
+    assert report["bridge_snapshot"]["coordination"] == {
+        "generated_at": report["generated_at"],
+        "hours": 2,
+        "events_seen": 1,
+        "needs_attention": [],
+        "waiting_or_blocked": [],
+        "ready": inbox_report["ready"],
+            "completed": [],
+            "rollups": [],
+            "noise_candidates": [],
+    }
+    assert report["bridge_snapshot"]["runtime"] == status_report
+    assert report["bridge_save"]["status"] == "not_requested"
+
+
+def test_personal_ops_action_export_prepares_actions_from_rollups() -> None:
+    inbox_report: dict[str, object] = {
+        "status": "ok",
+        "hours": 2,
+        "events_seen": 2,
+        "needs_attention": [],
+        "waiting_or_blocked": [],
+        "ready": [],
+        "completed": [],
+        "rollups": [
+            {
+                "count": 2,
+                "source": "personal-ops",
+                "project": "mail",
+                "intent": "waiting_on_user",
+                "level": "urgent",
+                "title": "Approval Requested",
+                "body": "Console reply needed",
+                "latest_timestamp": "2026-05-09T00:00:00+00:00",
+                "latest_event_id": "abc123",
+            }
+        ],
+        "noise_candidates": [],
+        "error": None,
+    }
+
+    with patch("notification_hub.operations.run_inbox", return_value=inbox_report):
+        report = run_personal_ops_action_export(hours=2, limit=5)
+
+    assert report["status"] == "ok"
+    assert report["schema_version"] == "notification-hub.personal_ops_action_export.v1"
+    assert report["actions"][0]["priority"] == "high"
+    assert report["actions"][0]["state"] == "waiting"
+    assert report["actions"][0]["evidence_event_id"] == "abc123"
+    assert report["actions"][0]["suggested_next_action"] == (
+        "Review the waiting item and approve, reply, or dismiss it."
+    )
+    assert report["review_package"]["status"] == "not_requested"
+
+
+def test_personal_ops_action_export_can_save_review_package(tmp_path: Path) -> None:
+    inbox_report: dict[str, object] = {
+        "status": "ok",
+        "hours": 2,
+        "events_seen": 0,
+        "needs_attention": [],
+        "waiting_or_blocked": [],
+        "ready": [],
+        "completed": [],
+        "rollups": [],
+        "noise_candidates": [],
+        "error": None,
+    }
+    with patch("notification_hub.operations.run_inbox", return_value=inbox_report):
+        report = run_personal_ops_action_export(
+            hours=2,
+            limit=5,
+            save_review_package=True,
+            review_dir=tmp_path,
+        )
+
+    assert report["status"] == "ok"
+    assert report["review_package"]["status"] == "ok"
+    package_path = Path(str(report["review_package"]["path"]))
+    assert package_path.exists()
+    payload = json.loads(package_path.read_text(encoding="utf-8"))
+    assert payload["schema_version"] == "notification-hub.personal_ops_action_export.v1"
+
+
+def test_validate_action_package_accepts_saved_review_package(tmp_path: Path) -> None:
+    package_path = tmp_path / "actions.json"
+    package_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "notification-hub.personal_ops_action_export.v1",
+                "actions": [
+                    {
+                        "action_id": "notification-hub:personal-ops:mail:waiting_on_user:approval-requested",
+                        "source": "personal-ops",
+                        "project": "mail",
+                        "intent": "waiting_on_user",
+                        "priority": "high",
+                        "state": "waiting",
+                        "title": "Approval Requested",
+                        "summary": "2 repeated personal-ops events",
+                        "suggested_next_action": "Review the waiting item.",
+                        "evidence_event_id": "abc123",
+                        "evidence_timestamp": "2026-05-09T00:00:00+00:00",
+                        "count": 2,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    report = validate_action_package(package_path)
+
+    assert report["status"] == "ok"
+    assert report["action_count"] == 1
+    assert report["valid_action_count"] == 1
+    assert report["error_count"] == 0
+
+
+def test_validate_action_package_rejects_invalid_action(tmp_path: Path) -> None:
+    package_path = tmp_path / "actions.json"
+    package_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "notification-hub.personal_ops_action_export.v1",
+                "actions": [{"action_id": "bad", "priority": "maybe"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    report = validate_action_package(package_path)
+
+    assert report["status"] == "degraded"
+    assert report["action_count"] == 1
+    assert report["valid_action_count"] == 0
+    assert report["error_count"] > 0
+
+
+def test_personal_ops_import_stub_validates_without_applying(tmp_path: Path) -> None:
+    package_path = tmp_path / "actions.json"
+    package_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "notification-hub.personal_ops_action_export.v1",
+                "actions": [
+                    {
+                        "action_id": "notification-hub:personal-ops:mail:waiting_on_user:approval-requested",
+                        "source": "personal-ops",
+                        "project": "mail",
+                        "intent": "waiting_on_user",
+                        "priority": "high",
+                        "state": "waiting",
+                        "title": "Approval Requested",
+                        "summary": "2 repeated personal-ops events",
+                        "suggested_next_action": "Review the waiting item.",
+                        "evidence_event_id": "abc123",
+                        "evidence_timestamp": "2026-05-09T00:00:00+00:00",
+                        "count": 2,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    report = run_personal_ops_import_stub(path=package_path)
+
+    assert report["status"] == "ok"
+    assert report["applied"] is False
+    assert report["validation"]["valid_action_count"] == 1
+
+
+def test_personal_ops_import_stub_rejects_invalid_package(tmp_path: Path) -> None:
+    package_path = tmp_path / "actions.json"
+    package_path.write_text(json.dumps({"actions": [{"action_id": "bad"}]}), encoding="utf-8")
+
+    report = run_personal_ops_import_stub(path=package_path)
+
+    assert report["status"] == "degraded"
+    assert report["applied"] is False
+    assert report["error"] == "package validation failed"
+
+
+def test_coordination_snapshot_can_save_to_bridge_db(tmp_path: Path) -> None:
+    db_path = tmp_path / "bridge.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.executescript(
+            """
+            CREATE TABLE system_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                system TEXT NOT NULL,
+                snapshot_date TEXT NOT NULL,
+                data TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+            );
+            CREATE VIRTUAL TABLE content_index USING fts5(
+                source_type UNINDEXED,
+                source_id UNINDEXED,
+                text
+            );
+            """
+        )
+
+    inbox_report: dict[str, object] = {
+        "status": "ok",
+        "hours": 2,
+        "events_seen": 0,
+        "needs_attention": [],
+        "waiting_or_blocked": [],
+        "ready": [],
+        "completed": [],
+        "rollups": [],
+        "noise_candidates": [],
+        "error": None,
+    }
+    status_report = {
+        "status": "ok",
+        "health_url": "http://127.0.0.1:9199/health/details",
+        "daemon_reachable": True,
+        "watcher_active": True,
+        "events_processed": 10,
+        "uptime_seconds": 123.4,
+        "policy_config_found": True,
+        "policy_warning_count": 0,
+        "retention_enabled": True,
+        "retention_last_status": "ok",
+        "runtime_wiring_current": True,
+        "push_notifier_available": True,
+        "slack_configured": True,
+        "slack_delivery_failures": 0,
+        "next_action": "No action needed.",
+    }
+
+    with (
+        patch("notification_hub.operations.run_inbox", return_value=inbox_report),
+        patch("notification_hub.operations.run_status", return_value=status_report),
+    ):
+        report = run_coordination_snapshot(
+            hours=2,
+            limit=3,
+            save_bridge_db=True,
+            bridge_db_path=db_path,
+        )
+
+    assert report["status"] == "ok"
+    assert report["bridge_save"]["status"] == "ok"
+    assert report["bridge_save"]["snapshot_id"] == 1
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute("SELECT system, snapshot_date, data FROM system_snapshots").fetchone()
+    assert row is not None
+    assert row[0] == "codex"
+    assert row[1] == report["bridge_snapshot_date"]
+    assert json.loads(row[2])["runtime"]["status"] == "ok"
 
 
 def test_logs_report_tails_events_and_daemon_logs(

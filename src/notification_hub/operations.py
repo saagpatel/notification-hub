@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
+import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TypedDict, cast
@@ -82,6 +84,18 @@ class InboxItemReport(TypedDict):
     body: str
 
 
+class InboxRollupReport(TypedDict):
+    count: int
+    source: str
+    project: str | None
+    intent: str
+    level: str
+    title: str
+    body: str
+    latest_timestamp: str
+    latest_event_id: str
+
+
 class InboxReport(TypedDict):
     status: str
     hours: int
@@ -90,7 +104,79 @@ class InboxReport(TypedDict):
     waiting_or_blocked: list[InboxItemReport]
     ready: list[InboxItemReport]
     completed: list[InboxItemReport]
+    rollups: list[InboxRollupReport]
     noise_candidates: list[RepeatedSignatureReport]
+    error: str | None
+
+
+class PersonalOpsActionReport(TypedDict):
+    action_id: str
+    source: str
+    project: str | None
+    intent: str
+    priority: str
+    state: str
+    title: str
+    summary: str
+    suggested_next_action: str
+    evidence_event_id: str
+    evidence_timestamp: str
+    count: int
+
+
+class PersonalOpsActionExportReport(TypedDict):
+    status: str
+    schema_version: str
+    generated_at: str
+    hours: int
+    actions: list[PersonalOpsActionReport]
+    review_package: dict[str, object]
+    inbox: InboxReport
+    error: str | None
+
+
+class ActionPackageValidationReport(TypedDict):
+    status: str
+    path: str
+    schema_version: str | None
+    action_count: int
+    valid_action_count: int
+    warning_count: int
+    error_count: int
+    warnings: list[str]
+    errors: list[str]
+
+
+class PersonalOpsImportReport(TypedDict):
+    status: str
+    path: str
+    dry_run: bool
+    applied: bool
+    validation: ActionPackageValidationReport
+    next_action: str
+    error: str | None
+
+
+class BridgeSaveReport(TypedDict):
+    attempted: bool
+    status: str
+    db_path: str | None
+    snapshot_id: int | None
+    snapshot_date: str | None
+    error: str | None
+
+
+class CoordinationSnapshotReport(TypedDict):
+    status: str
+    schema_version: str
+    generated_at: str
+    bridge_target_system: str
+    bridge_snapshot_date: str
+    bridge_snapshot: dict[str, object]
+    bridge_save: BridgeSaveReport
+    inbox: InboxReport
+    runtime_status: StatusReport
+    follow_up: list[str]
     error: str | None
 
 
@@ -208,6 +294,12 @@ class StatusReport(TypedDict):
     next_action: str
 
 
+DEFAULT_BRIDGE_DB_PATH = Path.home() / ".local" / "share" / "bridge-db" / "bridge.db"
+BRIDGE_SNAPSHOT_RETENTION_PER_SYSTEM = 10
+ACTION_EXPORT_DIR = EVENTS_DIR / "action-exports"
+ACTION_EXPORT_SCHEMA_VERSION = "notification-hub.personal_ops_action_export.v1"
+
+
 def _as_dict(value: object) -> dict[str, object]:
     if isinstance(value, dict):
         return cast(dict[str, object], value)
@@ -236,6 +328,75 @@ def _as_str(value: object) -> str | None:
     if isinstance(value, str):
         return value
     return None
+
+
+def _save_bridge_snapshot(
+    snapshot: dict[str, object],
+    *,
+    snapshot_date: str,
+    db_path: Path | None = None,
+) -> BridgeSaveReport:
+    target_path = db_path or Path(os.environ.get("BRIDGE_DB_PATH", str(DEFAULT_BRIDGE_DB_PATH)))
+    snapshot_json = json.dumps(snapshot)
+    try:
+        target_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        with sqlite3.connect(target_path) as conn:
+            conn.execute("PRAGMA busy_timeout=5000")
+            conn.execute("PRAGMA foreign_keys=ON")
+            cursor = conn.execute(
+                """
+                INSERT INTO system_snapshots (system, snapshot_date, data)
+                VALUES (?, ?, ?)
+                """,
+                ("codex", snapshot_date, snapshot_json),
+            )
+            snapshot_id = cursor.lastrowid
+            if snapshot_id is not None:
+                conn.execute(
+                    "DELETE FROM content_index WHERE source_type = ? AND source_id = ?",
+                    ("snapshot", str(snapshot_id)),
+                )
+                conn.execute(
+                    "INSERT INTO content_index (source_type, source_id, text) VALUES (?, ?, ?)",
+                    ("snapshot", str(snapshot_id), snapshot_json),
+                )
+            conn.execute(
+                """
+                DELETE FROM system_snapshots
+                WHERE system = ? AND id NOT IN (
+                    SELECT id FROM system_snapshots WHERE system = ?
+                    ORDER BY created_at DESC LIMIT ?
+                )
+                """,
+                ("codex", "codex", BRIDGE_SNAPSHOT_RETENTION_PER_SYSTEM),
+            )
+            conn.execute(
+                """
+                DELETE FROM content_index
+                WHERE source_type = 'snapshot'
+                AND NOT EXISTS (
+                    SELECT 1 FROM system_snapshots
+                    WHERE CAST(system_snapshots.id AS TEXT) = content_index.source_id
+                )
+                """
+            )
+        return {
+            "attempted": True,
+            "status": "ok",
+            "db_path": str(target_path),
+            "snapshot_id": snapshot_id,
+            "snapshot_date": snapshot_date,
+            "error": None,
+        }
+    except sqlite3.Error as exc:
+        return {
+            "attempted": True,
+            "status": "degraded",
+            "db_path": str(target_path),
+            "snapshot_id": None,
+            "snapshot_date": snapshot_date,
+            "error": str(exc),
+        }
 
 
 def _tail_text_file(path: Path, *, lines: int) -> list[str]:
@@ -323,6 +484,157 @@ def _inbox_item(event: StoredEvent) -> InboxItemReport:
         "title": event.title,
         "body": event.body,
     }
+
+
+def _build_inbox_rollups(events: list[StoredEvent]) -> list[InboxRollupReport]:
+    grouped: dict[tuple[str, str | None, str, str, str, str], list[StoredEvent]] = {}
+    for event in events:
+        intent = infer_intent(event)
+        key = (event.source, event.project, intent, event.level, event.title, event.body)
+        grouped.setdefault(key, []).append(event)
+
+    rollups: list[InboxRollupReport] = []
+    for (source, project, intent, level, title, body), items in grouped.items():
+        if len(items) < 2:
+            continue
+        latest = max(items, key=lambda item: item.timestamp)
+        rollups.append(
+            {
+                "count": len(items),
+                "source": source,
+                "project": project,
+                "intent": intent,
+                "level": level,
+                "title": title,
+                "body": body,
+                "latest_timestamp": latest.timestamp.isoformat(),
+                "latest_event_id": latest.event_id,
+            }
+        )
+
+    return sorted(
+        rollups,
+        key=lambda item: (item["count"], item["latest_timestamp"]),
+        reverse=True,
+    )
+
+
+def _action_priority(intent: str, level: str) -> str:
+    if intent in {"needs_attention", "blocked", "automation_failed"} or level == "urgent":
+        return "high"
+    if intent in {"waiting_on_user", "ready_to_review", "ready_to_merge"}:
+        return "medium"
+    return "low"
+
+
+def _action_state(intent: str) -> str:
+    if intent in {"blocked", "waiting_on_user"}:
+        return "waiting"
+    if intent in {"ready_to_review", "ready_to_merge"}:
+        return "ready"
+    if intent == "completed":
+        return "done"
+    return "open"
+
+
+def _suggested_action(intent: str, title: str) -> str:
+    if intent == "blocked":
+        return "Review blocker and decide the next unblock step."
+    if intent == "waiting_on_user":
+        return "Review the waiting item and approve, reply, or dismiss it."
+    if intent in {"ready_to_review", "ready_to_merge"}:
+        return "Review the ready work and decide whether to land it."
+    if intent == "automation_failed":
+        return "Inspect the failed automation and rerun or repair it."
+    if intent == "needs_attention":
+        return "Review the attention item and choose the next operator action."
+    if intent == "completed":
+        return "Archive or use as recent completion context."
+    return f"Review repeated signal: {title}."
+
+
+def _action_from_rollup(rollup: InboxRollupReport) -> PersonalOpsActionReport:
+    project_part = rollup["project"] or "general"
+    normalized_title = re.sub(r"[^a-z0-9]+", "-", rollup["title"].lower()).strip("-") or "signal"
+    action_id = f"notification-hub:{rollup['source']}:{project_part}:{rollup['intent']}:{normalized_title}"
+    return {
+        "action_id": action_id,
+        "source": rollup["source"],
+        "project": rollup["project"],
+        "intent": rollup["intent"],
+        "priority": _action_priority(rollup["intent"], rollup["level"]),
+        "state": _action_state(rollup["intent"]),
+        "title": rollup["title"],
+        "summary": f"{rollup['count']} repeated {rollup['source']} events: {rollup['body']}",
+        "suggested_next_action": _suggested_action(rollup["intent"], rollup["title"]),
+        "evidence_event_id": rollup["latest_event_id"],
+        "evidence_timestamp": rollup["latest_timestamp"],
+        "count": rollup["count"],
+    }
+
+
+def _write_action_review_package(
+    report: dict[str, object],
+    *,
+    output_dir: Path | None = None,
+) -> dict[str, object]:
+    target_dir = output_dir or ACTION_EXPORT_DIR
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    target_path = target_dir / f"personal-ops-actions-{timestamp}.json"
+    try:
+        target_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        target_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        os.chmod(target_path, 0o600)
+    except OSError as exc:
+        return {
+            "requested": True,
+            "status": "degraded",
+            "path": str(target_path),
+            "error": str(exc),
+        }
+    return {
+        "requested": True,
+        "status": "ok",
+        "path": str(target_path),
+        "error": None,
+    }
+
+
+def _require_str(value: object, field: str, errors: list[str]) -> str | None:
+    if isinstance(value, str) and value:
+        return value
+    errors.append(f"missing or invalid string field: {field}")
+    return None
+
+
+def _validate_action_record(action: object, *, index: int) -> list[str]:
+    errors: list[str] = []
+    if not isinstance(action, dict):
+        return [f"action {index} is not an object"]
+    record = cast(dict[str, object], action)
+    for field in (
+        "action_id",
+        "source",
+        "intent",
+        "priority",
+        "state",
+        "title",
+        "summary",
+        "suggested_next_action",
+        "evidence_event_id",
+        "evidence_timestamp",
+    ):
+        _require_str(record.get(field), f"actions[{index}].{field}", errors)
+    priority = record.get("priority")
+    if isinstance(priority, str) and priority not in {"high", "medium", "low"}:
+        errors.append(f"actions[{index}].priority must be high, medium, or low")
+    state = record.get("state")
+    if isinstance(state, str) and state not in {"open", "waiting", "ready", "done"}:
+        errors.append(f"actions[{index}].state must be open, waiting, ready, or done")
+    count = record.get("count")
+    if not isinstance(count, int) or count < 1:
+        errors.append(f"actions[{index}].count must be a positive integer")
+    return errors
 
 
 def _intent_bucket(intent: Intent) -> str:
@@ -601,6 +913,7 @@ def run_inbox(*, hours: int = 24, limit: int = 10) -> InboxReport:
             "waiting_or_blocked": [],
             "ready": [],
             "completed": [],
+            "rollups": [],
             "noise_candidates": [],
             "error": str(exc),
         }
@@ -625,7 +938,240 @@ def run_inbox(*, hours: int = 24, limit: int = 10) -> InboxReport:
         "waiting_or_blocked": buckets["waiting_or_blocked"][:item_limit],
         "ready": buckets["ready"][:item_limit],
         "completed": buckets["completed"][:item_limit],
+        "rollups": _build_inbox_rollups(stored_events)[:item_limit],
         "noise_candidates": burn_in["noise_candidates"][:item_limit],
+        "error": None,
+    }
+
+
+def run_coordination_snapshot(
+    *,
+    hours: int = 24,
+    limit: int = 10,
+    save_bridge_db: bool = False,
+    bridge_db_path: Path | None = None,
+) -> CoordinationSnapshotReport:
+    """Build a bridge-ready coordination snapshot, optionally saving it to bridge-db."""
+    generated_at = datetime.now(timezone.utc)
+    inbox = run_inbox(hours=hours, limit=limit)
+    runtime_status = run_status()
+    follow_up: list[str] = []
+
+    if runtime_status["status"] != "ok":
+        follow_up.append(runtime_status["next_action"])
+    if inbox["noise_candidates"]:
+        follow_up.append("Review top inbox noise candidates before adding more delivery surfaces.")
+    if inbox["waiting_or_blocked"]:
+        follow_up.append("Route waiting or blocked items into the action layer once bridge export is proven.")
+    if not follow_up:
+        follow_up.append("No immediate operator action needed.")
+
+    bridge_snapshot: dict[str, object] = {
+        "active_projects": {
+            "notification-hub": {
+                "state": runtime_status["status"],
+                "summary": "Local notification daemon with coordination inbox export.",
+                "next_action": runtime_status["next_action"],
+            }
+        },
+        "coordination": {
+            "generated_at": generated_at.isoformat(),
+            "hours": inbox["hours"],
+            "events_seen": inbox["events_seen"],
+            "needs_attention": inbox["needs_attention"],
+            "waiting_or_blocked": inbox["waiting_or_blocked"],
+            "ready": inbox["ready"],
+            "completed": inbox["completed"],
+            "rollups": inbox["rollups"],
+            "noise_candidates": inbox["noise_candidates"],
+        },
+        "runtime": runtime_status,
+        "follow_up": follow_up,
+    }
+
+    snapshot_date = generated_at.date().isoformat()
+    bridge_save: BridgeSaveReport = {
+        "attempted": False,
+        "status": "not_requested",
+        "db_path": str(bridge_db_path) if bridge_db_path is not None else None,
+        "snapshot_id": None,
+        "snapshot_date": None,
+        "error": None,
+    }
+    if save_bridge_db:
+        bridge_save = _save_bridge_snapshot(
+            bridge_snapshot,
+            snapshot_date=snapshot_date,
+            db_path=bridge_db_path,
+        )
+
+    status = (
+        "ok"
+        if inbox["status"] == "ok"
+        and runtime_status["status"] == "ok"
+        and bridge_save["status"] != "degraded"
+        else "degraded"
+    )
+    error = inbox["error"] if inbox["error"] is not None else None
+    if error is None and bridge_save["error"] is not None:
+        error = bridge_save["error"]
+
+    return {
+        "status": status,
+        "schema_version": "notification-hub.coordination_snapshot.v1",
+        "generated_at": generated_at.isoformat(),
+        "bridge_target_system": "codex",
+        "bridge_snapshot_date": snapshot_date,
+        "bridge_snapshot": bridge_snapshot,
+        "bridge_save": bridge_save,
+        "inbox": inbox,
+        "runtime_status": runtime_status,
+        "follow_up": follow_up,
+        "error": error,
+    }
+
+
+def run_personal_ops_action_export(
+    *,
+    hours: int = 24,
+    limit: int = 10,
+    save_review_package: bool = False,
+    review_dir: Path | None = None,
+) -> PersonalOpsActionExportReport:
+    """Prepare personal-ops action proposals without mutating personal-ops."""
+    window_hours = max(hours, 1)
+    item_limit = max(limit, 1)
+    generated_at = datetime.now(timezone.utc).isoformat()
+    inbox = run_inbox(hours=window_hours, limit=item_limit)
+    actions = [
+        _action_from_rollup(rollup)
+        for rollup in inbox["rollups"]
+        if rollup["intent"] in {"needs_attention", "blocked", "waiting_on_user", "ready_to_review", "ready_to_merge", "automation_failed"}
+    ][:item_limit]
+
+    report: PersonalOpsActionExportReport = {
+        "status": inbox["status"],
+        "schema_version": ACTION_EXPORT_SCHEMA_VERSION,
+        "generated_at": generated_at,
+        "hours": window_hours,
+        "actions": actions,
+        "review_package": {
+            "requested": False,
+            "status": "not_requested",
+            "path": str(review_dir) if review_dir is not None else None,
+            "error": None,
+        },
+        "inbox": inbox,
+        "error": inbox["error"],
+    }
+    if save_review_package:
+        review_payload = dict(report)
+        review_payload["review_package"] = {
+            "requested": True,
+            "status": "pending_write",
+            "path": str(review_dir) if review_dir is not None else None,
+            "error": None,
+        }
+        review_package = _write_action_review_package(review_payload, output_dir=review_dir)
+        report["review_package"] = review_package
+        if review_package["status"] == "degraded":
+            report["status"] = "degraded"
+            report["error"] = str(review_package["error"])
+    return report
+
+
+def validate_action_package(path: Path) -> ActionPackageValidationReport:
+    """Validate a saved personal-ops action package without importing it."""
+    errors: list[str] = []
+    warnings: list[str] = []
+    schema_version: str | None = None
+    action_count = 0
+    valid_action_count = 0
+
+    try:
+        payload = json.loads(path.expanduser().read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return {
+            "status": "degraded",
+            "path": str(path),
+            "schema_version": None,
+            "action_count": 0,
+            "valid_action_count": 0,
+            "warning_count": 0,
+            "error_count": 1,
+            "warnings": [],
+            "errors": [str(exc)],
+        }
+
+    if not isinstance(payload, dict):
+        errors.append("package root must be an object")
+        actions: list[object] = []
+    else:
+        package = cast(dict[str, object], payload)
+        raw_schema = package.get("schema_version")
+        schema_version = raw_schema if isinstance(raw_schema, str) else None
+        if schema_version != ACTION_EXPORT_SCHEMA_VERSION:
+            errors.append(f"schema_version must be {ACTION_EXPORT_SCHEMA_VERSION}")
+        actions_value = package.get("actions")
+        actions = cast(list[object], actions_value) if isinstance(actions_value, list) else []
+        if not isinstance(actions_value, list):
+            errors.append("actions must be a list")
+        if not actions:
+            warnings.append("package contains no action proposals")
+
+    seen_action_ids: set[str] = set()
+    action_count = len(actions)
+    for index, action in enumerate(actions):
+        action_errors = _validate_action_record(action, index=index)
+        if isinstance(action, dict):
+            action_record = cast(dict[str, object], action)
+            action_id = action_record.get("action_id")
+            if isinstance(action_id, str):
+                if action_id in seen_action_ids:
+                    action_errors.append(f"duplicate action_id: {action_id}")
+                seen_action_ids.add(action_id)
+        if action_errors:
+            errors.extend(action_errors)
+        else:
+            valid_action_count += 1
+
+    status = "degraded" if errors else "ok"
+    return {
+        "status": status,
+        "path": str(path),
+        "schema_version": schema_version,
+        "action_count": action_count,
+        "valid_action_count": valid_action_count,
+        "warning_count": len(warnings),
+        "error_count": len(errors),
+        "warnings": warnings,
+        "errors": errors,
+    }
+
+
+def run_personal_ops_import_stub(*, path: Path, dry_run: bool = True) -> PersonalOpsImportReport:
+    """Validate an action package and refuse mutation until apply semantics exist."""
+    validation = validate_action_package(path)
+    if validation["status"] != "ok":
+        return {
+            "status": "degraded",
+            "path": str(path),
+            "dry_run": dry_run,
+            "applied": False,
+            "validation": validation,
+            "next_action": "Fix the validation errors before importing this package.",
+            "error": "package validation failed",
+        }
+
+    return {
+        "status": "ok",
+        "path": str(path),
+        "dry_run": dry_run,
+        "applied": False,
+        "validation": validation,
+        "next_action": (
+            "Package is valid. Build an explicit personal-ops apply integration before mutation."
+        ),
         "error": None,
     }
 

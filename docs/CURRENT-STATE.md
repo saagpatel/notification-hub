@@ -20,7 +20,16 @@ tuning pass.
 - Runtime wiring now has repo-owned LaunchAgent and hook templates under `ops/`.
 - A compact local status command is available for the day-to-day runtime view.
 - A compact local inbox command is available for recent coordination intent: attention,
-  waiting/blocked, ready, completed, and noisy producers.
+  waiting/blocked, ready, completed, repeated rollups, and noisy producers.
+- A bridge-ready coordination snapshot command now combines inbox state and runtime status into
+  JSON that can be reviewed or explicitly saved into bridge-db as Codex snapshot data.
+- A proposal-only personal-ops action export turns inbox rollups into reviewable action records
+  without writing to personal-ops.
+- Action exports can now be staged as local review packages under notification-hub runtime state,
+  still without importing or applying them.
+- Saved action review packages can be validated before any future personal-ops import/apply step.
+- A personal-ops import stub now validates packages and refuses mutation, preserving the operator
+  gate for any future apply behavior.
 - A local logs command is available for recent event and daemon log inspection, including accepted
   versus rejected `/events` counts from the visible daemon tail.
 - A local burn-in command is available for recent accepted/rejected event counts and repeated
@@ -96,6 +105,21 @@ tuning pass.
 - Added optional event `intent` and deterministic intent inference so the hub can group recent
   work by coordination state instead of only by notification level.
 - Added `notification-hub inbox` as the first operator-facing coordination view.
+- Added `notification-hub coordination-snapshot` as the first bridge-ready export surface for
+  durable coordination memory.
+- Added explicit `coordination-snapshot --save-bridge-db` support so bridge-db writes are possible
+  but never happen during default read-only checks.
+- Added inbox rollups so repeated approval, draft, and completion patterns are grouped into compact
+  operator signals.
+- Added `notification-hub personal-ops-actions` as the first personal-ops handoff surface. It emits
+  action proposals with priority, state, suggested next action, and evidence IDs, but does not mutate
+  personal-ops.
+- Added `personal-ops-actions --save-review-package` so action proposals can be saved for an
+  operator-mediated import step.
+- Added `validate-action-package` so saved review packages can be checked for schema, required
+  fields, duplicate action IDs, and priority/state validity.
+- Added `personal-ops-import` as a non-mutating apply boundary: it validates a package and reports
+  `applied: false` until an explicit personal-ops integration exists.
 
 ## Verified Baseline
 
@@ -110,6 +134,12 @@ curl http://127.0.0.1:9199/health/details
 uv run --frozen notification-hub-doctor
 uv run --frozen notification-hub status
 uv run --frozen notification-hub inbox
+uv run --frozen notification-hub coordination-snapshot
+uv run --frozen notification-hub coordination-snapshot --save-bridge-db
+uv run --frozen notification-hub personal-ops-actions
+uv run --frozen notification-hub personal-ops-actions --save-review-package
+uv run --frozen notification-hub validate-action-package path/to/actions.json
+uv run --frozen notification-hub personal-ops-import path/to/actions.json
 uv run --frozen notification-hub logs
 uv run --frozen notification-hub burn-in --minutes 10
 uv run --frozen notification-hub verify-runtime
@@ -122,14 +152,23 @@ uv run --frozen notification-hub retention --max-events 2000
 
 Expected current outcome:
 
-- `pytest`: 221 passed
+- `pytest`: 237 passed
 - `ruff`: clean
 - `pyright`: 0 errors
 - `/health/details`: `status: ok`, watcher active, push available, Slack configured
 - `notification-hub-doctor`: `status: ok`
 - `notification-hub status`: compact read-only runtime summary; degrades when recent Slack delivery
   failures are present
-- `notification-hub inbox`: compact recent coordination view grouped by intent
+- `notification-hub inbox`: compact recent coordination view grouped by intent, with repeated
+  event rollups
+- `notification-hub coordination-snapshot`: bridge-ready JSON combining inbox state, runtime
+  status, and follow-up guidance; writes to bridge-db only with `--save-bridge-db`
+- `notification-hub personal-ops-actions`: proposal-only action export derived from repeated inbox
+  rollups
+- `notification-hub personal-ops-actions --save-review-package`: writes a local JSON review package
+  without mutating personal-ops
+- `notification-hub validate-action-package`: validates a saved review package without importing it
+- `notification-hub personal-ops-import`: validates a package and stops before mutation
 - `notification-hub logs`: `status: ok` with recent event and daemon log tails, including Slack
   delivery failure counts
 - `notification-hub burn-in`: top-level command status plus nested health counters, repeated-event
@@ -191,8 +230,9 @@ It is not part of normal day-to-day work.
 
 Start future work from `main`, keep using the frozen verification commands, and treat the repo-owned
 runtime templates as the source of truth for live launcher and hook wiring.
-The next work here should decide which external coordination layer gets the first bridge: `bridge-db`
-for durable state, `personal-ops` for operator action, or a small local UI for scanning the inbox.
+The next work here should review the validated package shape with live personal-ops expectations,
+then decide whether the first real apply target should be a personal-ops inbox item or a small local
+UI for scanning and approving actions.
 
 ## Optional Follow-Up
 
