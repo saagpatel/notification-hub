@@ -20,9 +20,11 @@ from notification_hub.models import Event, EventResponse
 from notification_hub.operations import (
     delete_action_review_package,
     list_action_review_packages,
+    list_personal_ops_import_queue,
     load_action_review_package_detail,
     run_inbox,
     run_personal_ops_action_export,
+    run_personal_ops_import_stub,
     run_retention,
     validate_action_package,
 )
@@ -326,6 +328,10 @@ REVIEW_HTML = """<!doctype html>
         <h2>Package Detail</h2>
         <ul id="packageDetail"></ul>
       </section>
+      <section>
+        <h2>Import Queue</h2>
+        <ul id="importQueue"></ul>
+      </section>
     </div>
   </main>
   <script>
@@ -337,6 +343,7 @@ REVIEW_HTML = """<!doctype html>
     const packageState = document.getElementById("package");
     const packages = document.getElementById("packages");
     const packageDetail = document.getElementById("packageDetail");
+    const importQueue = document.getElementById("importQueue");
 
     function item(html) {
       const li = document.createElement("li");
@@ -392,6 +399,7 @@ REVIEW_HTML = """<!doctype html>
       );
       renderPackage(data.review_package);
       await loadPackages();
+      await loadImportQueue();
     }
     function renderPackage(state) {
       packageState.replaceChildren(
@@ -414,6 +422,7 @@ REVIEW_HTML = """<!doctype html>
         <div class="next">${esc(p.path)}</div>
         <div class="button-row">
           <button type="button" data-package="${esc(p.name)}">Inspect</button>
+          <button type="button" data-queue-package="${esc(p.name)}">Queue</button>
           <button type="button" data-delete-package="${esc(p.name)}">Delete</button>
         </div>
       `), "No saved review packages.");
@@ -422,6 +431,9 @@ REVIEW_HTML = """<!doctype html>
       });
       packages.querySelectorAll("button[data-delete-package]").forEach(button => {
         button.addEventListener("click", () => deletePackage(button.dataset.deletePackage));
+      });
+      packages.querySelectorAll("button[data-queue-package]").forEach(button => {
+        button.addEventListener("click", () => queuePackage(button.dataset.queuePackage));
       });
       if (data.packages && data.packages.length > 0) {
         await loadPackageDetail(data.packages[0].name);
@@ -466,6 +478,28 @@ REVIEW_HTML = """<!doctype html>
         return;
       }
       await loadPackages();
+    }
+    async function queuePackage(name) {
+      if (!name) {
+        return;
+      }
+      const res = await fetch(`/review/package/${encodeURIComponent(name)}/queue`, { method: "POST" });
+      const data = await res.json();
+      packageDetail.replaceChildren(
+        item(`<div class="line"><span class="title">${esc(name)}</span><span class="meta">${esc(data.status)}</span></div>`),
+        item(`<div class="next">Queued: ${esc(data.queued_count)} / skipped: ${esc(data.skipped_count)}</div>`),
+        item(`<div class="next">${esc(data.next_action || data.error)}</div>`)
+      );
+      await loadImportQueue();
+    }
+    async function loadImportQueue() {
+      const res = await fetch("/review/import-queue?limit=6");
+      const data = await res.json();
+      renderList(importQueue, data.items, q => item(`
+        <div class="line"><span class="title">${esc(q.title)}</span><span class="meta">${esc(q.priority)}/${esc(q.state)}</span></div>
+        <div class="next">${esc(q.status)} / ${esc(q.source_package_name)}</div>
+        <div class="next">Evidence: ${esc(q.evidence_event_id)}</div>
+      `), "No queued import handoff items.");
     }
     document.getElementById("refresh").addEventListener("click", load);
     document.getElementById("savePackage").addEventListener("click", () => post("/review/save-package"));
@@ -635,6 +669,24 @@ async def review_packages(limit: int = 10) -> dict[str, object]:
 async def review_package_detail(name: str) -> dict[str, object]:
     """Inspect one saved review package without importing or applying it."""
     return dict(load_action_review_package_detail(name=name))
+
+
+@app.post("/review/package/{name}/queue")
+async def review_queue_package(name: str) -> dict[str, object]:
+    """Queue one saved review package for operator-mediated personal-ops import."""
+    detail = load_action_review_package_detail(name=name)
+    report = run_personal_ops_import_stub(path=Path(detail["path"]), enqueue=True)
+    return dict(report)
+
+
+@app.get("/review/import-queue")
+async def review_import_queue(limit: int = 10) -> dict[str, object]:
+    """List queued personal-ops handoff items without applying them."""
+    return {
+        "status": "ok",
+        "items": list_personal_ops_import_queue(limit=max(limit, 1)),
+        "applied": False,
+    }
 
 
 @app.delete("/review/package/{name}")

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
 import shutil
@@ -185,9 +186,26 @@ class PersonalOpsImportReport(TypedDict):
     path: str
     dry_run: bool
     applied: bool
+    enqueued: bool
+    queued_count: int
+    skipped_count: int
+    queue_path: str | None
     validation: ActionPackageValidationReport
     next_action: str
     error: str | None
+
+
+class PersonalOpsImportQueueItemReport(TypedDict):
+    queue_id: str
+    status: str
+    enqueued_at: str
+    source_package_name: str
+    action_id: str
+    title: str
+    priority: str
+    state: str
+    evidence_event_id: str
+    applied: bool
 
 
 class BridgeSaveReport(TypedDict):
@@ -330,7 +348,9 @@ class StatusReport(TypedDict):
 DEFAULT_BRIDGE_DB_PATH = Path.home() / ".local" / "share" / "bridge-db" / "bridge.db"
 BRIDGE_SNAPSHOT_RETENTION_PER_SYSTEM = 10
 ACTION_EXPORT_DIR = EVENTS_DIR / "action-exports"
+PERSONAL_OPS_IMPORT_QUEUE = EVENTS_DIR / "personal-ops-import-queue.jsonl"
 ACTION_EXPORT_SCHEMA_VERSION = "notification-hub.personal_ops_action_export.v1"
+PERSONAL_OPS_IMPORT_QUEUE_SCHEMA_VERSION = "notification-hub.personal_ops_import_queue.v1"
 
 
 def _as_dict(value: object) -> dict[str, object]:
@@ -749,12 +769,7 @@ def load_action_review_package_detail(
         }
 
     package = cast(dict[str, object], payload)
-    actions_value = package.get("actions")
-    actions: list[dict[str, object]] = []
-    if isinstance(actions_value, list):
-        for action_value in cast(list[object], actions_value):
-            if isinstance(action_value, dict):
-                actions.append(cast(dict[str, object], action_value))
+    actions = _action_dicts_from_payload(package)
     return {
         "status": validation["status"],
         "path": str(target_path),
@@ -814,6 +829,122 @@ def delete_action_review_package(
         "applied": False,
         "error": None,
     }
+
+
+def _load_action_package_payload(path: Path) -> dict[str, object] | None:
+    try:
+        payload = json.loads(path.expanduser().read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    return cast(dict[str, object], payload)
+
+
+def _action_dicts_from_payload(payload: dict[str, object]) -> list[dict[str, object]]:
+    actions_value = payload.get("actions")
+    actions: list[dict[str, object]] = []
+    if isinstance(actions_value, list):
+        for action_value in cast(list[object], actions_value):
+            if isinstance(action_value, dict):
+                actions.append(cast(dict[str, object], action_value))
+    return actions
+
+
+def _read_import_queue_items(queue_path: Path) -> list[dict[str, object]]:
+    if not queue_path.exists():
+        return []
+    items: list[dict[str, object]] = []
+    with open(queue_path, encoding="utf-8") as file:
+        for line in file:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            try:
+                item = json.loads(stripped)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(item, dict):
+                items.append(cast(dict[str, object], item))
+    return items
+
+
+def _enqueue_personal_ops_import_actions(
+    *,
+    package_path: Path,
+    queue_path: Path | None = None,
+) -> tuple[str, int, int]:
+    target_queue_path = queue_path or PERSONAL_OPS_IMPORT_QUEUE
+    payload = _load_action_package_payload(package_path)
+    actions = _action_dicts_from_payload(payload) if payload is not None else []
+    existing_items = _read_import_queue_items(target_queue_path)
+    existing_action_ids = {
+        action_id
+        for item in existing_items
+        if item.get("status") == "queued" and isinstance((action_id := item.get("action_id")), str)
+    }
+    enqueued_at = datetime.now(timezone.utc).isoformat()
+    queued_count = 0
+    skipped_count = 0
+    target_queue_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    fd = os.open(str(target_queue_path), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    try:
+        for action in actions:
+            action_id = action.get("action_id")
+            if not isinstance(action_id, str) or action_id in existing_action_ids:
+                skipped_count += 1
+                continue
+            queue_seed = f"{action_id}:{package_path.expanduser()}".encode("utf-8")
+            queue_item = {
+                "schema_version": PERSONAL_OPS_IMPORT_QUEUE_SCHEMA_VERSION,
+                "queue_id": hashlib.sha256(queue_seed).hexdigest()[:16],
+                "status": "queued",
+                "enqueued_at": enqueued_at,
+                "source_package_path": str(package_path),
+                "source_package_name": package_path.name,
+                "action_id": action_id,
+                "action": action,
+                "applied": False,
+            }
+            os.write(fd, (json.dumps(queue_item, sort_keys=True) + "\n").encode("utf-8"))
+            existing_action_ids.add(action_id)
+            queued_count += 1
+    finally:
+        os.close(fd)
+    return str(target_queue_path), queued_count, skipped_count
+
+
+def list_personal_ops_import_queue(
+    *,
+    queue_path: Path | None = None,
+    limit: int = 10,
+) -> list[PersonalOpsImportQueueItemReport]:
+    """List queued personal-ops handoff items without applying them."""
+    target_queue_path = queue_path or PERSONAL_OPS_IMPORT_QUEUE
+    try:
+        raw_items = _read_import_queue_items(target_queue_path)
+    except OSError:
+        return []
+    reports: list[PersonalOpsImportQueueItemReport] = []
+    for item in reversed(raw_items):
+        action = _as_dict(item.get("action"))
+        reports.append(
+            {
+                "queue_id": _as_str(item.get("queue_id")) or "",
+                "status": _as_str(item.get("status")) or "unknown",
+                "enqueued_at": _as_str(item.get("enqueued_at")) or "",
+                "source_package_name": _as_str(item.get("source_package_name")) or "",
+                "action_id": _as_str(item.get("action_id")) or "",
+                "title": _as_str(action.get("title")) or "",
+                "priority": _as_str(action.get("priority")) or "",
+                "state": _as_str(action.get("state")) or "",
+                "evidence_event_id": _as_str(action.get("evidence_event_id")) or "",
+                "applied": bool(item.get("applied")),
+            }
+        )
+        if len(reports) >= max(limit, 1):
+            break
+    return reports
 
 
 def _require_str(value: object, field: str, errors: list[str]) -> str | None:
@@ -1365,8 +1496,14 @@ def validate_action_package(path: Path) -> ActionPackageValidationReport:
     }
 
 
-def run_personal_ops_import_stub(*, path: Path, dry_run: bool = True) -> PersonalOpsImportReport:
-    """Validate an action package and refuse mutation until apply semantics exist."""
+def run_personal_ops_import_stub(
+    *,
+    path: Path,
+    dry_run: bool = True,
+    enqueue: bool = False,
+    queue_path: Path | None = None,
+) -> PersonalOpsImportReport:
+    """Validate an action package and optionally enqueue handoff items without applying them."""
     validation = validate_action_package(path)
     if validation["status"] != "ok":
         return {
@@ -1374,19 +1511,51 @@ def run_personal_ops_import_stub(*, path: Path, dry_run: bool = True) -> Persona
             "path": str(path),
             "dry_run": dry_run,
             "applied": False,
+            "enqueued": False,
+            "queued_count": 0,
+            "skipped_count": 0,
+            "queue_path": str(queue_path) if queue_path is not None else None,
             "validation": validation,
             "next_action": "Fix the validation errors before importing this package.",
             "error": "package validation failed",
         }
+
+    queue_result_path: str | None = None
+    queued_count = 0
+    skipped_count = 0
+    if enqueue:
+        try:
+            queue_result_path, queued_count, skipped_count = _enqueue_personal_ops_import_actions(
+                package_path=path,
+                queue_path=queue_path,
+            )
+        except OSError as exc:
+            return {
+                "status": "degraded",
+                "path": str(path),
+                "dry_run": dry_run,
+                "applied": False,
+                "enqueued": False,
+                "queued_count": 0,
+                "skipped_count": 0,
+                "queue_path": str(queue_path) if queue_path is not None else None,
+                "validation": validation,
+                "next_action": "Fix queue write errors before importing this package.",
+                "error": str(exc),
+            }
 
     return {
         "status": "ok",
         "path": str(path),
         "dry_run": dry_run,
         "applied": False,
+        "enqueued": enqueue,
+        "queued_count": queued_count,
+        "skipped_count": skipped_count,
+        "queue_path": queue_result_path,
         "validation": validation,
-        "next_action": (
-            "Package is valid. Build an explicit personal-ops apply integration before mutation."
+        "next_action": "Review the queued personal-ops handoff items." if enqueue else (
+            "Package is valid. Use --enqueue to add it to the personal-ops import queue."
         ),
         "error": None,
     }

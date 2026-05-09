@@ -383,6 +383,96 @@ async def test_review_delete_package_endpoint_removes_saved_package(client: Asyn
     mock_delete.assert_called_once_with(name="personal-ops-actions-20260509-100000.json")
 
 
+async def test_review_queue_package_endpoint_enqueues_without_applying(client: AsyncClient) -> None:
+    with patch(
+        "notification_hub.server.load_action_review_package_detail",
+        return_value={
+            "status": "ok",
+            "path": "/tmp/personal-ops-actions-20260509-100000.json",
+            "name": "personal-ops-actions-20260509-100000.json",
+            "schema_version": "notification-hub.personal_ops_action_export.v1",
+            "generated_at": "2026-05-09T10:00:00+00:00",
+            "hours": 2,
+            "actions": [],
+            "validation": {
+                "status": "ok",
+                "path": "/tmp/personal-ops-actions-20260509-100000.json",
+                "schema_version": "notification-hub.personal_ops_action_export.v1",
+                "action_count": 1,
+                "valid_action_count": 1,
+                "warning_count": 0,
+                "error_count": 0,
+                "warnings": [],
+                "errors": [],
+            },
+            "applied": False,
+            "error": None,
+        },
+    ), patch(
+        "notification_hub.server.run_personal_ops_import_stub",
+        return_value={
+            "status": "ok",
+            "path": "/tmp/personal-ops-actions-20260509-100000.json",
+            "dry_run": True,
+            "applied": False,
+            "enqueued": True,
+            "queued_count": 1,
+            "skipped_count": 0,
+            "queue_path": "/tmp/queue.jsonl",
+            "validation": {
+                "status": "ok",
+                "path": "/tmp/personal-ops-actions-20260509-100000.json",
+                "schema_version": "notification-hub.personal_ops_action_export.v1",
+                "action_count": 1,
+                "valid_action_count": 1,
+                "warning_count": 0,
+                "error_count": 0,
+                "warnings": [],
+                "errors": [],
+            },
+            "next_action": "Review the queued personal-ops handoff items.",
+            "error": None,
+        },
+    ) as mock_import:
+        resp = await client.post("/review/package/personal-ops-actions-20260509-100000.json/queue")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert data["applied"] is False
+    assert data["enqueued"] is True
+    assert data["queued_count"] == 1
+    mock_import.assert_called_once()
+
+
+async def test_review_import_queue_endpoint_lists_queue_items(client: AsyncClient) -> None:
+    with patch(
+        "notification_hub.server.list_personal_ops_import_queue",
+        return_value=[
+            {
+                "queue_id": "queue123",
+                "status": "queued",
+                "enqueued_at": "2026-05-09T10:00:00+00:00",
+                "source_package_name": "personal-ops-actions-20260509-100000.json",
+                "action_id": "action123",
+                "title": "Approval Requested",
+                "priority": "high",
+                "state": "waiting",
+                "evidence_event_id": "abc123",
+                "applied": False,
+            }
+        ],
+    ) as mock_queue:
+        resp = await client.get("/review/import-queue?limit=3")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert data["applied"] is False
+    assert data["items"][0]["status"] == "queued"
+    mock_queue.assert_called_once_with(limit=3)
+
+
 async def test_review_validate_package_uses_newest_saved_package(client: AsyncClient) -> None:
     server_mod.reset_review_package_state()
     with patch(

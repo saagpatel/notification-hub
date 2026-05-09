@@ -296,6 +296,15 @@ def _build_parser(prog: str = "notification-hub") -> argparse.ArgumentParser:
         help="Validate only. This is currently always true.",
     )
     personal_ops_import.add_argument(
+        "--enqueue",
+        action="store_true",
+        help="Add valid action proposals to the local personal-ops import queue without applying them.",
+    )
+    personal_ops_import.add_argument(
+        "--queue-path",
+        help="Optional JSONL queue path for enqueued import handoff items.",
+    )
+    personal_ops_import.add_argument(
         "--json",
         action="store_true",
         help="Emit the import report as JSON.",
@@ -525,6 +534,11 @@ def _print_personal_ops_import_report(report: PersonalOpsImportReport) -> None:
     print(f"- path: {report['path']}")
     print(f"- dry run: {report['dry_run']}")
     print(f"- applied: {report['applied']}")
+    print(f"- enqueued: {report['enqueued']}")
+    print(f"- queued actions: {report['queued_count']}")
+    print(f"- skipped actions: {report['skipped_count']}")
+    if report["queue_path"] is not None:
+        print(f"- queue path: {report['queue_path']}")
     print(f"- valid actions: {report['validation']['valid_action_count']}")
     print(f"- next action: {report['next_action']}")
     if report["error"] is not None:
@@ -794,7 +808,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0 if report["status"] == "ok" else 1
 
     if args.command == "personal-ops-import":
-        report = run_personal_ops_import_stub(path=Path(args.path), dry_run=args.dry_run)
+        report = run_personal_ops_import_stub(
+            path=Path(args.path),
+            dry_run=args.dry_run,
+            enqueue=args.enqueue,
+            queue_path=Path(args.queue_path).expanduser() if args.queue_path else None,
+        )
         if args.json:
             print(json.dumps(report, indent=2, sort_keys=True))
         else:

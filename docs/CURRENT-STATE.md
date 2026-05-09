@@ -30,11 +30,14 @@ tuning pass.
 - Saved action review packages can be validated before any future personal-ops import/apply step.
 - A personal-ops import stub now validates packages and refuses mutation, preserving the operator
   gate for any future apply behavior.
+- Valid review packages can now be explicitly queued into a local personal-ops import queue. Queue
+  items are durable handoff records under notification-hub runtime state, not personal-ops tasks or
+  applied changes.
 - A localhost-only review page is available at `/review` on the daemon. It shows runtime health,
   inbox rollups, action proposals, and trust state without applying anything.
 - The review page can stage a local review package, list recent saved review packages, inspect
-  package actions/evidence, delete saved review packages, and validate the latest staged or saved
-  package while keeping import/apply behavior disabled.
+  package actions/evidence, queue import handoff items, delete saved review packages, and validate
+  the latest staged or saved package while keeping apply behavior disabled.
 - A local logs command is available for recent event and daemon log inspection, including accepted
   versus rejected `/events` counts from the visible daemon tail.
 - A local burn-in command is available for recent accepted/rejected event counts and repeated
@@ -125,6 +128,8 @@ tuning pass.
   fields, duplicate action IDs, and priority/state validity.
 - Added `personal-ops-import` as a non-mutating apply boundary: it validates a package and reports
   `applied: false` until an explicit personal-ops integration exists.
+- Added `personal-ops-import --enqueue` and the local import queue JSONL file so valid review
+  packages can create durable handoff items while still reporting `applied: false`.
 - Added the first local review UI at `GET /review`, backed by read-only `GET /review/data`.
 - Added review UI controls backed by `POST /review/save-package` and
   `POST /review/validate-package`; both preserve `applied: false`.
@@ -134,6 +139,8 @@ tuning pass.
   and validation errors without importing or applying anything.
 - Added `DELETE /review/package/{name}` so saved review packages can be cleaned up without touching
   personal-ops.
+- Added `POST /review/package/{name}/queue` and `GET /review/import-queue` so the review UI can
+  enqueue and display personal-ops handoff items without applying them.
 
 ## Verified Baseline
 
@@ -154,10 +161,13 @@ uv run --frozen notification-hub personal-ops-actions
 uv run --frozen notification-hub personal-ops-actions --save-review-package
 uv run --frozen notification-hub validate-action-package path/to/actions.json
 uv run --frozen notification-hub personal-ops-import path/to/actions.json
+uv run --frozen notification-hub personal-ops-import path/to/actions.json --enqueue
 uv run --frozen notification-hub logs
 curl http://127.0.0.1:9199/review
 curl http://127.0.0.1:9199/review/packages
 curl http://127.0.0.1:9199/review/package/personal-ops-actions-YYYYMMDD-HHMMSS.json
+curl -X POST http://127.0.0.1:9199/review/package/personal-ops-actions-YYYYMMDD-HHMMSS.json/queue
+curl http://127.0.0.1:9199/review/import-queue
 curl -X DELETE http://127.0.0.1:9199/review/package/personal-ops-actions-YYYYMMDD-HHMMSS.json
 uv run --frozen notification-hub burn-in --minutes 10
 uv run --frozen notification-hub verify-runtime
@@ -186,7 +196,8 @@ Expected current outcome:
 - `notification-hub personal-ops-actions --save-review-package`: writes a local JSON review package
   without mutating personal-ops
 - `notification-hub validate-action-package`: validates a saved review package without importing it
-- `notification-hub personal-ops-import`: validates a package and stops before mutation
+- `notification-hub personal-ops-import`: validates a package and stops before mutation; `--enqueue`
+  adds valid action proposals to the local import queue while keeping `applied: false`
 - `/review`: localhost-only review UI for runtime state, inbox rollups, action proposals, and trust
   state
 - `/review/save-package` and `/review/validate-package`: review UI controls for staging and
@@ -196,6 +207,8 @@ Expected current outcome:
 - `/review/package/{name}`: inspects one saved review package, including action proposals, evidence
   IDs, and validation errors, without importing or applying it
 - `DELETE /review/package/{name}`: deletes one saved review package without importing or applying it
+- `POST /review/package/{name}/queue` and `/review/import-queue`: enqueue and display local
+  personal-ops handoff items without applying them
 - `notification-hub logs`: `status: ok` with recent event and daemon log tails, including Slack
   delivery failure counts
 - `notification-hub burn-in`: top-level command status plus nested health counters, repeated-event
@@ -257,8 +270,8 @@ It is not part of normal day-to-day work.
 
 Start future work from `main`, keep using the frozen verification commands, and treat the repo-owned
 runtime templates as the source of truth for live launcher and hook wiring.
-The next work here should run a short burn-in on review-only package history, detail inspection, and
-package cleanup, then decide whether the first real apply target should be a personal-ops inbox item.
+The next work here should teach personal-ops to read this import queue as an operator inbox source,
+then decide whether any queued item should ever promote into a real personal-ops task.
 
 ## Optional Follow-Up
 

@@ -25,6 +25,7 @@ from notification_hub.operations import (
     bootstrap_policy_config,
     delete_action_review_package,
     list_action_review_packages,
+    list_personal_ops_import_queue,
     load_action_review_package_detail,
     run_burn_in,
     run_coordination_snapshot,
@@ -535,7 +536,52 @@ def test_personal_ops_import_stub_validates_without_applying(tmp_path: Path) -> 
 
     assert report["status"] == "ok"
     assert report["applied"] is False
+    assert report["enqueued"] is False
+    assert report["queued_count"] == 0
     assert report["validation"]["valid_action_count"] == 1
+
+
+def test_personal_ops_import_can_enqueue_valid_package(tmp_path: Path) -> None:
+    package_path = tmp_path / "actions.json"
+    queue_path = tmp_path / "queue.jsonl"
+    package_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "notification-hub.personal_ops_action_export.v1",
+                "actions": [
+                    {
+                        "action_id": "notification-hub:personal-ops:mail:waiting_on_user:approval-requested",
+                        "source": "personal-ops",
+                        "project": "mail",
+                        "intent": "waiting_on_user",
+                        "priority": "high",
+                        "state": "waiting",
+                        "title": "Approval Requested",
+                        "summary": "2 repeated personal-ops events",
+                        "suggested_next_action": "Review the waiting item.",
+                        "evidence_event_id": "abc123",
+                        "evidence_timestamp": "2026-05-09T00:00:00+00:00",
+                        "count": 2,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    report = run_personal_ops_import_stub(path=package_path, enqueue=True, queue_path=queue_path)
+    duplicate_report = run_personal_ops_import_stub(path=package_path, enqueue=True, queue_path=queue_path)
+    queue_items = list_personal_ops_import_queue(queue_path=queue_path)
+
+    assert report["status"] == "ok"
+    assert report["applied"] is False
+    assert report["enqueued"] is True
+    assert report["queued_count"] == 1
+    assert duplicate_report["queued_count"] == 0
+    assert duplicate_report["skipped_count"] == 1
+    assert len(queue_items) == 1
+    assert queue_items[0]["title"] == "Approval Requested"
+    assert queue_items[0]["applied"] is False
 
 
 def test_personal_ops_import_stub_rejects_invalid_package(tmp_path: Path) -> None:
