@@ -33,6 +33,7 @@ from notification_hub.operations import (
     run_logs,
     run_personal_ops_action_export,
     run_personal_ops_import_stub,
+    run_personal_ops_queue_burn_in,
     run_personal_ops_queue_scenario,
     run_policy_check,
     run_retention,
@@ -724,6 +725,97 @@ def test_personal_ops_queue_scenario_records_final_outcome() -> None:
     assert report["promotion_outcome"] == "accepted"
     assert report["final_health"]["promoted_accepted_count"] == 1
     assert report["applied"] is True
+
+
+def test_personal_ops_queue_burn_in_reports_operator_steps() -> None:
+    with (
+        patch("notification_hub.operations.run_personal_ops_import_queue_health_check") as mock_health,
+        patch("notification_hub.operations.run_personal_ops_queue_scenario") as mock_scenario,
+        patch("notification_hub.operations.run_burn_in") as mock_burn_in,
+    ):
+        mock_health.return_value = {
+            "status": "warn",
+            "health": {
+                "status": "warn",
+                "queue_path": "/tmp/queue.jsonl",
+                "total_count": 1,
+                "queued_count": 1,
+                "reviewed_count": 0,
+                "rejected_count": 0,
+                "snoozed_count": 0,
+                "superseded_count": 0,
+                "promoted_count": 0,
+                "promoted_pending_count": 0,
+                "promoted_pending_stale_count": 0,
+                "promoted_accepted_count": 0,
+                "promoted_rejected_count": 0,
+                "promoted_ignored_count": 0,
+                "needs_outcome_sync": False,
+                "needs_review": True,
+                "oldest_queued_at": "2026-05-09T10:00:00+00:00",
+                "oldest_queued_age_seconds": 60.0,
+                "oldest_promoted_pending_at": None,
+                "oldest_promoted_pending_age_seconds": None,
+                "stale_after_hours": 4.0,
+                "next_action": "Review queued personal-ops handoff items.",
+            },
+            "queued_items": [],
+            "pending_promotion_items": [],
+            "next_commands": ["uv run notification-hub personal-ops-queue"],
+            "applied": False,
+        }
+        mock_scenario.return_value = {
+            "status": "ok",
+            "queue_path": "/tmp/scenario-queue.jsonl",
+            "package_path": "/tmp/package.json",
+            "queue_id": "queue123",
+            "queued_count": 1,
+            "review_status": "ok",
+            "promotion_status": "ok",
+            "promotion_outcome": "accepted",
+            "final_health": mock_health.return_value["health"],
+            "applied": True,
+            "next_action": "Scenario passed; use the same lifecycle for real queued handoffs.",
+            "error": None,
+        }
+        mock_burn_in.return_value = {
+            "status": "ok",
+            "minutes": 10,
+            "events_seen": 0,
+            "accepted_event_posts": 0,
+            "rejected_event_posts": 0,
+            "validation_error_count": 0,
+            "health": {
+                "accepted_event_posts": 0,
+                "rejected_event_posts": 0,
+                "validation_error_count": 0,
+                "slack_delivery_failure_count": 0,
+                "status": "ok",
+            },
+            "noise_candidates": [],
+            "repeated_signatures": [],
+            "slack_eligible_events": 0,
+            "slack_volume": [],
+            "daemon_summary": {
+                "access_status_counts": {},
+                "accepted_event_posts": 0,
+                "rejected_event_posts": 0,
+                "validation_error_count": 0,
+                "recent_validation_errors": [],
+                "slack_delivery_failure_count": 0,
+                "recent_slack_delivery_failures": [],
+            },
+            "error": None,
+        }
+
+        report = run_personal_ops_queue_burn_in(minutes=5, lines=20, limit=3)
+
+    assert report["status"] == "warn"
+    assert report["ready_for_live_promotion"] is True
+    assert "Promote one reviewed handoff" in report["next_action"]
+    assert any("sync" in step for step in report["operator_steps"])
+    mock_health.assert_called_once_with(limit=3)
+    mock_burn_in.assert_called_once_with(minutes=5, lines=20)
 
 
 def test_personal_ops_import_queue_snooze_requires_until(tmp_path: Path) -> None:

@@ -279,6 +279,17 @@ class PersonalOpsQueueScenarioReport(TypedDict):
     error: str | None
 
 
+class PersonalOpsQueueBurnInReport(TypedDict):
+    status: str
+    queue_health: PersonalOpsImportQueueHealthCheckReport
+    scenario: PersonalOpsQueueScenarioReport
+    runtime_burn_in: BurnInReport
+    ready_for_live_promotion: bool
+    operator_steps: list[str]
+    next_action: str
+    applied: bool
+
+
 class BridgeSaveReport(TypedDict):
     attempted: bool
     status: str
@@ -1116,6 +1127,70 @@ def run_personal_ops_import_queue_health_check(
         "queued_items": queued_items,
         "pending_promotion_items": pending_items,
         "next_commands": next_commands,
+        "applied": False,
+    }
+
+
+def _personal_ops_queue_operator_steps(health: PersonalOpsImportQueueHealthReport) -> list[str]:
+    if health["queued_count"] > 0:
+        return [
+            "Open http://127.0.0.1:9199/review and inspect the queued handoff evidence.",
+            "Promote one reviewed handoff through personal-ops, then record it as promoted with the returned suggestion id.",
+            "Run personal-ops notification-hub sync-outcomes after the suggestion is accepted or rejected.",
+            "Rerun notification-hub personal-ops-queue-health and confirm pending/stale counts return to zero.",
+        ]
+    if health["promoted_pending_stale_count"] > 0:
+        return [
+            "Run personal-ops notification-hub sync-outcomes.",
+            "Rerun notification-hub personal-ops-queue-health and confirm stale pending outcomes clear.",
+        ]
+    if health["promoted_pending_count"] > 0:
+        return [
+            "Run personal-ops notification-hub sync-outcomes when the downstream suggestion decision is available.",
+            "Rerun notification-hub personal-ops-queue-health and confirm pending outcomes clear.",
+        ]
+    return [
+        "Save or enqueue a real review package from /review when there is a real operator signal worth promoting.",
+        "Run notification-hub personal-ops-queue-burn-in after the first live promotion to recheck queue, runtime, and noise health.",
+    ]
+
+
+def run_personal_ops_queue_burn_in(
+    *,
+    minutes: int = 10,
+    lines: int = 200,
+    limit: int = 10,
+) -> PersonalOpsQueueBurnInReport:
+    """Report whether the queue loop is ready for live operator burn-in."""
+    queue_health = run_personal_ops_import_queue_health_check(limit=limit)
+    scenario = run_personal_ops_queue_scenario()
+    runtime_burn_in = run_burn_in(minutes=minutes, lines=lines)
+    health = queue_health["health"]
+    ready_for_live_promotion = (
+        scenario["status"] == "ok"
+        and runtime_burn_in["health"]["status"] == "ok"
+        and health["promoted_pending_stale_count"] == 0
+    )
+    status = "ok" if ready_for_live_promotion and queue_health["status"] == "ok" else "warn"
+    operator_steps = _personal_ops_queue_operator_steps(health)
+    if health["queued_count"] > 0:
+        next_action = "Promote one reviewed handoff, then sync the personal-ops outcome back."
+    elif health["promoted_pending_stale_count"] > 0:
+        next_action = "Sync stale promoted handoff outcomes before promoting more work."
+    elif health["promoted_pending_count"] > 0:
+        next_action = "Wait for or sync the pending promoted handoff outcome."
+    elif ready_for_live_promotion:
+        next_action = "Queue loop is ready; use the operator steps when the next real handoff appears."
+    else:
+        next_action = "Fix the queue scenario or runtime burn-in warning before live promotion."
+    return {
+        "status": status,
+        "queue_health": queue_health,
+        "scenario": scenario,
+        "runtime_burn_in": runtime_burn_in,
+        "ready_for_live_promotion": ready_for_live_promotion,
+        "operator_steps": operator_steps,
+        "next_action": next_action,
         "applied": False,
     }
 
@@ -2240,6 +2315,7 @@ def run_verify_runtime(
         "health_details_reachable": local_api.get("reachable") is True,
         "runtime_wiring_current": doctor_checks.get("runtime_wiring_current") is True,
         "recent_runtime_health_ok": burn_in["health"]["status"] == "ok",
+        "import_queue_ok": import_queue["status"] == "ok",
         "smoke_ok": smoke is None or smoke["status"] == "ok",
         "delivery_check_ok": delivery_check is None or delivery_check["status"] == "ok",
     }
@@ -2285,7 +2361,7 @@ def run_status() -> StatusReport:
     policy_load_ok = doctor_checks.get("policy_load_ok") is True
     slack_delivery_failures = burn_in_health["slack_delivery_failure_count"]
 
-    if import_queue["needs_review"]:
+    if import_queue["needs_review"] or import_queue["needs_outcome_sync"]:
         next_action = import_queue["next_action"]
     elif verification["status"] == "ok":
         next_action = "No action needed."

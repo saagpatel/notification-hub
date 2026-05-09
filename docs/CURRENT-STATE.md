@@ -38,6 +38,8 @@ tuning pass.
 - Queue maintenance now has a dedicated `personal-ops-queue-health` command that reports queued
   item age, promoted handoffs still waiting on outcome sync, stale pending outcomes, and the next
   safe operator commands without applying work.
+- A queue burn-in command now combines queue health, the temporary queue lifecycle scenario, and
+  recent runtime burn-in into one non-applying readiness report for live operator handoffs.
 - A localhost-only review page is available at `/review` on the daemon. It shows runtime health,
   inbox rollups, action proposals, and trust state without applying anything.
 - The review page can stage a local review package, list recent saved review packages, inspect
@@ -151,6 +153,8 @@ tuning pass.
   and final `pending`, `accepted`, `rejected`, or `ignored` outcome.
 - Added `personal-ops-queue-health` so routine maintenance can detect queued age, pending promotion
   outcome sync, stale promoted-pending handoffs, and the next safe non-mutating commands.
+- Added `personal-ops-queue-burn-in` so queue lifecycle readiness, live queue attention, and recent
+  runtime noise can be checked together before or after real operator promotion.
 - Added review UI queue-health summary and filters for pending outcome, stale outcome, queued,
   promoted, resolved, and open handoffs.
 - Added `personal-ops-queue-scenario` as a temporary end-to-end lifecycle proof that does not touch
@@ -182,6 +186,8 @@ uv run --frozen notification-hub personal-ops-queue
 uv run --frozen notification-hub personal-ops-queue --queue-id QUEUE_ID --status reviewed --reason "evidence checked"
 uv run --frozen notification-hub personal-ops-queue-health
 uv run --frozen notification-hub-personal-ops-queue-health --json
+uv run --frozen notification-hub personal-ops-queue-burn-in
+uv run --frozen notification-hub-personal-ops-queue-burn-in --json
 uv run --frozen notification-hub personal-ops-queue-scenario
 uv run --frozen notification-hub logs
 curl http://127.0.0.1:9199/review
@@ -202,7 +208,7 @@ uv run --frozen notification-hub retention --max-events 2000
 
 Expected current outcome:
 
-- `pytest`: 237 passed
+- `pytest`: 286 passed
 - `ruff`: clean
 - `pyright`: 0 errors
 - `/health/details`: `status: ok`, watcher active, push available, Slack configured
@@ -225,6 +231,9 @@ Expected current outcome:
 - `notification-hub personal-ops-queue-health`: reports routine import queue maintenance state,
   stale pending promoted outcomes, and next safe commands without applying work
 - `notification-hub-personal-ops-queue-health`: script shortcut for the same queue-health report
+- `notification-hub personal-ops-queue-burn-in`: checks queue health, temporary lifecycle scenario,
+  runtime burn-in, and live operator steps without applying personal-ops work
+- `notification-hub-personal-ops-queue-burn-in`: script shortcut for the same burn-in report
 - `notification-hub personal-ops-queue-scenario`: runs a temporary queue lifecycle and records a
   final accepted promotion outcome without touching runtime queue state
 - `/review`: localhost-only review UI for runtime state, inbox rollups, action proposals, and trust
@@ -301,9 +310,9 @@ It is not part of normal day-to-day work.
 
 Start future work from `main`, keep using the frozen verification commands, and treat the repo-owned
 runtime templates as the source of truth for live launcher and hook wiring.
-The next work here should burn in the queue lifecycle with real operator use, then decide whether
-the now-visible queue-health signals should trigger a read-only personal-ops outcome-sync reminder
-or remain an operator-run maintenance command.
+The next work here should use `personal-ops-queue-burn-in` around the first real operator promotion,
+then decide whether the visible queue-health signals should trigger a read-only personal-ops
+outcome-sync reminder or remain an operator-run maintenance command.
 
 ## Optional Follow-Up
 

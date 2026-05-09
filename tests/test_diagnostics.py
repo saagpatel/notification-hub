@@ -22,6 +22,7 @@ from notification_hub.cli import (
     main,
     personal_ops_actions_main,
     personal_ops_import_main,
+    personal_ops_queue_burn_in_main,
     personal_ops_queue_health_main,
     policy_check_main,
     retention_main,
@@ -174,30 +175,44 @@ def _burn_in_report(
     }
 
 
-def _import_queue_health(*, queued_count: int = 0) -> dict[str, object]:
+def _import_queue_health(
+    *,
+    queued_count: int = 0,
+    promoted_pending_count: int = 0,
+    promoted_pending_stale_count: int = 0,
+) -> dict[str, object]:
+    needs_queue_attention = queued_count > 0 or promoted_pending_count > 0
+    if queued_count:
+        next_action = "Review queued personal-ops handoff items."
+    elif promoted_pending_stale_count:
+        next_action = "Run personal-ops notification-hub sync-outcomes, then rerun notification-hub personal-ops-queue-health."
+    elif promoted_pending_count:
+        next_action = "Sync promoted personal-ops handoff outcomes."
+    else:
+        next_action = "No queued personal-ops handoff items."
     return {
-        "status": "warn" if queued_count else "ok",
+        "status": "warn" if needs_queue_attention else "ok",
         "queue_path": "/tmp/personal-ops-import-queue.jsonl",
-        "total_count": queued_count,
+        "total_count": queued_count + promoted_pending_count,
         "queued_count": queued_count,
         "reviewed_count": 0,
         "rejected_count": 0,
         "snoozed_count": 0,
         "superseded_count": 0,
-        "promoted_count": 0,
-        "promoted_pending_count": 0,
-        "promoted_pending_stale_count": 0,
+        "promoted_count": promoted_pending_count,
+        "promoted_pending_count": promoted_pending_count,
+        "promoted_pending_stale_count": promoted_pending_stale_count,
         "promoted_accepted_count": 0,
         "promoted_rejected_count": 0,
         "promoted_ignored_count": 0,
-        "needs_outcome_sync": False,
+        "needs_outcome_sync": promoted_pending_count > 0,
         "needs_review": queued_count > 0,
         "oldest_queued_at": "2026-05-09T10:00:00+00:00" if queued_count else None,
         "oldest_queued_age_seconds": 60.0 if queued_count else None,
-        "oldest_promoted_pending_at": None,
-        "oldest_promoted_pending_age_seconds": None,
+        "oldest_promoted_pending_at": "2026-05-09T08:00:00+00:00" if promoted_pending_count else None,
+        "oldest_promoted_pending_age_seconds": 7200.0 if promoted_pending_count else None,
         "stale_after_hours": 4.0,
-        "next_action": "Review queued personal-ops handoff items." if queued_count else "No queued personal-ops handoff items.",
+        "next_action": next_action,
     }
 
 
@@ -588,6 +603,57 @@ def test_run_status_suggests_slack_delivery_investigation() -> None:
     )
 
 
+def test_run_status_suggests_import_queue_outcome_sync() -> None:
+    pending_health = _import_queue_health(promoted_pending_count=1, promoted_pending_stale_count=1)
+    with patch(
+        "notification_hub.operations.run_verify_runtime",
+        return_value={
+            "status": "degraded",
+            "read_only": True,
+            "include_smoke": False,
+            "health_url": "http://127.0.0.1:9199/health/details",
+            "checks": {
+                "doctor_ok": True,
+                "policy_check_ok": True,
+                "health_details_reachable": True,
+                "runtime_wiring_current": True,
+                "recent_runtime_health_ok": True,
+                "import_queue_ok": False,
+                "smoke_ok": True,
+                "delivery_check_ok": True,
+            },
+            "runtime_wiring": {"launch_agent_matches_template": True},
+            "doctor": {
+                "status": "ok",
+                "checks": {"policy_load_ok": True, "runtime_wiring_current": True},
+                "config": {"exists": True},
+                "delivery": {"slack_webhook_configured": True},
+                "local_api": {"payload": {}},
+            },
+            "policy_check": {
+                "status": "ok",
+                "config_path": "/tmp/config.toml",
+                "config_found": True,
+                "example_path": "/tmp/example.toml",
+                "load_error": None,
+                "warning_count": 0,
+                "suggestion_count": 0,
+                "warnings": [],
+                "suggestions": [],
+            },
+            "burn_in": _burn_in_report(),
+            "import_queue": pending_health,
+            "delivery_check": None,
+            "smoke": None,
+        },
+    ):
+        report = run_status()
+
+    assert report["status"] == "degraded"
+    assert report["import_queue"]["needs_outcome_sync"] is True
+    assert report["next_action"] == pending_health["next_action"]
+
+
 def test_cli_status_json_output(capsys: CaptureFixture[str]) -> None:
     with patch(
         "notification_hub.cli.run_status",
@@ -705,6 +771,7 @@ def test_run_verify_runtime_is_read_only_by_default() -> None:
         "health_details_reachable": True,
         "runtime_wiring_current": True,
         "recent_runtime_health_ok": True,
+        "import_queue_ok": True,
         "smoke_ok": True,
         "delivery_check_ok": True,
     }
@@ -785,6 +852,44 @@ def test_run_verify_runtime_reports_degraded_recent_runtime_health() -> None:
     assert report["checks"]["recent_runtime_health_ok"] is False
     assert report["burn_in"]["health"]["slack_delivery_failure_count"] == 2
     mock_delivery_check.assert_not_called()
+
+
+def test_run_verify_runtime_reports_import_queue_attention() -> None:
+    with (
+        patch(
+            "notification_hub.operations.collect_doctor_report",
+            return_value={
+                "status": "ok",
+                "checks": {"runtime_wiring_current": True},
+                "local_api": {"reachable": True, "url": "http://127.0.0.1:9199/health/details"},
+                "runtime_wiring": {"launch_agent_matches_template": True},
+            },
+        ),
+        patch(
+            "notification_hub.operations.run_policy_check",
+            return_value={
+                "status": "ok",
+                "config_path": "/tmp/config.toml",
+                "config_found": True,
+                "example_path": "/tmp/example.toml",
+                "load_error": None,
+                "warning_count": 0,
+                "suggestion_count": 0,
+                "warnings": [],
+                "suggestions": [],
+            },
+        ),
+        patch("notification_hub.operations.run_burn_in", return_value=_burn_in_report()),
+        patch(
+            "notification_hub.operations.summarize_personal_ops_import_queue",
+            return_value=_import_queue_health(promoted_pending_count=1, promoted_pending_stale_count=1),
+        ),
+    ):
+        report = run_verify_runtime()
+
+    assert report["status"] == "degraded"
+    assert report["checks"]["import_queue_ok"] is False
+    assert report["import_queue"]["needs_outcome_sync"] is True
 
 
 def test_run_verify_runtime_smoke_is_opt_in() -> None:
@@ -1230,6 +1335,48 @@ def test_cli_personal_ops_queue_health_json_output(capsys: CaptureFixture[str]) 
     mock_health.assert_called_once()
     assert mock_health.call_args.kwargs["limit"] == 3
     assert mock_health.call_args.kwargs["stale_after_hours"] == 2.0
+
+
+def test_cli_personal_ops_queue_burn_in_json_output(capsys: CaptureFixture[str]) -> None:
+    with patch(
+        "notification_hub.cli.run_personal_ops_queue_burn_in",
+        return_value={
+            "status": "ok",
+            "queue_health": {
+                "status": "ok",
+                "health": _import_queue_health(),
+                "queued_items": [],
+                "pending_promotion_items": [],
+                "next_commands": ["uv run notification-hub personal-ops-queue-health"],
+                "applied": False,
+            },
+            "scenario": {
+                "status": "ok",
+                "queue_path": "/tmp/scenario-queue.jsonl",
+                "package_path": "/tmp/package.json",
+                "queue_id": "queue123",
+                "queued_count": 1,
+                "review_status": "ok",
+                "promotion_status": "ok",
+                "promotion_outcome": "accepted",
+                "final_health": _import_queue_health(),
+                "applied": True,
+                "next_action": "Scenario passed; use the same lifecycle for real queued handoffs.",
+                "error": None,
+            },
+            "runtime_burn_in": _burn_in_report(),
+            "ready_for_live_promotion": True,
+            "operator_steps": ["Queue loop is ready."],
+            "next_action": "Queue loop is ready; use the operator steps when the next real handoff appears.",
+            "applied": False,
+        },
+    ) as mock_burn_in:
+        exit_code = main(["personal-ops-queue-burn-in", "--json", "--minutes", "5", "--lines", "20", "--limit", "3"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert '"ready_for_live_promotion": true' in captured.out
+    mock_burn_in.assert_called_once_with(minutes=5, lines=20, limit=3)
 
 
 def test_cli_policy_check_json_output(capsys: CaptureFixture[str]) -> None:
@@ -1698,6 +1845,49 @@ def test_personal_ops_queue_health_wrapper_forwards_flags(capsys: CaptureFixture
     assert '"next_commands"' in output.out
     mock_health.assert_called_once()
     assert mock_health.call_args.kwargs["limit"] == 2
+
+
+def test_personal_ops_queue_burn_in_wrapper_forwards_flags(capsys: CaptureFixture[str]) -> None:
+    with patch(
+        "notification_hub.cli.run_personal_ops_queue_burn_in",
+        return_value={
+            "status": "ok",
+            "queue_health": {
+                "status": "ok",
+                "health": _import_queue_health(),
+                "queued_items": [],
+                "pending_promotion_items": [],
+                "next_commands": ["uv run notification-hub personal-ops-queue-health"],
+                "applied": False,
+            },
+            "scenario": {
+                "status": "ok",
+                "queue_path": "/tmp/scenario-queue.jsonl",
+                "package_path": "/tmp/package.json",
+                "queue_id": "queue123",
+                "queued_count": 1,
+                "review_status": "ok",
+                "promotion_status": "ok",
+                "promotion_outcome": "accepted",
+                "final_health": _import_queue_health(),
+                "applied": True,
+                "next_action": "Scenario passed; use the same lifecycle for real queued handoffs.",
+                "error": None,
+            },
+            "runtime_burn_in": _burn_in_report(),
+            "ready_for_live_promotion": True,
+            "operator_steps": ["Queue loop is ready."],
+            "next_action": "Queue loop is ready; use the operator steps when the next real handoff appears.",
+            "applied": False,
+        },
+    ) as mock_burn_in:
+        exit_code = personal_ops_queue_burn_in_main(["--json", "--minutes", "5"])
+
+    output = capsys.readouterr()
+    assert exit_code == 0
+    assert '"operator_steps"' in output.out
+    mock_burn_in.assert_called_once()
+    assert mock_burn_in.call_args.kwargs["minutes"] == 5
 
 
 def test_policy_check_wrapper_forwards_flags(capsys: CaptureFixture[str]) -> None:

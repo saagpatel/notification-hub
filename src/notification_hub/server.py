@@ -24,9 +24,9 @@ from notification_hub.operations import (
     load_action_review_package_detail,
     run_inbox,
     run_personal_ops_action_export,
+    run_personal_ops_import_queue_health_check,
     run_personal_ops_import_stub,
     run_retention,
-    summarize_personal_ops_import_queue,
     update_personal_ops_import_queue_item,
     validate_action_package,
 )
@@ -538,6 +538,7 @@ REVIEW_HTML = """<!doctype html>
       const res = await fetch("/review/import-queue?limit=25");
       const data = await res.json();
       const health = data.health || {};
+      const nextCommands = data.next_commands || [];
       importQueueHealth.replaceChildren(
         item(`
           <div class="line"><span class="title">Queue health</span><span class="meta">${esc(health.status || "unknown")}</span></div>
@@ -548,6 +549,7 @@ REVIEW_HTML = """<!doctype html>
             ${badge(`resolved ${(health.promoted_accepted_count ?? 0) + (health.promoted_rejected_count ?? 0) + (health.promoted_ignored_count ?? 0)}`)}
           </div>
           <div class="next">${esc(health.next_action || "")}</div>
+          ${nextCommands.length ? `<div class="next"><strong>Next command</strong>: ${esc(nextCommands[0])}</div>` : ""}
         `)
       );
       const filter = importQueueFilter ? importQueueFilter.value : "open";
@@ -809,10 +811,12 @@ async def review_queue_package(name: str) -> dict[str, object]:
 @app.get("/review/import-queue")
 async def review_import_queue(limit: int = 10, stale_after_hours: float = 4.0) -> dict[str, object]:
     """List queued personal-ops handoff items without applying them."""
+    queue_health = run_personal_ops_import_queue_health_check(limit=max(limit, 1), stale_after_hours=stale_after_hours)
     return {
         "status": "ok",
         "items": list_personal_ops_import_queue(limit=max(limit, 1)),
-        "health": summarize_personal_ops_import_queue(stale_after_hours=stale_after_hours),
+        "health": queue_health["health"],
+        "next_commands": queue_health["next_commands"],
         "applied": False,
     }
 

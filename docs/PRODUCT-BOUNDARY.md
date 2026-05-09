@@ -11,6 +11,7 @@ notification-hub is a localhost-only coordination sidecar. It collects local wor
 - A local personal-ops import queue with explicit lifecycle states.
 - Promotion tracking for queue items, including the downstream personal-ops suggestion id and final accepted, rejected, ignored, or pending outcome.
 - Queue-health reporting for queued age, pending promotion outcome sync, and stale pending outcomes.
+- Queue burn-in reporting that combines queue health, a temporary lifecycle scenario, and recent runtime noise without applying work.
 - Local review UI and API endpoints that inspect, queue, and mark handoff state without applying personal-ops work.
 
 ## personal-ops Owns

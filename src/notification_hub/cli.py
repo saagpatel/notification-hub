@@ -24,6 +24,7 @@ from notification_hub.operations import (
     PersonalOpsImportQueueHealthReport,
     PersonalOpsImportQueueItemReport,
     PersonalOpsImportQueueUpdateReport,
+    PersonalOpsQueueBurnInReport,
     PersonalOpsQueueScenarioReport,
     ActionPackageValidationReport,
     PolicyCheckReport,
@@ -40,6 +41,7 @@ from notification_hub.operations import (
     run_personal_ops_action_export,
     run_personal_ops_import_queue_health_check,
     run_personal_ops_import_stub,
+    run_personal_ops_queue_burn_in,
     run_personal_ops_queue_scenario,
     list_personal_ops_import_queue,
     summarize_personal_ops_import_queue,
@@ -410,6 +412,34 @@ def _build_parser(prog: str = "notification-hub") -> argparse.ArgumentParser:
         help="Emit the queue health report as JSON.",
     )
 
+    personal_ops_queue_burn_in = subparsers.add_parser(
+        "personal-ops-queue-burn-in",
+        help="Check queue lifecycle readiness, recent runtime noise, and live operator next steps.",
+    )
+    personal_ops_queue_burn_in.add_argument(
+        "--minutes",
+        type=int,
+        default=10,
+        help="Recent runtime window to inspect.",
+    )
+    personal_ops_queue_burn_in.add_argument(
+        "--lines",
+        type=int,
+        default=200,
+        help="Daemon log tail lines to inspect.",
+    )
+    personal_ops_queue_burn_in.add_argument(
+        "--limit",
+        type=int,
+        default=10,
+        help="Maximum queue items to inspect.",
+    )
+    personal_ops_queue_burn_in.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the burn-in report as JSON.",
+    )
+
     explain = subparsers.add_parser(
         "explain",
         help="Show how an event would classify, route, and deliver without sending it.",
@@ -709,6 +739,23 @@ def _print_personal_ops_queue_health_report(report: PersonalOpsImportQueueHealth
         print("- queued items:")
         for item in report["queued_items"]:
             print(f"  - {item['queue_id']}: {item['title']}")
+
+
+def _print_personal_ops_queue_burn_in_report(report: PersonalOpsQueueBurnInReport) -> None:
+    health = report["queue_health"]["health"]
+    runtime_health = report["runtime_burn_in"]["health"]
+    print(f"notification-hub personal-ops-queue-burn-in: {report['status']}")
+    print(f"- ready for live promotion: {report['ready_for_live_promotion']}")
+    print(f"- queue status: {health['status']}")
+    print(f"- queued: {health['queued_count']}")
+    print(f"- promoted pending: {health['promoted_pending_count']}")
+    print(f"- promoted pending stale: {health['promoted_pending_stale_count']}")
+    print(f"- scenario: {report['scenario']['status']}")
+    print(f"- runtime health: {runtime_health['status']}")
+    print(f"- next action: {report['next_action']}")
+    print("- operator steps:")
+    for step in report["operator_steps"]:
+        print(f"  - {step}")
 
 
 def _print_personal_ops_queue_scenario_report(report: PersonalOpsQueueScenarioReport) -> None:
@@ -1050,6 +1097,18 @@ def main(argv: Sequence[str] | None = None) -> int:
             _print_personal_ops_queue_health_report(report)
         return 0 if report["status"] == "ok" else 1
 
+    if args.command == "personal-ops-queue-burn-in":
+        report = run_personal_ops_queue_burn_in(
+            minutes=args.minutes,
+            lines=args.lines,
+            limit=args.limit,
+        )
+        if args.json:
+            print(json.dumps(report, indent=2, sort_keys=True))
+        else:
+            _print_personal_ops_queue_burn_in_report(report)
+        return 0 if report["status"] == "ok" else 1
+
     if args.command == "policy-check":
         report = run_policy_check()
         if args.json:
@@ -1152,6 +1211,11 @@ def personal_ops_import_main(argv: Sequence[str] | None = None) -> int:
 def personal_ops_queue_health_main(argv: Sequence[str] | None = None) -> int:
     forwarded = list(argv) if argv is not None else sys.argv[1:]
     return main(["personal-ops-queue-health", *forwarded])
+
+
+def personal_ops_queue_burn_in_main(argv: Sequence[str] | None = None) -> int:
+    forwarded = list(argv) if argv is not None else sys.argv[1:]
+    return main(["personal-ops-queue-burn-in", *forwarded])
 
 
 def policy_check_main(argv: Sequence[str] | None = None) -> int:

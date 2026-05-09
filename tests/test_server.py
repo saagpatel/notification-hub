@@ -475,32 +475,39 @@ async def test_review_import_queue_endpoint_lists_queue_items(client: AsyncClien
         ],
     ) as mock_queue:
         with patch(
-            "notification_hub.server.summarize_personal_ops_import_queue",
+            "notification_hub.server.run_personal_ops_import_queue_health_check",
             return_value={
                 "status": "warn",
-                "queue_path": "/tmp/queue.jsonl",
-                "total_count": 1,
-                "queued_count": 1,
-                "reviewed_count": 0,
-                "rejected_count": 0,
-                "snoozed_count": 0,
-                "superseded_count": 0,
-                "promoted_count": 0,
-                "promoted_pending_count": 0,
-                "promoted_pending_stale_count": 0,
-                "promoted_accepted_count": 0,
-                "promoted_rejected_count": 0,
-                "promoted_ignored_count": 0,
-                "needs_outcome_sync": False,
-                "needs_review": True,
-                "oldest_queued_at": "2026-05-09T10:00:00+00:00",
-                "oldest_queued_age_seconds": 1.0,
-                "oldest_promoted_pending_at": None,
-                "oldest_promoted_pending_age_seconds": None,
-                "stale_after_hours": 4.0,
-                "next_action": "Review queued personal-ops handoff items.",
+                "health": {
+                    "status": "warn",
+                    "queue_path": "/tmp/queue.jsonl",
+                    "total_count": 1,
+                    "queued_count": 1,
+                    "reviewed_count": 0,
+                    "rejected_count": 0,
+                    "snoozed_count": 0,
+                    "superseded_count": 0,
+                    "promoted_count": 0,
+                    "promoted_pending_count": 0,
+                    "promoted_pending_stale_count": 0,
+                    "promoted_accepted_count": 0,
+                    "promoted_rejected_count": 0,
+                    "promoted_ignored_count": 0,
+                    "needs_outcome_sync": False,
+                    "needs_review": True,
+                    "oldest_queued_at": "2026-05-09T10:00:00+00:00",
+                    "oldest_queued_age_seconds": 1.0,
+                    "oldest_promoted_pending_at": None,
+                    "oldest_promoted_pending_age_seconds": None,
+                    "stale_after_hours": 4.0,
+                    "next_action": "Review queued personal-ops handoff items.",
+                },
+                "queued_items": [],
+                "pending_promotion_items": [],
+                "next_commands": ["uv run notification-hub personal-ops-queue"],
+                "applied": False,
             },
-        ):
+        ) as mock_health:
             resp = await client.get("/review/import-queue?limit=3")
 
     assert resp.status_code == 200
@@ -509,7 +516,9 @@ async def test_review_import_queue_endpoint_lists_queue_items(client: AsyncClien
     assert data["applied"] is False
     assert data["items"][0]["status"] == "queued"
     assert data["health"]["needs_review"] is True
+    assert data["next_commands"] == ["uv run notification-hub personal-ops-queue"]
     mock_queue.assert_called_once_with(limit=3)
+    mock_health.assert_called_once_with(limit=3, stale_after_hours=4.0)
 
 
 async def test_review_import_queue_patch_updates_lifecycle(client: AsyncClient) -> None:

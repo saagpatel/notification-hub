@@ -63,6 +63,8 @@ uv run notification-hub personal-ops-queue --queue-id QUEUE_ID --status reviewed
 uv run notification-hub personal-ops-queue --queue-id QUEUE_ID --status promoted --promotion-target-id SUGGESTION_ID --promotion-outcome accepted
 uv run notification-hub personal-ops-queue-health
 uv run notification-hub-personal-ops-queue-health --json
+uv run notification-hub personal-ops-queue-burn-in
+uv run notification-hub-personal-ops-queue-burn-in --json
 uv run notification-hub personal-ops-queue-scenario
 uv run notification-hub logs
 uv run notification-hub-logs --json
@@ -109,6 +111,9 @@ and final `pending`, `accepted`, `rejected`, or `ignored` outcome.
 The personal-ops-queue-health command is the normal maintenance check for this queue. It reports
 queued item age, promoted handoffs still waiting on downstream outcome sync, stale pending
 promotions, and the next safe operator commands without applying work.
+The personal-ops-queue-burn-in command combines queue health, the temporary queue lifecycle
+scenario, and recent runtime burn-in into one non-applying readiness report. Use it before promoting
+real handoffs or after syncing a downstream personal-ops outcome.
 The personal-ops-queue-scenario command runs a temporary end-to-end queue lifecycle, including a
 promoted handoff with an accepted outcome, without touching the real operator queue.
 See `docs/PRODUCT-BOUNDARY.md` for the current ownership split between notification-hub,
@@ -315,6 +320,8 @@ uv run --frozen notification-hub personal-ops-queue
 uv run --frozen notification-hub personal-ops-queue --queue-id QUEUE_ID --status rejected --reason "duplicate"
 uv run --frozen notification-hub personal-ops-queue-health
 uv run --frozen notification-hub-personal-ops-queue-health --json
+uv run --frozen notification-hub personal-ops-queue-burn-in
+uv run --frozen notification-hub-personal-ops-queue-burn-in --json
 uv run --frozen notification-hub personal-ops-queue-scenario
 uv run --frozen notification-hub logs
 curl http://127.0.0.1:9199/review
