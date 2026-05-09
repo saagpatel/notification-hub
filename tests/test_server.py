@@ -315,6 +315,74 @@ async def test_review_packages_endpoint_lists_saved_packages(client: AsyncClient
     mock_packages.assert_called_once_with(limit=3)
 
 
+async def test_review_package_detail_endpoint_inspects_saved_package(client: AsyncClient) -> None:
+    with patch(
+        "notification_hub.server.load_action_review_package_detail",
+        return_value={
+            "status": "ok",
+            "path": "/tmp/personal-ops-actions-20260509-100000.json",
+            "name": "personal-ops-actions-20260509-100000.json",
+            "schema_version": "notification-hub.personal_ops_action_export.v1",
+            "generated_at": "2026-05-09T10:00:00+00:00",
+            "hours": 2,
+            "actions": [
+                {
+                    "title": "Approval Requested",
+                    "priority": "high",
+                    "state": "waiting",
+                    "suggested_next_action": "Review the waiting item.",
+                    "evidence_event_id": "abc123",
+                    "evidence_timestamp": "2026-05-09T00:00:00+00:00",
+                }
+            ],
+            "validation": {
+                "status": "ok",
+                "path": "/tmp/personal-ops-actions-20260509-100000.json",
+                "schema_version": "notification-hub.personal_ops_action_export.v1",
+                "action_count": 1,
+                "valid_action_count": 1,
+                "warning_count": 0,
+                "error_count": 0,
+                "warnings": [],
+                "errors": [],
+            },
+            "applied": False,
+            "error": None,
+        },
+    ) as mock_detail:
+        resp = await client.get("/review/package/personal-ops-actions-20260509-100000.json")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert data["applied"] is False
+    assert data["actions"][0]["evidence_event_id"] == "abc123"
+    mock_detail.assert_called_once_with(name="personal-ops-actions-20260509-100000.json")
+
+
+async def test_review_delete_package_endpoint_removes_saved_package(client: AsyncClient) -> None:
+    server_mod.reset_review_package_state()
+    with patch(
+        "notification_hub.server.delete_action_review_package",
+        return_value={
+            "status": "ok",
+            "path": "/tmp/actions.json",
+            "name": "personal-ops-actions-20260509-100000.json",
+            "deleted": True,
+            "applied": False,
+            "error": None,
+        },
+    ) as mock_delete:
+        resp = await client.delete("/review/package/personal-ops-actions-20260509-100000.json")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert data["deleted"] is True
+    assert data["applied"] is False
+    mock_delete.assert_called_once_with(name="personal-ops-actions-20260509-100000.json")
+
+
 async def test_review_validate_package_uses_newest_saved_package(client: AsyncClient) -> None:
     server_mod.reset_review_package_state()
     with patch(

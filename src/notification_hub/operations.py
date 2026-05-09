@@ -158,6 +158,28 @@ class ActionReviewPackageReport(TypedDict):
     error_count: int
 
 
+class ActionReviewPackageDetailReport(TypedDict):
+    status: str
+    path: str
+    name: str
+    schema_version: str | None
+    generated_at: str | None
+    hours: int | None
+    actions: list[dict[str, object]]
+    validation: ActionPackageValidationReport
+    applied: bool
+    error: str | None
+
+
+class ActionReviewPackageDeleteReport(TypedDict):
+    status: str
+    path: str
+    name: str
+    deleted: bool
+    applied: bool
+    error: str | None
+
+
 class PersonalOpsImportReport(TypedDict):
     status: str
     path: str
@@ -651,6 +673,147 @@ def list_action_review_packages(
             }
         )
     return reports
+
+
+def _empty_package_validation(path: Path, error: str) -> ActionPackageValidationReport:
+    return {
+        "status": "degraded",
+        "path": str(path),
+        "schema_version": None,
+        "action_count": 0,
+        "valid_action_count": 0,
+        "warning_count": 0,
+        "error_count": 1,
+        "warnings": [],
+        "errors": [error],
+    }
+
+
+def _is_safe_action_review_package_name(name: str) -> bool:
+    return Path(name).name == name and re.fullmatch(r"personal-ops-actions-\d{8}-\d{6}\.json", name) is not None
+
+
+def load_action_review_package_detail(
+    *,
+    name: str,
+    review_dir: Path | None = None,
+) -> ActionReviewPackageDetailReport:
+    """Load a saved review package summary without importing or applying it."""
+    target_dir = review_dir or ACTION_EXPORT_DIR
+    target_path = target_dir / name
+    if not _is_safe_action_review_package_name(name):
+        error = "invalid review package name"
+        return {
+            "status": "degraded",
+            "path": str(target_path),
+            "name": name,
+            "schema_version": None,
+            "generated_at": None,
+            "hours": None,
+            "actions": [],
+            "validation": _empty_package_validation(target_path, error),
+            "applied": False,
+            "error": error,
+        }
+
+    validation = validate_action_package(target_path)
+    try:
+        payload = json.loads(target_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return {
+            "status": "degraded",
+            "path": str(target_path),
+            "name": name,
+            "schema_version": None,
+            "generated_at": None,
+            "hours": None,
+            "actions": [],
+            "validation": validation,
+            "applied": False,
+            "error": str(exc),
+        }
+
+    if not isinstance(payload, dict):
+        error = "package root must be an object"
+        return {
+            "status": "degraded",
+            "path": str(target_path),
+            "name": name,
+            "schema_version": None,
+            "generated_at": None,
+            "hours": None,
+            "actions": [],
+            "validation": validation,
+            "applied": False,
+            "error": error,
+        }
+
+    package = cast(dict[str, object], payload)
+    actions_value = package.get("actions")
+    actions: list[dict[str, object]] = []
+    if isinstance(actions_value, list):
+        for action_value in cast(list[object], actions_value):
+            if isinstance(action_value, dict):
+                actions.append(cast(dict[str, object], action_value))
+    return {
+        "status": validation["status"],
+        "path": str(target_path),
+        "name": name,
+        "schema_version": _as_str(package.get("schema_version")),
+        "generated_at": _as_str(package.get("generated_at")),
+        "hours": _as_int(package.get("hours")),
+        "actions": actions,
+        "validation": validation,
+        "applied": False,
+        "error": None if validation["status"] == "ok" else "package validation failed",
+    }
+
+
+def delete_action_review_package(
+    *,
+    name: str,
+    review_dir: Path | None = None,
+) -> ActionReviewPackageDeleteReport:
+    """Delete one saved review package without importing or applying it."""
+    target_dir = review_dir or ACTION_EXPORT_DIR
+    target_path = target_dir / name
+    if not _is_safe_action_review_package_name(name):
+        return {
+            "status": "degraded",
+            "path": str(target_path),
+            "name": name,
+            "deleted": False,
+            "applied": False,
+            "error": "invalid review package name",
+        }
+    try:
+        target_path.unlink()
+    except FileNotFoundError:
+        return {
+            "status": "degraded",
+            "path": str(target_path),
+            "name": name,
+            "deleted": False,
+            "applied": False,
+            "error": "review package not found",
+        }
+    except OSError as exc:
+        return {
+            "status": "degraded",
+            "path": str(target_path),
+            "name": name,
+            "deleted": False,
+            "applied": False,
+            "error": str(exc),
+        }
+    return {
+        "status": "ok",
+        "path": str(target_path),
+        "name": name,
+        "deleted": True,
+        "applied": False,
+        "error": None,
+    }
 
 
 def _require_str(value: object, field: str, errors: list[str]) -> str | None:

@@ -18,7 +18,9 @@ from notification_hub.config import BRIDGE_FILE, get_policy_config
 from notification_hub.diagnostics import collect_runtime_readiness
 from notification_hub.models import Event, EventResponse
 from notification_hub.operations import (
+    delete_action_review_package,
     list_action_review_packages,
+    load_action_review_package_detail,
     run_inbox,
     run_personal_ops_action_export,
     run_retention,
@@ -251,6 +253,7 @@ REVIEW_HTML = """<!doctype html>
       font-weight: 600;
     }
     button:hover { border-color: #98a4b3; }
+    .button-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
     .summary { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; margin-bottom: 18px; }
     .metric, section {
       background: #ffffff;
@@ -319,6 +322,10 @@ REVIEW_HTML = """<!doctype html>
         <h2>Recent Packages</h2>
         <ul id="packages"></ul>
       </section>
+      <section>
+        <h2>Package Detail</h2>
+        <ul id="packageDetail"></ul>
+      </section>
     </div>
   </main>
   <script>
@@ -329,6 +336,7 @@ REVIEW_HTML = """<!doctype html>
     const trust = document.getElementById("trust");
     const packageState = document.getElementById("package");
     const packages = document.getElementById("packages");
+    const packageDetail = document.getElementById("packageDetail");
 
     function item(html) {
       const li = document.createElement("li");
@@ -404,7 +412,60 @@ REVIEW_HTML = """<!doctype html>
       renderList(packages, data.packages, p => item(`
         <div class="line"><span class="title">${esc(p.name)}</span><span class="meta">${esc(p.validation_status)} / ${esc(p.valid_action_count)} valid</span></div>
         <div class="next">${esc(p.path)}</div>
+        <div class="button-row">
+          <button type="button" data-package="${esc(p.name)}">Inspect</button>
+          <button type="button" data-delete-package="${esc(p.name)}">Delete</button>
+        </div>
       `), "No saved review packages.");
+      packages.querySelectorAll("button[data-package]").forEach(button => {
+        button.addEventListener("click", () => loadPackageDetail(button.dataset.package));
+      });
+      packages.querySelectorAll("button[data-delete-package]").forEach(button => {
+        button.addEventListener("click", () => deletePackage(button.dataset.deletePackage));
+      });
+      if (data.packages && data.packages.length > 0) {
+        await loadPackageDetail(data.packages[0].name);
+      } else {
+        empty(packageDetail, "No package selected.");
+      }
+    }
+    async function loadPackageDetail(name) {
+      if (!name) {
+        empty(packageDetail, "No package selected.");
+        return;
+      }
+      const res = await fetch(`/review/package/${encodeURIComponent(name)}`);
+      const data = await res.json();
+      const actionRows = (data.actions || []).slice(0, 6).map(a => item(`
+        <div class="line"><span class="title">${esc(a.title)}</span><span class="meta">${esc(a.priority)}/${esc(a.state)} x${esc(a.count)}</span></div>
+        <div class="next">${esc(a.source)}${a.project ? " / " + esc(a.project) : ""} / ${esc(a.intent)}</div>
+        <div class="next">${esc(a.suggested_next_action)}</div>
+        <div class="next">Action ID: ${esc(a.action_id)}</div>
+        <div class="next">Evidence: ${esc(a.evidence_event_id)} / ${esc(a.evidence_timestamp)}</div>
+      `));
+      packageDetail.replaceChildren(
+        item(`<div class="line"><span class="title">${esc(data.name)}</span><span class="meta">${esc(data.status)}</span></div>`),
+        item(`<div class="next">${esc(data.path)}</div>`),
+        item(`<div class="line"><span class="title">Generated</span><span class="meta">${esc(data.generated_at || "unknown")} / ${esc(data.hours || "unknown")}h</span></div>`),
+        item(`<div class="line"><span class="title">Validation</span><span class="meta">${esc(data.validation.valid_action_count)} valid / ${esc(data.validation.error_count)} errors</span></div>`),
+        ...((data.validation.errors || []).map(error => item(`<div class="next">${esc(error)}</div>`))),
+        ...actionRows
+      );
+    }
+    async function deletePackage(name) {
+      if (!name) {
+        return;
+      }
+      const res = await fetch(`/review/package/${encodeURIComponent(name)}`, { method: "DELETE" });
+      const data = await res.json();
+      if (data.status !== "ok") {
+        packageDetail.replaceChildren(
+          item(`<div class="line"><span class="title">${esc(name)}</span><span class="meta">${esc(data.status)}</span></div>`),
+          item(`<div class="next">${esc(data.error)}</div>`)
+        );
+        return;
+      }
+      await loadPackages();
     }
     document.getElementById("refresh").addEventListener("click", load);
     document.getElementById("savePackage").addEventListener("click", () => post("/review/save-package"));
@@ -568,6 +629,23 @@ async def review_packages(limit: int = 10) -> dict[str, object]:
         "packages": list_action_review_packages(limit=max(limit, 1)),
         "applied": False,
     }
+
+
+@app.get("/review/package/{name}")
+async def review_package_detail(name: str) -> dict[str, object]:
+    """Inspect one saved review package without importing or applying it."""
+    return dict(load_action_review_package_detail(name=name))
+
+
+@app.delete("/review/package/{name}")
+async def review_delete_package(name: str) -> dict[str, object]:
+    """Delete one saved review package without importing or applying it."""
+    global _latest_review_package_path, _latest_review_package_validation_status
+    report = delete_action_review_package(name=name)
+    if report["deleted"] and _latest_review_package_path == report["path"]:
+        _latest_review_package_path = None
+        _latest_review_package_validation_status = None
+    return dict(report)
 
 
 @app.post("/review/validate-package")

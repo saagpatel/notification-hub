@@ -23,7 +23,9 @@ from notification_hub.config import (
 from notification_hub.models import StoredEvent
 from notification_hub.operations import (
     bootstrap_policy_config,
+    delete_action_review_package,
     list_action_review_packages,
+    load_action_review_package_detail,
     run_burn_in,
     run_coordination_snapshot,
     run_inbox,
@@ -409,6 +411,77 @@ def test_list_action_review_packages_reports_recent_valid_packages(tmp_path: Pat
     assert packages[0]["name"] == newer_package.name
     assert packages[0]["validation_status"] == "ok"
     assert packages[0]["valid_action_count"] == 1
+
+
+def test_load_action_review_package_detail_returns_actions(tmp_path: Path) -> None:
+    package_name = "personal-ops-actions-20260509-100000.json"
+    package_path = tmp_path / package_name
+    package_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "notification-hub.personal_ops_action_export.v1",
+                "generated_at": "2026-05-09T10:00:00+00:00",
+                "hours": 2,
+                "actions": [
+                    {
+                        "action_id": "notification-hub:personal-ops:mail:waiting_on_user:approval-requested",
+                        "source": "personal-ops",
+                        "project": "mail",
+                        "intent": "waiting_on_user",
+                        "priority": "high",
+                        "state": "waiting",
+                        "title": "Approval Requested",
+                        "summary": "2 repeated personal-ops events",
+                        "suggested_next_action": "Review the waiting item.",
+                        "evidence_event_id": "abc123",
+                        "evidence_timestamp": "2026-05-09T00:00:00+00:00",
+                        "count": 2,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    detail = load_action_review_package_detail(name=package_name, review_dir=tmp_path)
+
+    assert detail["status"] == "ok"
+    assert detail["applied"] is False
+    assert detail["generated_at"] == "2026-05-09T10:00:00+00:00"
+    assert detail["hours"] == 2
+    assert detail["validation"]["valid_action_count"] == 1
+    assert detail["actions"][0]["evidence_event_id"] == "abc123"
+
+
+def test_load_action_review_package_detail_rejects_unsafe_name(tmp_path: Path) -> None:
+    detail = load_action_review_package_detail(name="../events.jsonl", review_dir=tmp_path)
+
+    assert detail["status"] == "degraded"
+    assert detail["applied"] is False
+    assert detail["actions"] == []
+    assert detail["validation"]["errors"] == ["invalid review package name"]
+
+
+def test_delete_action_review_package_removes_safe_package(tmp_path: Path) -> None:
+    package_name = "personal-ops-actions-20260509-100000.json"
+    package_path = tmp_path / package_name
+    package_path.write_text("{}", encoding="utf-8")
+
+    report = delete_action_review_package(name=package_name, review_dir=tmp_path)
+
+    assert report["status"] == "ok"
+    assert report["deleted"] is True
+    assert report["applied"] is False
+    assert not package_path.exists()
+
+
+def test_delete_action_review_package_rejects_unsafe_name(tmp_path: Path) -> None:
+    report = delete_action_review_package(name="../events.jsonl", review_dir=tmp_path)
+
+    assert report["status"] == "degraded"
+    assert report["deleted"] is False
+    assert report["applied"] is False
+    assert report["error"] == "invalid review package name"
 
 
 def test_validate_action_package_rejects_invalid_action(tmp_path: Path) -> None:
