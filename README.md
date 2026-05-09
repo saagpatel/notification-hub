@@ -60,6 +60,8 @@ uv run notification-hub personal-ops-import path/to/actions.json
 uv run notification-hub personal-ops-import path/to/actions.json --enqueue
 uv run notification-hub personal-ops-queue
 uv run notification-hub personal-ops-queue --queue-id QUEUE_ID --status reviewed --reason "evidence checked"
+uv run notification-hub personal-ops-queue --queue-id QUEUE_ID --status promoted --promotion-target-id SUGGESTION_ID --promotion-outcome accepted
+uv run notification-hub personal-ops-queue-scenario
 uv run notification-hub logs
 uv run notification-hub-logs --json
 uv run notification-hub burn-in --minutes 10
@@ -100,7 +102,12 @@ approvals, sends, or applied changes.
 The personal-ops-queue command lists and updates queued handoffs through explicit lifecycle states:
 `queued`, `reviewed`, `rejected`, `snoozed`, `superseded`, and `promoted`. Marking an item
 `promoted` records that an operator-mediated personal-ops task suggestion was created; it does not
-create that suggestion by itself.
+create that suggestion by itself. Promotion records can also store the personal-ops suggestion id
+and final `pending`, `accepted`, `rejected`, or `ignored` outcome.
+The personal-ops-queue-scenario command runs a temporary end-to-end queue lifecycle, including a
+promoted handoff with an accepted outcome, without touching the real operator queue.
+See `docs/PRODUCT-BOUNDARY.md` for the current ownership split between notification-hub,
+personal-ops, and bridge-db.
 The logs command shows recent stored events, daemon stdout/stderr tails, and a summary of accepted
 versus rejected `/events` posts plus Slack delivery failures without changing local runtime state.
 The burn-in command summarizes recent accepted/rejected event posts and repeated event signatures
@@ -301,6 +308,7 @@ uv run --frozen notification-hub personal-ops-import path/to/actions.json
 uv run --frozen notification-hub personal-ops-import path/to/actions.json --enqueue
 uv run --frozen notification-hub personal-ops-queue
 uv run --frozen notification-hub personal-ops-queue --queue-id QUEUE_ID --status rejected --reason "duplicate"
+uv run --frozen notification-hub personal-ops-queue-scenario
 uv run --frozen notification-hub logs
 curl http://127.0.0.1:9199/review
 curl http://127.0.0.1:9199/review/packages

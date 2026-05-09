@@ -277,6 +277,10 @@ REVIEW_HTML = """<!doctype html>
     .title { font-weight: 650; overflow-wrap: anywhere; }
     .meta { color: #667085; font-size: 12px; white-space: nowrap; }
     .next { color: #475467; font-size: 13px; margin-top: 4px; }
+    .badge-row { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+    .badge { border: 1px solid #d0d5dd; border-radius: 999px; color: #344054; font-size: 12px; padding: 2px 8px; }
+    .toolbar { align-items: center; display: flex; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+    select { border: 1px solid #d0d5dd; border-radius: 6px; padding: 5px 8px; }
     .trust { background: #eef6f1; border-color: #badfc8; }
     .warn { background: #fff8eb; border-color: #efd49a; }
     .empty { color: #667085; font-style: italic; }
@@ -331,7 +335,14 @@ REVIEW_HTML = """<!doctype html>
         <ul id="packageDetail"></ul>
       </section>
       <section>
-        <h2>Import Queue</h2>
+        <div class="toolbar">
+          <h2>Import Queue</h2>
+          <select id="importQueueFilter" aria-label="Import queue filter">
+            <option value="open">Open</option>
+            <option value="all">All</option>
+            <option value="promoted">Promoted</option>
+          </select>
+        </div>
         <ul id="importQueue"></ul>
       </section>
     </div>
@@ -346,6 +357,7 @@ REVIEW_HTML = """<!doctype html>
     const packages = document.getElementById("packages");
     const packageDetail = document.getElementById("packageDetail");
     const importQueue = document.getElementById("importQueue");
+    const importQueueFilter = document.getElementById("importQueueFilter");
 
     function item(html) {
       const li = document.createElement("li");
@@ -363,6 +375,24 @@ REVIEW_HTML = """<!doctype html>
     }
     function empty(target, text) {
       target.replaceChildren(item(`<span class="empty">${text}</span>`));
+    }
+    function badge(value) {
+      return value ? `<span class="badge">${esc(value)}</span>` : "";
+    }
+    function ageLabel(timestamp) {
+      const parsed = Date.parse(timestamp || "");
+      if (Number.isNaN(parsed)) {
+        return "unknown age";
+      }
+      const minutes = Math.max(0, Math.round((Date.now() - parsed) / 60000));
+      if (minutes < 60) {
+        return `${minutes}m`;
+      }
+      const hours = Math.round(minutes / 60);
+      if (hours < 48) {
+        return `${hours}h`;
+      }
+      return `${Math.round(hours / 24)}d`;
     }
     function renderList(target, rows, render, emptyText) {
       if (!rows || rows.length === 0) {
@@ -497,9 +527,24 @@ REVIEW_HTML = """<!doctype html>
     async function loadImportQueue() {
       const res = await fetch("/review/import-queue?limit=6");
       const data = await res.json();
-      renderList(importQueue, data.items, q => item(`
+      const filter = importQueueFilter ? importQueueFilter.value : "open";
+      const rows = (data.items || []).filter(q => {
+        if (filter === "all") {
+          return true;
+        }
+        if (filter === "promoted") {
+          return q.status === "promoted";
+        }
+        return q.status === "queued" || q.status === "snoozed" || (q.status === "promoted" && q.promotion_outcome === "pending");
+      });
+      renderList(importQueue, rows, q => item(`
         <div class="line"><span class="title">${esc(q.title)}</span><span class="meta">${esc(q.priority)}/${esc(q.state)}</span></div>
-        <div class="next">${esc(q.status)} / ${esc(q.source_package_name)}</div>
+        <div class="badge-row">
+          ${badge(q.status)}
+          ${badge(q.promotion_outcome)}
+          ${badge(ageLabel(q.updated_at || q.enqueued_at))}
+        </div>
+        <div class="next">${esc(q.source_package_name)}${q.promotion_target_id ? " / " + esc(q.promotion_target_id) : ""}</div>
         <div class="next">Evidence: ${esc(q.evidence_event_id)}</div>
         <div class="button-row">
           <button type="button" data-queue-id="${esc(q.queue_id)}" data-queue-status="reviewed">Reviewed</button>
@@ -520,6 +565,11 @@ REVIEW_HTML = """<!doctype html>
       if (status === "snoozed") {
         body.snoozed_until = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
       }
+      if (status === "promoted") {
+        body.promotion_target = "personal-ops task suggestion";
+        body.promotion_outcome = "pending";
+        body.promotion_outcome_note = "Review UI marked the handoff promoted; sync personal-ops outcome later.";
+      }
       const res = await fetch(`/review/import-queue/${encodeURIComponent(queueId)}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -533,6 +583,7 @@ REVIEW_HTML = """<!doctype html>
       await loadImportQueue();
     }
     document.getElementById("refresh").addEventListener("click", load);
+    importQueueFilter.addEventListener("change", loadImportQueue);
     document.getElementById("savePackage").addEventListener("click", () => post("/review/save-package"));
     document.getElementById("validatePackage").addEventListener("click", () => post("/review/validate-package"));
     load().catch(err => {
@@ -738,12 +789,18 @@ async def review_update_import_queue(queue_id: str, request: Request) -> dict[st
     reason_value = body.get("reason")
     snoozed_until_value = body.get("snoozed_until")
     promotion_target_value = body.get("promotion_target")
+    promotion_target_id_value = body.get("promotion_target_id")
+    promotion_outcome_value = body.get("promotion_outcome")
+    promotion_outcome_note_value = body.get("promotion_outcome_note")
     report = update_personal_ops_import_queue_item(
         queue_id=queue_id,
         status=status,
         reason=reason_value if isinstance(reason_value, str) else None,
         snoozed_until=snoozed_until_value if isinstance(snoozed_until_value, str) else None,
         promotion_target=promotion_target_value if isinstance(promotion_target_value, str) else None,
+        promotion_target_id=promotion_target_id_value if isinstance(promotion_target_id_value, str) else None,
+        promotion_outcome=promotion_outcome_value if isinstance(promotion_outcome_value, str) else None,
+        promotion_outcome_note=promotion_outcome_note_value if isinstance(promotion_outcome_note_value, str) else None,
     )
     return dict(report)
 

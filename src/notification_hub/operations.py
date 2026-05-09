@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import sqlite3
+import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TypedDict, cast
@@ -213,6 +214,10 @@ class PersonalOpsImportQueueItemReport(TypedDict):
     outcome_reason: str | None
     promoted_at: str | None
     promotion_target: str | None
+    promotion_target_id: str | None
+    promotion_outcome: str | None
+    promotion_outcome_at: str | None
+    promotion_outcome_note: str | None
 
 
 class PersonalOpsImportQueueUpdateReport(TypedDict):
@@ -235,10 +240,29 @@ class PersonalOpsImportQueueHealthReport(TypedDict):
     snoozed_count: int
     superseded_count: int
     promoted_count: int
+    promoted_pending_count: int
+    promoted_accepted_count: int
+    promoted_rejected_count: int
+    promoted_ignored_count: int
     needs_review: bool
     oldest_queued_at: str | None
     oldest_queued_age_seconds: float | None
     next_action: str
+
+
+class PersonalOpsQueueScenarioReport(TypedDict):
+    status: str
+    queue_path: str
+    package_path: str
+    queue_id: str | None
+    queued_count: int
+    review_status: str | None
+    promotion_status: str | None
+    promotion_outcome: str | None
+    final_health: PersonalOpsImportQueueHealthReport
+    applied: bool
+    next_action: str
+    error: str | None
 
 
 class BridgeSaveReport(TypedDict):
@@ -387,6 +411,7 @@ PERSONAL_OPS_IMPORT_QUEUE = EVENTS_DIR / "personal-ops-import-queue.jsonl"
 ACTION_EXPORT_SCHEMA_VERSION = "notification-hub.personal_ops_action_export.v1"
 PERSONAL_OPS_IMPORT_QUEUE_SCHEMA_VERSION = "notification-hub.personal_ops_import_queue.v1"
 PERSONAL_OPS_QUEUE_STATUSES = {"queued", "reviewed", "rejected", "snoozed", "superseded", "promoted"}
+PERSONAL_OPS_PROMOTION_OUTCOMES = {"pending", "accepted", "rejected", "ignored"}
 
 
 def _as_dict(value: object) -> dict[str, object]:
@@ -936,6 +961,10 @@ def _import_queue_item_report(item: dict[str, object]) -> PersonalOpsImportQueue
         "outcome_reason": _as_str(item.get("outcome_reason")),
         "promoted_at": _as_str(item.get("promoted_at")),
         "promotion_target": _as_str(item.get("promotion_target")),
+        "promotion_target_id": _as_str(item.get("promotion_target_id")),
+        "promotion_outcome": _as_str(item.get("promotion_outcome")),
+        "promotion_outcome_at": _as_str(item.get("promotion_outcome_at")),
+        "promotion_outcome_note": _as_str(item.get("promotion_outcome_note")),
     }
 
 
@@ -962,10 +991,15 @@ def summarize_personal_ops_import_queue(
     except OSError:
         raw_items = []
     counts = {status: 0 for status in PERSONAL_OPS_QUEUE_STATUSES}
+    promotion_outcomes = {outcome: 0 for outcome in PERSONAL_OPS_PROMOTION_OUTCOMES}
     for item in raw_items:
         status = _as_str(item.get("status")) or "unknown"
         if status in counts:
             counts[status] += 1
+        if status == "promoted":
+            outcome = _as_str(item.get("promotion_outcome")) or "pending"
+            if outcome in promotion_outcomes:
+                promotion_outcomes[outcome] += 1
     queued_items = [item for item in raw_items if item.get("status") == "queued"]
     queued_datetimes = [
         parsed
@@ -975,7 +1009,14 @@ def summarize_personal_ops_import_queue(
     oldest = min(queued_datetimes) if queued_datetimes else None
     age = (datetime.now(timezone.utc) - oldest).total_seconds() if oldest is not None else None
     queued_count = counts["queued"]
-    status = "warn" if queued_count > 0 else "ok"
+    promoted_pending_count = promotion_outcomes["pending"]
+    status = "warn" if queued_count > 0 or promoted_pending_count > 0 else "ok"
+    if queued_count > 0:
+        next_action = "Review queued personal-ops handoff items."
+    elif promoted_pending_count > 0:
+        next_action = "Sync promoted personal-ops handoff outcomes."
+    else:
+        next_action = "No queued personal-ops handoff items."
     return {
         "status": status,
         "queue_path": str(target_queue_path),
@@ -986,10 +1027,14 @@ def summarize_personal_ops_import_queue(
         "snoozed_count": counts["snoozed"],
         "superseded_count": counts["superseded"],
         "promoted_count": counts["promoted"],
+        "promoted_pending_count": promoted_pending_count,
+        "promoted_accepted_count": promotion_outcomes["accepted"],
+        "promoted_rejected_count": promotion_outcomes["rejected"],
+        "promoted_ignored_count": promotion_outcomes["ignored"],
         "needs_review": queued_count > 0,
         "oldest_queued_at": oldest.isoformat() if oldest is not None else None,
         "oldest_queued_age_seconds": age,
-        "next_action": "Review queued personal-ops handoff items." if queued_count > 0 else "No queued personal-ops handoff items.",
+        "next_action": next_action,
     }
 
 
@@ -1064,6 +1109,9 @@ def update_personal_ops_import_queue_item(
     reason: str | None = None,
     snoozed_until: str | None = None,
     promotion_target: str | None = None,
+    promotion_target_id: str | None = None,
+    promotion_outcome: str | None = None,
+    promotion_outcome_note: str | None = None,
     queue_path: Path | None = None,
 ) -> PersonalOpsImportQueueUpdateReport:
     """Update one queued personal-ops handoff lifecycle state without applying work."""
@@ -1077,6 +1125,16 @@ def update_personal_ops_import_queue_item(
             "item": None,
             "next_action": "Use one of: queued, reviewed, rejected, snoozed, superseded, promoted.",
             "error": f"invalid queue status: {status}",
+        }
+    if promotion_outcome is not None and promotion_outcome not in PERSONAL_OPS_PROMOTION_OUTCOMES:
+        return {
+            "status": "degraded",
+            "queue_id": queue_id,
+            "queue_path": str(target_queue_path),
+            "updated": False,
+            "item": None,
+            "next_action": "Use one of: pending, accepted, rejected, ignored.",
+            "error": f"invalid promotion outcome: {promotion_outcome}",
         }
     if status == "snoozed" and snoozed_until is None:
         return {
@@ -1122,11 +1180,27 @@ def update_personal_ops_import_queue_item(
         elif status == "promoted":
             item["promoted_at"] = now
             item["promotion_target"] = promotion_target or "personal-ops task suggestion"
+            if promotion_target_id:
+                item["promotion_target_id"] = promotion_target_id
+            item["promotion_outcome"] = promotion_outcome or _as_str(item.get("promotion_outcome")) or "pending"
+            if promotion_outcome is not None:
+                item["promotion_outcome_at"] = now
+            if promotion_outcome_note:
+                item["promotion_outcome_note"] = promotion_outcome_note
             item["applied"] = True
         elif status == "queued":
             item["applied"] = False
             item.pop("promoted_at", None)
             item.pop("promotion_target", None)
+            item.pop("promotion_target_id", None)
+            item.pop("promotion_outcome", None)
+            item.pop("promotion_outcome_at", None)
+            item.pop("promotion_outcome_note", None)
+        if status != "queued" and promotion_outcome is not None:
+            item["promotion_outcome"] = promotion_outcome
+            item["promotion_outcome_at"] = now
+        if status != "queued" and promotion_outcome_note:
+            item["promotion_outcome_note"] = promotion_outcome_note
         matched = item
         break
 
@@ -1155,7 +1229,11 @@ def update_personal_ops_import_queue_item(
         }
 
     if status == "promoted":
-        next_action = "Accept or reject the matching personal-ops task suggestion, then leave the queue item promoted."
+        item_report = _import_queue_item_report(matched)
+        if item_report["promotion_outcome"] == "pending":
+            next_action = "Accept or reject the matching personal-ops task suggestion, then sync the outcome."
+        else:
+            next_action = "Promotion outcome is recorded; no queue action is needed."
     elif status == "rejected":
         next_action = "No personal-ops action will be created for this handoff."
     elif status == "snoozed":
@@ -1785,6 +1863,104 @@ def run_personal_ops_import_stub(
         ),
         "error": None,
     }
+
+
+def run_personal_ops_queue_scenario() -> PersonalOpsQueueScenarioReport:
+    """Exercise the local queue lifecycle without touching the operator queue."""
+    with tempfile.TemporaryDirectory(prefix="notification-hub-queue-scenario-") as tmp:
+        scenario_dir = Path(tmp)
+        package_path = scenario_dir / "personal-ops-actions-scenario.json"
+        queue_path = scenario_dir / "personal-ops-import-queue.jsonl"
+        package_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": ACTION_EXPORT_SCHEMA_VERSION,
+                    "generated_at": datetime.now(timezone.utc).isoformat(),
+                    "hours": 2,
+                    "actions": [
+                        {
+                            "action_id": "scenario-action-1",
+                            "title": "Scenario handoff",
+                            "summary": "Exercise notification-hub to personal-ops queue lifecycle.",
+                            "suggested_next_action": "Confirm the scripted scenario records the final promotion outcome.",
+                            "priority": "high",
+                            "state": "waiting",
+                            "source": "notification-hub",
+                            "project": "notification-hub",
+                            "intent": "test",
+                            "count": 1,
+                            "evidence_event_id": "scenario-event-1",
+                            "evidence_timestamp": datetime.now(timezone.utc).isoformat(),
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        imported = run_personal_ops_import_stub(path=package_path, enqueue=True, queue_path=queue_path)
+        queue_items = list_personal_ops_import_queue(queue_path=queue_path, limit=1)
+        queue_id = queue_items[0]["queue_id"] if queue_items else None
+        if imported["status"] != "ok" or queue_id is None:
+            return {
+                "status": "degraded",
+                "queue_path": str(queue_path),
+                "package_path": str(package_path),
+                "queue_id": queue_id,
+                "queued_count": imported["queued_count"],
+                "review_status": None,
+                "promotion_status": None,
+                "promotion_outcome": None,
+                "final_health": summarize_personal_ops_import_queue(queue_path=queue_path),
+                "applied": False,
+                "next_action": "Fix scenario import or queue creation before relying on the lifecycle.",
+                "error": imported["error"] or "scenario queue item was not created",
+            }
+
+        reviewed = update_personal_ops_import_queue_item(
+            queue_id=queue_id,
+            status="reviewed",
+            reason="scenario evidence checked",
+            queue_path=queue_path,
+        )
+        promoted = update_personal_ops_import_queue_item(
+            queue_id=queue_id,
+            status="promoted",
+            reason="scenario personal-ops task suggestion created",
+            promotion_target="personal-ops task suggestion",
+            promotion_target_id="scenario-suggestion-1",
+            promotion_outcome="pending",
+            promotion_outcome_note="Scenario suggestion created; awaiting operator decision.",
+            queue_path=queue_path,
+        )
+        accepted = update_personal_ops_import_queue_item(
+            queue_id=queue_id,
+            status="promoted",
+            reason="scenario personal-ops task suggestion accepted",
+            promotion_target="personal-ops task suggestion",
+            promotion_target_id="scenario-suggestion-1",
+            promotion_outcome="accepted",
+            promotion_outcome_note="Scenario accepted.",
+            queue_path=queue_path,
+        )
+        final_item = accepted["item"] or promoted["item"] or reviewed["item"]
+        final_health = summarize_personal_ops_import_queue(queue_path=queue_path)
+        status = "ok" if reviewed["status"] == promoted["status"] == accepted["status"] == "ok" else "degraded"
+        return {
+            "status": status,
+            "queue_path": str(queue_path),
+            "package_path": str(package_path),
+            "queue_id": queue_id,
+            "queued_count": imported["queued_count"],
+            "review_status": reviewed["status"],
+            "promotion_status": promoted["status"],
+            "promotion_outcome": final_item["promotion_outcome"] if final_item is not None else None,
+            "final_health": final_health,
+            "applied": final_item["applied"] if final_item is not None else False,
+            "next_action": "Scenario passed; use the same lifecycle for real queued handoffs." if status == "ok" else (
+                "Inspect the scenario update reports before promoting real handoffs."
+            ),
+            "error": accepted["error"] or promoted["error"] or reviewed["error"],
+        }
 
 
 def run_retention(*, max_events: int, keep_archives: int) -> RetentionReport:

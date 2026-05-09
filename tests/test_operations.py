@@ -33,6 +33,7 @@ from notification_hub.operations import (
     run_logs,
     run_personal_ops_action_export,
     run_personal_ops_import_stub,
+    run_personal_ops_queue_scenario,
     run_policy_check,
     run_retention,
     run_smoke_check,
@@ -629,6 +630,18 @@ def test_personal_ops_import_queue_lifecycle_and_health(tmp_path: Path) -> None:
         status="promoted",
         reason="created personal-ops task suggestion",
         promotion_target="personal-ops task suggestion",
+        promotion_target_id="suggestion-1",
+        promotion_outcome="pending",
+        queue_path=queue_path,
+    )
+    accepted = update_personal_ops_import_queue_item(
+        queue_id=queue_id,
+        status="promoted",
+        reason="accepted in personal-ops",
+        promotion_target="personal-ops task suggestion",
+        promotion_target_id="suggestion-1",
+        promotion_outcome="accepted",
+        promotion_outcome_note="operator accepted the suggestion",
         queue_path=queue_path,
     )
     health_after = summarize_personal_ops_import_queue(queue_path=queue_path)
@@ -644,9 +657,28 @@ def test_personal_ops_import_queue_lifecycle_and_health(tmp_path: Path) -> None:
     assert promoted["item"]["status"] == "promoted"
     assert promoted["item"]["applied"] is True
     assert promoted["item"]["promotion_target"] == "personal-ops task suggestion"
+    assert promoted["item"]["promotion_target_id"] == "suggestion-1"
+    assert promoted["item"]["promotion_outcome"] == "pending"
+    assert accepted["status"] == "ok"
+    assert accepted["item"] is not None
+    assert accepted["item"]["promotion_outcome"] == "accepted"
+    assert accepted["item"]["promotion_outcome_note"] == "operator accepted the suggestion"
     assert health_after["queued_count"] == 0
     assert health_after["promoted_count"] == 1
+    assert health_after["promoted_accepted_count"] == 1
+    assert health_after["promoted_pending_count"] == 0
     assert health_after["needs_review"] is False
+
+
+def test_personal_ops_queue_scenario_records_final_outcome() -> None:
+    report = run_personal_ops_queue_scenario()
+
+    assert report["status"] == "ok"
+    assert report["queued_count"] == 1
+    assert report["queue_id"] is not None
+    assert report["promotion_outcome"] == "accepted"
+    assert report["final_health"]["promoted_accepted_count"] == 1
+    assert report["applied"] is True
 
 
 def test_personal_ops_import_queue_snooze_requires_until(tmp_path: Path) -> None:

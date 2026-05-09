@@ -144,6 +144,12 @@ tuning pass.
   personal-ops.
 - Added `POST /review/package/{name}/queue` and `GET /review/import-queue` so the review UI can
   enqueue and display personal-ops handoff items without applying them.
+- Added promotion outcome tracking so promoted handoffs can retain the personal-ops suggestion id
+  and final `pending`, `accepted`, `rejected`, or `ignored` outcome.
+- Added `personal-ops-queue-scenario` as a temporary end-to-end lifecycle proof that does not touch
+  the real operator queue.
+- Added `docs/PRODUCT-BOUNDARY.md` to keep notification-hub, personal-ops, and bridge-db ownership
+  explicit before expanding the product surface.
 
 ## Verified Baseline
 
@@ -167,6 +173,7 @@ uv run --frozen notification-hub personal-ops-import path/to/actions.json
 uv run --frozen notification-hub personal-ops-import path/to/actions.json --enqueue
 uv run --frozen notification-hub personal-ops-queue
 uv run --frozen notification-hub personal-ops-queue --queue-id QUEUE_ID --status reviewed --reason "evidence checked"
+uv run --frozen notification-hub personal-ops-queue-scenario
 uv run --frozen notification-hub logs
 curl http://127.0.0.1:9199/review
 curl http://127.0.0.1:9199/review/packages
@@ -206,6 +213,8 @@ Expected current outcome:
   adds valid action proposals to the local import queue while keeping `applied: false`
 - `notification-hub personal-ops-queue`: lists and updates queued handoff lifecycle state without
   creating personal-ops tasks, approvals, or sends
+- `notification-hub personal-ops-queue-scenario`: runs a temporary queue lifecycle and records a
+  final accepted promotion outcome without touching runtime queue state
 - `/review`: localhost-only review UI for runtime state, inbox rollups, action proposals, and trust
   state
 - `/review/save-package` and `/review/validate-package`: review UI controls for staging and
@@ -280,8 +289,8 @@ It is not part of normal day-to-day work.
 
 Start future work from `main`, keep using the frozen verification commands, and treat the repo-owned
 runtime templates as the source of truth for live launcher and hook wiring.
-The next work here should burn in the queue lifecycle with real operator use, then tighten the
-promotion UX once the personal-ops task-suggestion flow has enough evidence.
+The next work here should burn in the queue lifecycle with real operator use, then decide whether
+promotion outcome sync should become automatic during routine personal-ops maintenance.
 
 ## Optional Follow-Up
 

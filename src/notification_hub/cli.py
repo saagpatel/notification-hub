@@ -23,6 +23,7 @@ from notification_hub.operations import (
     PersonalOpsImportQueueHealthReport,
     PersonalOpsImportQueueItemReport,
     PersonalOpsImportQueueUpdateReport,
+    PersonalOpsQueueScenarioReport,
     ActionPackageValidationReport,
     PolicyCheckReport,
     RetentionReport,
@@ -37,6 +38,7 @@ from notification_hub.operations import (
     run_logs,
     run_personal_ops_action_export,
     run_personal_ops_import_stub,
+    run_personal_ops_queue_scenario,
     list_personal_ops_import_queue,
     summarize_personal_ops_import_queue,
     update_personal_ops_import_queue_item,
@@ -342,6 +344,19 @@ def _build_parser(prog: str = "notification-hub") -> argparse.ArgumentParser:
         help="Optional target label when setting --status promoted.",
     )
     personal_ops_queue.add_argument(
+        "--promotion-target-id",
+        help="Optional target id when setting --status promoted.",
+    )
+    personal_ops_queue.add_argument(
+        "--promotion-outcome",
+        choices=["pending", "accepted", "rejected", "ignored"],
+        help="Optional promotion outcome to record.",
+    )
+    personal_ops_queue.add_argument(
+        "--promotion-outcome-note",
+        help="Optional note describing the promotion outcome.",
+    )
+    personal_ops_queue.add_argument(
         "--queue-path",
         help="Optional JSONL queue path.",
     )
@@ -355,6 +370,16 @@ def _build_parser(prog: str = "notification-hub") -> argparse.ArgumentParser:
         "--json",
         action="store_true",
         help="Emit the queue report as JSON.",
+    )
+
+    personal_ops_queue_scenario = subparsers.add_parser(
+        "personal-ops-queue-scenario",
+        help="Run a temporary end-to-end personal-ops queue lifecycle scenario.",
+    )
+    personal_ops_queue_scenario.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the scenario report as JSON.",
     )
 
     explain = subparsers.add_parser(
@@ -602,6 +627,9 @@ def _print_personal_ops_queue_report(report: dict[str, object]) -> None:
     print(f"- rejected: {health['rejected_count']}")
     print(f"- snoozed: {health['snoozed_count']}")
     print(f"- promoted: {health['promoted_count']}")
+    print(f"- promoted pending: {health['promoted_pending_count']}")
+    print(f"- promoted accepted: {health['promoted_accepted_count']}")
+    print(f"- promoted rejected: {health['promoted_rejected_count']}")
     print(f"- next action: {health['next_action']}")
     update = cast(PersonalOpsImportQueueUpdateReport | None, report.get("update"))
     if update is not None:
@@ -623,6 +651,23 @@ def _print_personal_ops_queue_report(report: dict[str, object]) -> None:
             print(f"    snoozed until: {item['snoozed_until']}")
         if item["promotion_target"] is not None:
             print(f"    promotion target: {item['promotion_target']}")
+        if item["promotion_target_id"] is not None:
+            print(f"    promotion target id: {item['promotion_target_id']}")
+        if item["promotion_outcome"] is not None:
+            print(f"    promotion outcome: {item['promotion_outcome']}")
+
+
+def _print_personal_ops_queue_scenario_report(report: PersonalOpsQueueScenarioReport) -> None:
+    print(f"notification-hub personal-ops-queue-scenario: {report['status']}")
+    print(f"- queued: {report['queued_count']}")
+    print(f"- queue id: {report['queue_id']}")
+    print(f"- review status: {report['review_status']}")
+    print(f"- promotion status: {report['promotion_status']}")
+    print(f"- promotion outcome: {report['promotion_outcome']}")
+    print(f"- final promoted accepted: {report['final_health']['promoted_accepted_count']}")
+    print(f"- next action: {report['next_action']}")
+    if report["error"] is not None:
+        print(f"- error: {report['error']}")
 
 
 def _print_logs_report(report: LogsReport) -> None:
@@ -914,6 +959,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 reason=args.reason,
                 snoozed_until=args.snoozed_until,
                 promotion_target=args.promotion_target,
+                promotion_target_id=args.promotion_target_id,
+                promotion_outcome=args.promotion_outcome,
+                promotion_outcome_note=args.promotion_outcome_note,
                 queue_path=queue_path,
             )
         queue_report: dict[str, object] = {
@@ -927,6 +975,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         else:
             _print_personal_ops_queue_report(queue_report)
         return 0 if queue_report["status"] == "ok" else 1
+
+    if args.command == "personal-ops-queue-scenario":
+        report = run_personal_ops_queue_scenario()
+        if args.json:
+            print(json.dumps(report, indent=2, sort_keys=True))
+        else:
+            _print_personal_ops_queue_scenario_report(report)
+        return 0 if report["status"] == "ok" else 1
 
     if args.command == "policy-check":
         report = run_policy_check()

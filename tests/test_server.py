@@ -467,6 +467,10 @@ async def test_review_import_queue_endpoint_lists_queue_items(client: AsyncClien
                 "outcome_reason": None,
                 "promoted_at": None,
                 "promotion_target": None,
+                "promotion_target_id": None,
+                "promotion_outcome": None,
+                "promotion_outcome_at": None,
+                "promotion_outcome_note": None,
             }
         ],
     ) as mock_queue:
@@ -482,6 +486,10 @@ async def test_review_import_queue_endpoint_lists_queue_items(client: AsyncClien
                 "snoozed_count": 0,
                 "superseded_count": 0,
                 "promoted_count": 0,
+                "promoted_pending_count": 0,
+                "promoted_accepted_count": 0,
+                "promoted_rejected_count": 0,
+                "promoted_ignored_count": 0,
                 "needs_review": True,
                 "oldest_queued_at": "2026-05-09T10:00:00+00:00",
                 "oldest_queued_age_seconds": 1.0,
@@ -525,6 +533,10 @@ async def test_review_import_queue_patch_updates_lifecycle(client: AsyncClient) 
                 "outcome_reason": "duplicate",
                 "promoted_at": None,
                 "promotion_target": None,
+                "promotion_target_id": None,
+                "promotion_outcome": None,
+                "promotion_outcome_at": None,
+                "promotion_outcome_note": None,
             },
             "next_action": "No personal-ops action will be created for this handoff.",
             "error": None,
@@ -546,6 +558,9 @@ async def test_review_import_queue_patch_updates_lifecycle(client: AsyncClient) 
         reason="duplicate",
         snoozed_until=None,
         promotion_target=None,
+        promotion_target_id=None,
+        promotion_outcome=None,
+        promotion_outcome_note=None,
     )
 
 
