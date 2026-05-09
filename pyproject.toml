@@ -34,6 +34,7 @@ notification-hub-coordination-snapshot = "notification_hub.cli:coordination_snap
 notification-hub-personal-ops-actions = "notification_hub.cli:personal_ops_actions_main"
 notification-hub-validate-action-package = "notification_hub.cli:validate_action_package_main"
 notification-hub-personal-ops-import = "notification_hub.cli:personal_ops_import_main"
+notification-hub-personal-ops-queue-health = "notification_hub.cli:personal_ops_queue_health_main"
 notification-hub-policy-check = "notification_hub.cli:policy_check_main"
 notification-hub-explain = "notification_hub.cli:explain_main"
 notification-hub-retention = "notification_hub.cli:retention_main"

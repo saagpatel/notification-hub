@@ -35,12 +35,15 @@ tuning pass.
   applied changes.
 - Queued personal-ops handoffs now have explicit lifecycle states: queued, reviewed, rejected,
   snoozed, superseded, and promoted. Queue health is visible in status and runtime verification.
+- Queue maintenance now has a dedicated `personal-ops-queue-health` command that reports queued
+  item age, promoted handoffs still waiting on outcome sync, stale pending outcomes, and the next
+  safe operator commands without applying work.
 - A localhost-only review page is available at `/review` on the daemon. It shows runtime health,
   inbox rollups, action proposals, and trust state without applying anything.
 - The review page can stage a local review package, list recent saved review packages, inspect
-  package actions/evidence, queue import handoff items, mark queued items reviewed/rejected/snoozed/promoted,
-  delete saved review packages, and validate the latest staged or saved package while keeping apply
-  behavior disabled.
+  package actions/evidence, queue import handoff items, filter queued/promoted/pending/stale/resolved
+  handoffs, mark queued items reviewed/rejected/snoozed/promoted, delete saved review packages, and
+  validate the latest staged or saved package while keeping apply behavior disabled.
 - A local logs command is available for recent event and daemon log inspection, including accepted
   versus rejected `/events` counts from the visible daemon tail.
 - A local burn-in command is available for recent accepted/rejected event counts and repeated
@@ -146,6 +149,10 @@ tuning pass.
   enqueue and display personal-ops handoff items without applying them.
 - Added promotion outcome tracking so promoted handoffs can retain the personal-ops suggestion id
   and final `pending`, `accepted`, `rejected`, or `ignored` outcome.
+- Added `personal-ops-queue-health` so routine maintenance can detect queued age, pending promotion
+  outcome sync, stale promoted-pending handoffs, and the next safe non-mutating commands.
+- Added review UI queue-health summary and filters for pending outcome, stale outcome, queued,
+  promoted, resolved, and open handoffs.
 - Added `personal-ops-queue-scenario` as a temporary end-to-end lifecycle proof that does not touch
   the real operator queue.
 - Added `docs/PRODUCT-BOUNDARY.md` to keep notification-hub, personal-ops, and bridge-db ownership
@@ -173,6 +180,8 @@ uv run --frozen notification-hub personal-ops-import path/to/actions.json
 uv run --frozen notification-hub personal-ops-import path/to/actions.json --enqueue
 uv run --frozen notification-hub personal-ops-queue
 uv run --frozen notification-hub personal-ops-queue --queue-id QUEUE_ID --status reviewed --reason "evidence checked"
+uv run --frozen notification-hub personal-ops-queue-health
+uv run --frozen notification-hub-personal-ops-queue-health --json
 uv run --frozen notification-hub personal-ops-queue-scenario
 uv run --frozen notification-hub logs
 curl http://127.0.0.1:9199/review
@@ -213,6 +222,9 @@ Expected current outcome:
   adds valid action proposals to the local import queue while keeping `applied: false`
 - `notification-hub personal-ops-queue`: lists and updates queued handoff lifecycle state without
   creating personal-ops tasks, approvals, or sends
+- `notification-hub personal-ops-queue-health`: reports routine import queue maintenance state,
+  stale pending promoted outcomes, and next safe commands without applying work
+- `notification-hub-personal-ops-queue-health`: script shortcut for the same queue-health report
 - `notification-hub personal-ops-queue-scenario`: runs a temporary queue lifecycle and records a
   final accepted promotion outcome without touching runtime queue state
 - `/review`: localhost-only review UI for runtime state, inbox rollups, action proposals, and trust
@@ -290,7 +302,8 @@ It is not part of normal day-to-day work.
 Start future work from `main`, keep using the frozen verification commands, and treat the repo-owned
 runtime templates as the source of truth for live launcher and hook wiring.
 The next work here should burn in the queue lifecycle with real operator use, then decide whether
-promotion outcome sync should become automatic during routine personal-ops maintenance.
+the now-visible queue-health signals should trigger a read-only personal-ops outcome-sync reminder
+or remain an operator-run maintenance command.
 
 ## Optional Follow-Up
 

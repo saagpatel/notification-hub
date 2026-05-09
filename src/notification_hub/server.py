@@ -279,6 +279,7 @@ REVIEW_HTML = """<!doctype html>
     .next { color: #475467; font-size: 13px; margin-top: 4px; }
     .badge-row { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
     .badge { border: 1px solid #d0d5dd; border-radius: 999px; color: #344054; font-size: 12px; padding: 2px 8px; }
+    .badge.warn { border-color: #d89b25; color: #7a4b00; }
     .toolbar { align-items: center; display: flex; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
     select { border: 1px solid #d0d5dd; border-radius: 6px; padding: 5px 8px; }
     .trust { background: #eef6f1; border-color: #badfc8; }
@@ -339,10 +340,15 @@ REVIEW_HTML = """<!doctype html>
           <h2>Import Queue</h2>
           <select id="importQueueFilter" aria-label="Import queue filter">
             <option value="open">Open</option>
+            <option value="pending">Pending outcome</option>
+            <option value="stale">Stale outcome</option>
+            <option value="queued">Queued</option>
             <option value="all">All</option>
             <option value="promoted">Promoted</option>
+            <option value="resolved">Resolved</option>
           </select>
         </div>
+        <ul id="importQueueHealth"></ul>
         <ul id="importQueue"></ul>
       </section>
     </div>
@@ -356,6 +362,7 @@ REVIEW_HTML = """<!doctype html>
     const packageState = document.getElementById("package");
     const packages = document.getElementById("packages");
     const packageDetail = document.getElementById("packageDetail");
+    const importQueueHealth = document.getElementById("importQueueHealth");
     const importQueue = document.getElementById("importQueue");
     const importQueueFilter = document.getElementById("importQueueFilter");
 
@@ -378,6 +385,9 @@ REVIEW_HTML = """<!doctype html>
     }
     function badge(value) {
       return value ? `<span class="badge">${esc(value)}</span>` : "";
+    }
+    function warnBadge(value, warning) {
+      return value ? `<span class="badge${warning ? " warn" : ""}">${esc(value)}</span>` : "";
     }
     function ageLabel(timestamp) {
       const parsed = Date.parse(timestamp || "");
@@ -525,9 +535,31 @@ REVIEW_HTML = """<!doctype html>
       await loadImportQueue();
     }
     async function loadImportQueue() {
-      const res = await fetch("/review/import-queue?limit=6");
+      const res = await fetch("/review/import-queue?limit=25");
       const data = await res.json();
+      const health = data.health || {};
+      importQueueHealth.replaceChildren(
+        item(`
+          <div class="line"><span class="title">Queue health</span><span class="meta">${esc(health.status || "unknown")}</span></div>
+          <div class="badge-row">
+            ${warnBadge(`queued ${health.queued_count ?? 0}`, (health.queued_count ?? 0) > 0)}
+            ${warnBadge(`pending ${health.promoted_pending_count ?? 0}`, (health.promoted_pending_count ?? 0) > 0)}
+            ${warnBadge(`stale ${health.promoted_pending_stale_count ?? 0}`, (health.promoted_pending_stale_count ?? 0) > 0)}
+            ${badge(`resolved ${(health.promoted_accepted_count ?? 0) + (health.promoted_rejected_count ?? 0) + (health.promoted_ignored_count ?? 0)}`)}
+          </div>
+          <div class="next">${esc(health.next_action || "")}</div>
+        `)
+      );
       const filter = importQueueFilter ? importQueueFilter.value : "open";
+      const staleAfterSeconds = Number(health.stale_after_hours || 4) * 60 * 60;
+      const isPending = q => q.status === "promoted" && (q.promotion_outcome || "pending") === "pending";
+      const isStale = q => {
+        if (!isPending(q)) {
+          return false;
+        }
+        const parsed = Date.parse(q.promotion_outcome_at || q.promoted_at || q.updated_at || "");
+        return !Number.isNaN(parsed) && ((Date.now() - parsed) / 1000) >= staleAfterSeconds;
+      };
       const rows = (data.items || []).filter(q => {
         if (filter === "all") {
           return true;
@@ -535,13 +567,26 @@ REVIEW_HTML = """<!doctype html>
         if (filter === "promoted") {
           return q.status === "promoted";
         }
-        return q.status === "queued" || q.status === "snoozed" || (q.status === "promoted" && q.promotion_outcome === "pending");
+        if (filter === "pending") {
+          return isPending(q);
+        }
+        if (filter === "stale") {
+          return isStale(q);
+        }
+        if (filter === "queued") {
+          return q.status === "queued" || q.status === "snoozed";
+        }
+        if (filter === "resolved") {
+          return q.status === "rejected" || q.status === "reviewed" || q.status === "superseded" || (q.status === "promoted" && !isPending(q));
+        }
+        return q.status === "queued" || q.status === "snoozed" || isPending(q);
       });
       renderList(importQueue, rows, q => item(`
         <div class="line"><span class="title">${esc(q.title)}</span><span class="meta">${esc(q.priority)}/${esc(q.state)}</span></div>
         <div class="badge-row">
-          ${badge(q.status)}
-          ${badge(q.promotion_outcome)}
+          ${warnBadge(q.status, q.status === "queued")}
+          ${warnBadge(q.promotion_outcome, isPending(q))}
+          ${warnBadge(isStale(q) ? "stale" : "", true)}
           ${badge(ageLabel(q.updated_at || q.enqueued_at))}
         </div>
         <div class="next">${esc(q.source_package_name)}${q.promotion_target_id ? " / " + esc(q.promotion_target_id) : ""}</div>
@@ -762,12 +807,12 @@ async def review_queue_package(name: str) -> dict[str, object]:
 
 
 @app.get("/review/import-queue")
-async def review_import_queue(limit: int = 10) -> dict[str, object]:
+async def review_import_queue(limit: int = 10, stale_after_hours: float = 4.0) -> dict[str, object]:
     """List queued personal-ops handoff items without applying them."""
     return {
         "status": "ok",
         "items": list_personal_ops_import_queue(limit=max(limit, 1)),
-        "health": summarize_personal_ops_import_queue(),
+        "health": summarize_personal_ops_import_queue(stale_after_hours=stale_after_hours),
         "applied": False,
     }
 

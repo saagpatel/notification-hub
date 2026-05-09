@@ -61,6 +61,8 @@ uv run notification-hub personal-ops-import path/to/actions.json --enqueue
 uv run notification-hub personal-ops-queue
 uv run notification-hub personal-ops-queue --queue-id QUEUE_ID --status reviewed --reason "evidence checked"
 uv run notification-hub personal-ops-queue --queue-id QUEUE_ID --status promoted --promotion-target-id SUGGESTION_ID --promotion-outcome accepted
+uv run notification-hub personal-ops-queue-health
+uv run notification-hub-personal-ops-queue-health --json
 uv run notification-hub personal-ops-queue-scenario
 uv run notification-hub logs
 uv run notification-hub-logs --json
@@ -104,6 +106,9 @@ The personal-ops-queue command lists and updates queued handoffs through explici
 `promoted` records that an operator-mediated personal-ops task suggestion was created; it does not
 create that suggestion by itself. Promotion records can also store the personal-ops suggestion id
 and final `pending`, `accepted`, `rejected`, or `ignored` outcome.
+The personal-ops-queue-health command is the normal maintenance check for this queue. It reports
+queued item age, promoted handoffs still waiting on downstream outcome sync, stale pending
+promotions, and the next safe operator commands without applying work.
 The personal-ops-queue-scenario command runs a temporary end-to-end queue lifecycle, including a
 promoted handoff with an accepted outcome, without touching the real operator queue.
 See `docs/PRODUCT-BOUNDARY.md` for the current ownership split between notification-hub,
@@ -156,9 +161,9 @@ The local review surface is available at `http://127.0.0.1:9199/review` while th
 It shows runtime state, inbox rollups, action proposals, and the current trust boundary without
 mutating local state.
 The review page can also stage a review package, show recent saved review packages, inspect package
-actions/evidence, queue import handoff items, mark queued items reviewed/rejected/snoozed/promoted,
-delete saved review packages, and validate the latest staged or saved package. These controls still
-do not apply, approve, send, or mutate personal-ops.
+actions/evidence, queue import handoff items, filter queued/promoted/pending/stale/resolved handoffs,
+mark queued items reviewed/rejected/snoozed/promoted, delete saved review packages, and validate the
+latest staged or saved package. These controls still do not apply, approve, send, or mutate personal-ops.
 Coordination snapshots target bridge-db's `codex` snapshot shape: the emitted
 `bridge_snapshot` object can be passed as snapshot data after operator review, or saved directly
 with the explicit `--save-bridge-db` flag.
@@ -308,6 +313,8 @@ uv run --frozen notification-hub personal-ops-import path/to/actions.json
 uv run --frozen notification-hub personal-ops-import path/to/actions.json --enqueue
 uv run --frozen notification-hub personal-ops-queue
 uv run --frozen notification-hub personal-ops-queue --queue-id QUEUE_ID --status rejected --reason "duplicate"
+uv run --frozen notification-hub personal-ops-queue-health
+uv run --frozen notification-hub-personal-ops-queue-health --json
 uv run --frozen notification-hub personal-ops-queue-scenario
 uv run --frozen notification-hub logs
 curl http://127.0.0.1:9199/review

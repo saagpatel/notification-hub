@@ -670,6 +670,51 @@ def test_personal_ops_import_queue_lifecycle_and_health(tmp_path: Path) -> None:
     assert health_after["needs_review"] is False
 
 
+def test_personal_ops_import_queue_health_flags_stale_promotions(tmp_path: Path) -> None:
+    queue_path = tmp_path / "queue.jsonl"
+    old_timestamp = "2026-05-09T00:00:00+00:00"
+    queue_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "notification-hub.personal_ops_import_queue.v1",
+                "queue_id": "queue-stale",
+                "status": "promoted",
+                "enqueued_at": old_timestamp,
+                "updated_at": old_timestamp,
+                "promoted_at": old_timestamp,
+                "promotion_target": "personal-ops task suggestion",
+                "promotion_target_id": "suggestion-stale",
+                "promotion_outcome": "pending",
+                "promotion_outcome_at": old_timestamp,
+                "source_package_path": "/tmp/actions.json",
+                "source_package_name": "actions.json",
+                "action_id": "action-stale",
+                "applied": True,
+                "action": {
+                    "action_id": "action-stale",
+                    "title": "Stale promoted handoff",
+                    "summary": "Waiting on outcome sync.",
+                    "priority": "high",
+                    "state": "waiting",
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    health = summarize_personal_ops_import_queue(queue_path=queue_path, stale_after_hours=0)
+    report = ops_mod.run_personal_ops_import_queue_health_check(queue_path=queue_path, stale_after_hours=0)
+
+    assert health["status"] == "warn"
+    assert health["promoted_pending_count"] == 1
+    assert health["promoted_pending_stale_count"] == 1
+    assert health["needs_outcome_sync"] is True
+    assert "sync-outcomes" in health["next_action"]
+    assert report["pending_promotion_items"][0]["queue_id"] == "queue-stale"
+    assert "personal-ops notification-hub sync-outcomes" in report["next_commands"]
+
+
 def test_personal_ops_queue_scenario_records_final_outcome() -> None:
     report = run_personal_ops_queue_scenario()
 

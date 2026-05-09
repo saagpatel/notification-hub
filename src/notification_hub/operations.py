@@ -241,13 +241,27 @@ class PersonalOpsImportQueueHealthReport(TypedDict):
     superseded_count: int
     promoted_count: int
     promoted_pending_count: int
+    promoted_pending_stale_count: int
     promoted_accepted_count: int
     promoted_rejected_count: int
     promoted_ignored_count: int
+    needs_outcome_sync: bool
     needs_review: bool
     oldest_queued_at: str | None
     oldest_queued_age_seconds: float | None
+    oldest_promoted_pending_at: str | None
+    oldest_promoted_pending_age_seconds: float | None
+    stale_after_hours: float
     next_action: str
+
+
+class PersonalOpsImportQueueHealthCheckReport(TypedDict):
+    status: str
+    health: PersonalOpsImportQueueHealthReport
+    queued_items: list[PersonalOpsImportQueueItemReport]
+    pending_promotion_items: list[PersonalOpsImportQueueItemReport]
+    next_commands: list[str]
+    applied: bool
 
 
 class PersonalOpsQueueScenarioReport(TypedDict):
@@ -983,6 +997,7 @@ def _parse_iso_datetime(value: str | None) -> datetime | None:
 def summarize_personal_ops_import_queue(
     *,
     queue_path: Path | None = None,
+    stale_after_hours: float = 4.0,
 ) -> PersonalOpsImportQueueHealthReport:
     """Summarize queue lifecycle health without applying queued items."""
     target_queue_path = queue_path or PERSONAL_OPS_IMPORT_QUEUE
@@ -1000,6 +1015,7 @@ def summarize_personal_ops_import_queue(
             outcome = _as_str(item.get("promotion_outcome")) or "pending"
             if outcome in promotion_outcomes:
                 promotion_outcomes[outcome] += 1
+    now = datetime.now(timezone.utc)
     queued_items = [item for item in raw_items if item.get("status") == "queued"]
     queued_datetimes = [
         parsed
@@ -1007,12 +1023,43 @@ def summarize_personal_ops_import_queue(
         if (parsed := _parse_iso_datetime(_as_str(item.get("enqueued_at")))) is not None
     ]
     oldest = min(queued_datetimes) if queued_datetimes else None
-    age = (datetime.now(timezone.utc) - oldest).total_seconds() if oldest is not None else None
+    age = (now - oldest).total_seconds() if oldest is not None else None
+    pending_items = [
+        item
+        for item in raw_items
+        if item.get("status") == "promoted" and (_as_str(item.get("promotion_outcome")) or "pending") == "pending"
+    ]
+    pending_datetimes = [
+        parsed
+        for item in pending_items
+        if (
+            parsed := _parse_iso_datetime(
+                _as_str(item.get("promotion_outcome_at")) or _as_str(item.get("promoted_at")) or _as_str(item.get("updated_at"))
+            )
+        )
+        is not None
+    ]
+    oldest_pending = min(pending_datetimes) if pending_datetimes else None
+    oldest_pending_age = (now - oldest_pending).total_seconds() if oldest_pending is not None else None
+    stale_after_seconds = max(stale_after_hours, 0) * 60 * 60
+    stale_pending_count = sum(
+        1
+        for item in pending_items
+        if (
+            parsed := _parse_iso_datetime(
+                _as_str(item.get("promotion_outcome_at")) or _as_str(item.get("promoted_at")) or _as_str(item.get("updated_at"))
+            )
+        )
+        is not None
+        and (now - parsed).total_seconds() >= stale_after_seconds
+    )
     queued_count = counts["queued"]
     promoted_pending_count = promotion_outcomes["pending"]
     status = "warn" if queued_count > 0 or promoted_pending_count > 0 else "ok"
     if queued_count > 0:
         next_action = "Review queued personal-ops handoff items."
+    elif stale_pending_count > 0:
+        next_action = "Run personal-ops notification-hub sync-outcomes, then rerun notification-hub personal-ops-queue-health."
     elif promoted_pending_count > 0:
         next_action = "Sync promoted personal-ops handoff outcomes."
     else:
@@ -1028,13 +1075,48 @@ def summarize_personal_ops_import_queue(
         "superseded_count": counts["superseded"],
         "promoted_count": counts["promoted"],
         "promoted_pending_count": promoted_pending_count,
+        "promoted_pending_stale_count": stale_pending_count,
         "promoted_accepted_count": promotion_outcomes["accepted"],
         "promoted_rejected_count": promotion_outcomes["rejected"],
         "promoted_ignored_count": promotion_outcomes["ignored"],
+        "needs_outcome_sync": promoted_pending_count > 0,
         "needs_review": queued_count > 0,
         "oldest_queued_at": oldest.isoformat() if oldest is not None else None,
         "oldest_queued_age_seconds": age,
+        "oldest_promoted_pending_at": oldest_pending.isoformat() if oldest_pending is not None else None,
+        "oldest_promoted_pending_age_seconds": oldest_pending_age,
+        "stale_after_hours": stale_after_hours,
         "next_action": next_action,
+    }
+
+
+def run_personal_ops_import_queue_health_check(
+    *,
+    queue_path: Path | None = None,
+    limit: int = 10,
+    stale_after_hours: float = 4.0,
+) -> PersonalOpsImportQueueHealthCheckReport:
+    """Return the operator-facing queue maintenance state without mutating queue items."""
+    health = summarize_personal_ops_import_queue(queue_path=queue_path, stale_after_hours=stale_after_hours)
+    items = list_personal_ops_import_queue(queue_path=queue_path, limit=max(limit, 1))
+    queued_items = [item for item in items if item["status"] == "queued"]
+    pending_items = [
+        item for item in items if item["status"] == "promoted" and (item["promotion_outcome"] or "pending") == "pending"
+    ]
+    next_commands: list[str] = []
+    if health["queued_count"] > 0:
+        next_commands.append("uv run notification-hub personal-ops-queue")
+        next_commands.append("personal-ops notification-hub promote QUEUE_ID --note \"...\"")
+    if health["promoted_pending_count"] > 0:
+        next_commands.append("personal-ops notification-hub sync-outcomes")
+    next_commands.append("uv run notification-hub personal-ops-queue-health")
+    return {
+        "status": health["status"],
+        "health": health,
+        "queued_items": queued_items,
+        "pending_promotion_items": pending_items,
+        "next_commands": next_commands,
+        "applied": False,
     }
 
 

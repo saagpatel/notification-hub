@@ -22,6 +22,7 @@ from notification_hub.cli import (
     main,
     personal_ops_actions_main,
     personal_ops_import_main,
+    personal_ops_queue_health_main,
     policy_check_main,
     retention_main,
     smoke_main,
@@ -185,12 +186,17 @@ def _import_queue_health(*, queued_count: int = 0) -> dict[str, object]:
         "superseded_count": 0,
         "promoted_count": 0,
         "promoted_pending_count": 0,
+        "promoted_pending_stale_count": 0,
         "promoted_accepted_count": 0,
         "promoted_rejected_count": 0,
         "promoted_ignored_count": 0,
+        "needs_outcome_sync": False,
         "needs_review": queued_count > 0,
         "oldest_queued_at": "2026-05-09T10:00:00+00:00" if queued_count else None,
         "oldest_queued_age_seconds": 60.0 if queued_count else None,
+        "oldest_promoted_pending_at": None,
+        "oldest_promoted_pending_age_seconds": None,
+        "stale_after_hours": 4.0,
         "next_action": "Review queued personal-ops handoff items." if queued_count else "No queued personal-ops handoff items.",
     }
 
@@ -1203,6 +1209,29 @@ def test_personal_ops_import_wrapper_forwards_path(
     assert '"applied": false' in output.out
 
 
+def test_cli_personal_ops_queue_health_json_output(capsys: CaptureFixture[str]) -> None:
+    with patch(
+        "notification_hub.cli.run_personal_ops_import_queue_health_check",
+        return_value={
+            "status": "ok",
+            "health": _import_queue_health(),
+            "queued_items": [],
+            "pending_promotion_items": [],
+            "next_commands": ["uv run notification-hub personal-ops-queue-health"],
+            "applied": False,
+        },
+    ) as mock_health:
+        exit_code = main(["personal-ops-queue-health", "--json", "--limit", "3", "--stale-after-hours", "2"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert '"applied": false' in captured.out
+    assert '"status": "ok"' in captured.out
+    mock_health.assert_called_once()
+    assert mock_health.call_args.kwargs["limit"] == 3
+    assert mock_health.call_args.kwargs["stale_after_hours"] == 2.0
+
+
 def test_cli_policy_check_json_output(capsys: CaptureFixture[str]) -> None:
     with patch(
         "notification_hub.cli.run_policy_check",
@@ -1648,6 +1677,27 @@ def test_personal_ops_actions_wrapper_forwards_flags(capsys: CaptureFixture[str]
         save_review_package=False,
         review_dir=None,
     )
+
+
+def test_personal_ops_queue_health_wrapper_forwards_flags(capsys: CaptureFixture[str]) -> None:
+    with patch(
+        "notification_hub.cli.run_personal_ops_import_queue_health_check",
+        return_value={
+            "status": "ok",
+            "health": _import_queue_health(),
+            "queued_items": [],
+            "pending_promotion_items": [],
+            "next_commands": ["uv run notification-hub personal-ops-queue-health"],
+            "applied": False,
+        },
+    ) as mock_health:
+        exit_code = personal_ops_queue_health_main(["--json", "--limit", "2"])
+
+    output = capsys.readouterr()
+    assert exit_code == 0
+    assert '"next_commands"' in output.out
+    mock_health.assert_called_once()
+    assert mock_health.call_args.kwargs["limit"] == 2
 
 
 def test_policy_check_wrapper_forwards_flags(capsys: CaptureFixture[str]) -> None:

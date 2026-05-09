@@ -20,6 +20,7 @@ from notification_hub.operations import (
     LogsReport,
     PersonalOpsActionExportReport,
     PersonalOpsImportReport,
+    PersonalOpsImportQueueHealthCheckReport,
     PersonalOpsImportQueueHealthReport,
     PersonalOpsImportQueueItemReport,
     PersonalOpsImportQueueUpdateReport,
@@ -37,6 +38,7 @@ from notification_hub.operations import (
     run_inbox,
     run_logs,
     run_personal_ops_action_export,
+    run_personal_ops_import_queue_health_check,
     run_personal_ops_import_stub,
     run_personal_ops_queue_scenario,
     list_personal_ops_import_queue,
@@ -382,6 +384,32 @@ def _build_parser(prog: str = "notification-hub") -> argparse.ArgumentParser:
         help="Emit the scenario report as JSON.",
     )
 
+    personal_ops_queue_health = subparsers.add_parser(
+        "personal-ops-queue-health",
+        help="Report import queue maintenance state and next commands without applying work.",
+    )
+    personal_ops_queue_health.add_argument(
+        "--queue-path",
+        help="Optional JSONL queue path.",
+    )
+    personal_ops_queue_health.add_argument(
+        "--limit",
+        type=int,
+        default=10,
+        help="Maximum queue items to inspect.",
+    )
+    personal_ops_queue_health.add_argument(
+        "--stale-after-hours",
+        type=float,
+        default=4.0,
+        help="Age threshold for stale promoted-pending handoffs.",
+    )
+    personal_ops_queue_health.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the queue health report as JSON.",
+    )
+
     explain = subparsers.add_parser(
         "explain",
         help="Show how an event would classify, route, and deliver without sending it.",
@@ -628,6 +656,7 @@ def _print_personal_ops_queue_report(report: dict[str, object]) -> None:
     print(f"- snoozed: {health['snoozed_count']}")
     print(f"- promoted: {health['promoted_count']}")
     print(f"- promoted pending: {health['promoted_pending_count']}")
+    print(f"- promoted pending stale: {health['promoted_pending_stale_count']}")
     print(f"- promoted accepted: {health['promoted_accepted_count']}")
     print(f"- promoted rejected: {health['promoted_rejected_count']}")
     print(f"- next action: {health['next_action']}")
@@ -655,6 +684,31 @@ def _print_personal_ops_queue_report(report: dict[str, object]) -> None:
             print(f"    promotion target id: {item['promotion_target_id']}")
         if item["promotion_outcome"] is not None:
             print(f"    promotion outcome: {item['promotion_outcome']}")
+
+
+def _print_personal_ops_queue_health_report(report: PersonalOpsImportQueueHealthCheckReport) -> None:
+    health = report["health"]
+    print(f"notification-hub personal-ops-queue-health: {report['status']}")
+    print(f"- queue path: {health['queue_path']}")
+    print(f"- queued: {health['queued_count']}")
+    print(f"- promoted pending: {health['promoted_pending_count']}")
+    print(f"- promoted pending stale: {health['promoted_pending_stale_count']}")
+    print(f"- promoted accepted: {health['promoted_accepted_count']}")
+    print(f"- promoted rejected: {health['promoted_rejected_count']}")
+    print(f"- next action: {health['next_action']}")
+    if report["next_commands"]:
+        print("- next commands:")
+        for command in report["next_commands"]:
+            print(f"  - {command}")
+    if report["pending_promotion_items"]:
+        print("- pending promotions:")
+        for item in report["pending_promotion_items"]:
+            target = item["promotion_target_id"] or "missing-target-id"
+            print(f"  - {item['queue_id']} -> {target}: {item['title']}")
+    if report["queued_items"]:
+        print("- queued items:")
+        for item in report["queued_items"]:
+            print(f"  - {item['queue_id']}: {item['title']}")
 
 
 def _print_personal_ops_queue_scenario_report(report: PersonalOpsQueueScenarioReport) -> None:
@@ -984,6 +1038,18 @@ def main(argv: Sequence[str] | None = None) -> int:
             _print_personal_ops_queue_scenario_report(report)
         return 0 if report["status"] == "ok" else 1
 
+    if args.command == "personal-ops-queue-health":
+        report = run_personal_ops_import_queue_health_check(
+            queue_path=Path(args.queue_path).expanduser() if args.queue_path else None,
+            limit=args.limit,
+            stale_after_hours=args.stale_after_hours,
+        )
+        if args.json:
+            print(json.dumps(report, indent=2, sort_keys=True))
+        else:
+            _print_personal_ops_queue_health_report(report)
+        return 0 if report["status"] == "ok" else 1
+
     if args.command == "policy-check":
         report = run_policy_check()
         if args.json:
@@ -1081,6 +1147,11 @@ def validate_action_package_main(argv: Sequence[str] | None = None) -> int:
 def personal_ops_import_main(argv: Sequence[str] | None = None) -> int:
     forwarded = list(argv) if argv is not None else sys.argv[1:]
     return main(["personal-ops-import", *forwarded])
+
+
+def personal_ops_queue_health_main(argv: Sequence[str] | None = None) -> int:
+    forwarded = list(argv) if argv is not None else sys.argv[1:]
+    return main(["personal-ops-queue-health", *forwarded])
 
 
 def policy_check_main(argv: Sequence[str] | None = None) -> int:

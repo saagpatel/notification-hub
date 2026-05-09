@@ -10,6 +10,7 @@ notification-hub is a localhost-only coordination sidecar. It collects local wor
 - Review packages derived from recent event rollups.
 - A local personal-ops import queue with explicit lifecycle states.
 - Promotion tracking for queue items, including the downstream personal-ops suggestion id and final accepted, rejected, ignored, or pending outcome.
+- Queue-health reporting for queued age, pending promotion outcome sync, and stale pending outcomes.
 - Local review UI and API endpoints that inspect, queue, and mark handoff state without applying personal-ops work.
 
 ## personal-ops Owns
@@ -38,5 +39,6 @@ The near-term product path is to keep the trust boundary visible while making th
 
 1. Burn in real queue usage.
 2. Promote reviewed handoffs into personal-ops task suggestions.
-3. Sync accepted or rejected suggestion outcomes back into notification-hub.
+3. Keep outcome sync explicit, visible, and operator-mediated through queue-health until the trust
+   boundary has enough burn-in.
 4. Use the scripted queue scenario and runtime gates before expanding the boundary.
