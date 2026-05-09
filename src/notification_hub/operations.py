@@ -556,7 +556,11 @@ def _suggested_action(intent: str, title: str) -> str:
 def _action_from_rollup(rollup: InboxRollupReport) -> PersonalOpsActionReport:
     project_part = rollup["project"] or "general"
     normalized_title = re.sub(r"[^a-z0-9]+", "-", rollup["title"].lower()).strip("-") or "signal"
-    action_id = f"notification-hub:{rollup['source']}:{project_part}:{rollup['intent']}:{normalized_title}"
+    evidence_part = re.sub(r"[^a-z0-9]+", "-", rollup["latest_event_id"].lower()).strip("-") or "event"
+    action_id = (
+        f"notification-hub:{rollup['source']}:{project_part}:"
+        f"{rollup['intent']}:{normalized_title}:{evidence_part}"
+    )
     return {
         "action_id": action_id,
         "source": rollup["source"],

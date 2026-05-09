@@ -252,11 +252,60 @@ def test_personal_ops_action_export_prepares_actions_from_rollups() -> None:
     assert report["schema_version"] == "notification-hub.personal_ops_action_export.v1"
     assert report["actions"][0]["priority"] == "high"
     assert report["actions"][0]["state"] == "waiting"
+    assert report["actions"][0]["action_id"].endswith(":abc123")
     assert report["actions"][0]["evidence_event_id"] == "abc123"
     assert report["actions"][0]["suggested_next_action"] == (
         "Review the waiting item and approve, reply, or dismiss it."
     )
     assert report["review_package"]["status"] == "not_requested"
+
+
+def test_personal_ops_action_export_keeps_repeated_titles_unique() -> None:
+    inbox_report: dict[str, object] = {
+        "status": "ok",
+        "hours": 2,
+        "events_seen": 4,
+        "needs_attention": [],
+        "waiting_or_blocked": [],
+        "ready": [],
+        "completed": [],
+        "rollups": [
+            {
+                "count": 2,
+                "source": "personal-ops",
+                "project": "mail",
+                "intent": "waiting_on_user",
+                "level": "urgent",
+                "title": "Approval Requested",
+                "body": "Outbound workflow reply",
+                "latest_timestamp": "2026-05-09T00:00:00+00:00",
+                "latest_event_id": "abc123",
+            },
+            {
+                "count": 2,
+                "source": "personal-ops",
+                "project": "mail",
+                "intent": "waiting_on_user",
+                "level": "urgent",
+                "title": "Approval Requested",
+                "body": "Send this reply",
+                "latest_timestamp": "2026-05-09T00:01:00+00:00",
+                "latest_event_id": "def456",
+            },
+        ],
+        "noise_candidates": [],
+        "error": None,
+    }
+
+    with patch("notification_hub.operations.run_inbox", return_value=inbox_report):
+        report = run_personal_ops_action_export(hours=2, limit=5)
+
+    action_ids = [action["action_id"] for action in report["actions"]]
+    assert len(action_ids) == len(set(action_ids))
+    assert action_ids == [
+        "notification-hub:personal-ops:mail:waiting_on_user:approval-requested:abc123",
+        "notification-hub:personal-ops:mail:waiting_on_user:approval-requested:def456",
+    ]
 
 
 def test_personal_ops_action_export_can_save_review_package(tmp_path: Path) -> None:

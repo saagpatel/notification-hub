@@ -7,16 +7,22 @@ import logging
 import time
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any, TypedDict, cast
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 
 from notification_hub.config import BRIDGE_FILE, get_policy_config
 from notification_hub.diagnostics import collect_runtime_readiness
 from notification_hub.models import Event, EventResponse
-from notification_hub.operations import run_retention
+from notification_hub.operations import (
+    run_inbox,
+    run_personal_ops_action_export,
+    run_retention,
+    validate_action_package,
+)
 from notification_hub.pipeline import get_suppression_engine, process_event
 from notification_hub.watcher import ObserverHandle, start_watcher
 
@@ -26,6 +32,8 @@ _start_time: float = 0.0
 _event_count: int = 0
 _observer: ObserverHandle | None = None
 _retention_task: asyncio.Task[None] | None = None
+_latest_review_package_path: str | None = None
+_latest_review_package_validation_status: str | None = None
 
 
 class RetentionRuntimeStatus(TypedDict):
@@ -67,6 +75,16 @@ def reset_retention_runtime_state() -> None:
 
 def get_retention_runtime_status() -> RetentionRuntimeStatus:
     return cast(RetentionRuntimeStatus, dict(_retention_status))
+
+
+def reset_review_package_state() -> None:
+    global _latest_review_package_path, _latest_review_package_validation_status
+    _latest_review_package_path = None
+    _latest_review_package_validation_status = None
+
+
+def get_latest_review_package_path() -> str | None:
+    return _latest_review_package_path
 
 
 def _configure_retention_status() -> None:
@@ -122,6 +140,39 @@ def _handle_bridge_event(event: Event) -> None:
     _event_count += 1
 
 
+def _review_package_state(validation_status: str | None = None) -> dict[str, object]:
+    return {
+        "path": _latest_review_package_path,
+        "validation_status": validation_status or _latest_review_package_validation_status,
+    }
+
+
+async def _review_runtime_status() -> dict[str, object]:
+    details = await _collect_health_details()
+    config = cast(dict[str, object], details.get("config", {}))
+    retention = cast(dict[str, object], details.get("retention", {}))
+    delivery = cast(dict[str, object], details.get("delivery", {}))
+    runtime_wiring = cast(dict[str, object], details.get("runtime_wiring", {}))
+    slack_failures = 0
+    return {
+        "status": details.get("status", "degraded"),
+        "health_url": "http://127.0.0.1:9199/health/details",
+        "daemon_reachable": True,
+        "watcher_active": details.get("watcher_active"),
+        "events_processed": details.get("events_processed"),
+        "uptime_seconds": details.get("uptime_seconds"),
+        "policy_config_found": config.get("exists"),
+        "policy_warning_count": config.get("warning_count", 0),
+        "retention_enabled": retention.get("enabled"),
+        "retention_last_status": retention.get("last_status"),
+        "runtime_wiring_current": all(bool(value) for value in runtime_wiring.values()),
+        "push_notifier_available": delivery.get("push_notifier_available"),
+        "slack_configured": delivery.get("slack_webhook_configured"),
+        "slack_delivery_failures": slack_failures,
+        "next_action": "No action needed." if details.get("status") == "ok" else "Review health details.",
+    }
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Start bridge watcher on startup, stop on shutdown."""
@@ -166,6 +217,189 @@ app = FastAPI(
     redoc_url=None,
     openapi_url=None,
 )
+
+
+REVIEW_HTML = """<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>notification-hub review</title>
+  <link rel="icon" href="data:,">
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f7f8fa;
+      color: #20242a;
+    }
+    body { margin: 0; }
+    main { max-width: 1180px; margin: 0 auto; padding: 28px 20px 40px; }
+    header { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 24px; }
+    h1 { font-size: 28px; line-height: 1.15; margin: 0 0 6px; font-weight: 700; }
+    h2 { font-size: 16px; margin: 0 0 12px; color: #39414d; }
+    p { margin: 0; color: #596272; }
+    button {
+      border: 1px solid #cfd6df;
+      border-radius: 6px;
+      background: #ffffff;
+      color: #20242a;
+      min-height: 36px;
+      padding: 0 12px;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    button:hover { border-color: #98a4b3; }
+    .summary { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; margin-bottom: 18px; }
+    .metric, section {
+      background: #ffffff;
+      border: 1px solid #dfe4ea;
+      border-radius: 8px;
+      box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+    }
+    .metric { padding: 14px; min-height: 72px; }
+    .metric span { display: block; color: #667085; font-size: 12px; text-transform: uppercase; letter-spacing: 0; }
+    .metric strong { display: block; margin-top: 8px; font-size: 22px; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    section { padding: 16px; min-width: 0; }
+    ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+    li { border-top: 1px solid #eef1f4; padding-top: 8px; }
+    li:first-child { border-top: 0; padding-top: 0; }
+    .line { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+    .title { font-weight: 650; overflow-wrap: anywhere; }
+    .meta { color: #667085; font-size: 12px; white-space: nowrap; }
+    .next { color: #475467; font-size: 13px; margin-top: 4px; }
+    .trust { background: #eef6f1; border-color: #badfc8; }
+    .warn { background: #fff8eb; border-color: #efd49a; }
+    .empty { color: #667085; font-style: italic; }
+    @media (max-width: 860px) {
+      header { display: block; }
+      header button { margin-top: 14px; }
+      .summary, .grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>notification-hub review</h1>
+        <p>Local review surface for inbox rollups, personal-ops action proposals, and trust state.</p>
+      </div>
+      <div class="actions">
+        <button id="savePackage" type="button">Save package</button>
+        <button id="validatePackage" type="button">Validate package</button>
+        <button id="refresh" type="button">Refresh</button>
+      </div>
+    </header>
+    <div class="summary" id="summary"></div>
+    <div class="grid">
+      <section>
+        <h2>Action Proposals</h2>
+        <ul id="actions"></ul>
+      </section>
+      <section>
+        <h2>Inbox Rollups</h2>
+        <ul id="rollups"></ul>
+      </section>
+      <section>
+        <h2>Needs Attention</h2>
+        <ul id="attention"></ul>
+      </section>
+      <section class="trust">
+        <h2>Trust Boundary</h2>
+        <ul id="trust"></ul>
+      </section>
+      <section>
+        <h2>Review Package</h2>
+        <ul id="package"></ul>
+      </section>
+    </div>
+  </main>
+  <script>
+    const summary = document.getElementById("summary");
+    const actions = document.getElementById("actions");
+    const rollups = document.getElementById("rollups");
+    const attention = document.getElementById("attention");
+    const trust = document.getElementById("trust");
+    const packageState = document.getElementById("package");
+
+    function item(html) {
+      const li = document.createElement("li");
+      li.innerHTML = html;
+      return li;
+    }
+    function esc(value) {
+      return String(value ?? "").replace(/[&<>"']/g, ch => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;"
+      }[ch]));
+    }
+    function empty(target, text) {
+      target.replaceChildren(item(`<span class="empty">${text}</span>`));
+    }
+    function renderList(target, rows, render, emptyText) {
+      if (!rows || rows.length === 0) {
+        empty(target, emptyText);
+        return;
+      }
+      target.replaceChildren(...rows.map(render));
+    }
+    async function load() {
+      const res = await fetch("/review/data?hours=2&limit=6");
+      const data = await res.json();
+      summary.replaceChildren(
+        item(`<span>Runtime</span><strong>${esc(data.runtime.status)}</strong>`),
+        item(`<span>Events</span><strong>${esc(data.inbox.events_seen)}</strong>`),
+        item(`<span>Actions</span><strong>${esc(data.actions.actions.length)}</strong>`),
+        item(`<span>Rollups</span><strong>${esc(data.inbox.rollups.length)}</strong>`),
+        item(`<span>Applied</span><strong>${data.trust.applied ? "yes" : "no"}</strong>`)
+      );
+      renderList(actions, data.actions.actions, a => item(`
+        <div class="line"><span class="title">${esc(a.title)}</span><span class="meta">${esc(a.priority)}/${esc(a.state)} x${esc(a.count)}</span></div>
+        <div class="next">${esc(a.suggested_next_action)}</div>
+      `), "No action proposals.");
+      renderList(rollups, data.inbox.rollups, r => item(`
+        <div class="line"><span class="title">${esc(r.title)}</span><span class="meta">${esc(r.intent)} x${esc(r.count)}</span></div>
+        <div class="next">${esc(r.source)}${r.project ? " / " + esc(r.project) : ""}</div>
+      `), "No repeated rollups.");
+      renderList(attention, data.inbox.needs_attention, a => item(`
+        <div class="line"><span class="title">${esc(a.title)}</span><span class="meta">${esc(a.intent)}</span></div>
+        <div class="next">${esc(a.source)}${a.project ? " / " + esc(a.project) : ""}</div>
+      `), "No attention items.");
+      trust.replaceChildren(
+        item(`<div class="line"><span class="title">Validated</span><span class="meta">${data.trust.validated ? "yes" : "not yet"}</span></div>`),
+        item(`<div class="line"><span class="title">Imported</span><span class="meta">${data.trust.imported ? "yes" : "no"}</span></div>`),
+        item(`<div class="line"><span class="title">Applied</span><span class="meta">${data.trust.applied ? "yes" : "no"}</span></div>`),
+        item(`<div class="next">${esc(data.trust.next_action)}</div>`)
+      );
+      renderPackage(data.review_package);
+    }
+    function renderPackage(state) {
+      packageState.replaceChildren(
+        item(`<div class="line"><span class="title">Saved</span><span class="meta">${state && state.path ? "yes" : "no"}</span></div>`),
+        item(`<div class="next">${state && state.path ? esc(state.path) : "No package saved in this server session."}</div>`),
+        item(`<div class="line"><span class="title">Validation</span><span class="meta">${state && state.validation_status ? esc(state.validation_status) : "not run"}</span></div>`)
+      );
+    }
+    async function post(path) {
+      const res = await fetch(path, { method: "POST" });
+      const data = await res.json();
+      await load();
+      return data;
+    }
+    document.getElementById("refresh").addEventListener("click", load);
+    document.getElementById("savePackage").addEventListener("click", () => post("/review/save-package"));
+    document.getElementById("validatePackage").addEventListener("click", () => post("/review/validate-package"));
+    load().catch(err => {
+      summary.replaceChildren(item(`<span class="empty">Unable to load review data: ${err}</span>`));
+    });
+  </script>
+</body>
+</html>"""
 
 
 def _validation_error_summary(errors: Sequence[Any]) -> list[dict[str, object]]:
@@ -256,3 +490,79 @@ async def _collect_health_details() -> dict[str, object]:
 async def health_details() -> dict[str, object]:
     """Detailed runtime readiness without exposing secrets."""
     return await _collect_health_details()
+
+
+@app.get("/review", response_class=HTMLResponse)
+async def review() -> HTMLResponse:
+    """Local operator review surface."""
+    return HTMLResponse(REVIEW_HTML)
+
+
+@app.get("/review/data")
+async def review_data(hours: int = 2, limit: int = 6) -> dict[str, object]:
+    """Read-only data backing the local review surface."""
+    safe_hours = max(hours, 1)
+    safe_limit = max(limit, 1)
+    inbox = run_inbox(hours=safe_hours, limit=safe_limit)
+    actions = run_personal_ops_action_export(hours=safe_hours, limit=safe_limit)
+    runtime = await _review_runtime_status()
+    return {
+        "status": "ok" if inbox["status"] == "ok" and actions["status"] == "ok" and runtime["status"] == "ok" else "degraded",
+        "hours": safe_hours,
+        "limit": safe_limit,
+        "runtime": runtime,
+        "inbox": inbox,
+        "actions": actions,
+        "trust": {
+            "proposed": bool(actions["actions"]),
+            "saved": _latest_review_package_path is not None,
+            "validated": False,
+            "imported": False,
+            "applied": False,
+            "next_action": "Save and validate a review package before any personal-ops import step.",
+        },
+        "review_package": _review_package_state(),
+    }
+
+
+@app.post("/review/save-package")
+async def review_save_package(hours: int = 2, limit: int = 6) -> dict[str, object]:
+    """Stage a local action review package without importing or applying it."""
+    global _latest_review_package_path, _latest_review_package_validation_status
+    report = run_personal_ops_action_export(
+        hours=max(hours, 1),
+        limit=max(limit, 1),
+        save_review_package=True,
+    )
+    path = report["review_package"]["path"]
+    _latest_review_package_path = path if isinstance(path, str) else None
+    _latest_review_package_validation_status = None
+    return {
+        "status": report["status"],
+        "applied": False,
+        "review_package": report["review_package"],
+        "action_count": len(report["actions"]),
+    }
+
+
+@app.post("/review/validate-package")
+async def review_validate_package() -> dict[str, object]:
+    """Validate the latest staged review package without importing or applying it."""
+    global _latest_review_package_validation_status
+    package_path = get_latest_review_package_path()
+    if package_path is None:
+        _latest_review_package_validation_status = "not_found"
+        return {
+            "status": "degraded",
+            "applied": False,
+            "error": "no review package has been saved in this server session",
+            "review_package": _review_package_state("not_found"),
+        }
+    validation = validate_action_package(Path(package_path))
+    _latest_review_package_validation_status = validation["status"]
+    return {
+        "status": validation["status"],
+        "applied": False,
+        "validation": validation,
+        "review_package": _review_package_state(validation["status"]),
+    }

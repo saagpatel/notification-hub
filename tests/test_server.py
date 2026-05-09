@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import contextmanager
 import logging
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -138,6 +138,155 @@ async def test_health_details_endpoint(client: AsyncClient) -> None:
         "pushes_last_hour": 0,
         "slacks_last_hour": 0,
     }
+
+
+async def test_review_page_endpoint(client: AsyncClient) -> None:
+    resp = await client.get("/review")
+
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers["content-type"]
+    assert "notification-hub review" in resp.text
+
+
+async def test_review_data_endpoint_is_read_only(client: AsyncClient) -> None:
+    with (
+        patch(
+            "notification_hub.server.run_inbox",
+            return_value={
+                "status": "ok",
+                "hours": 2,
+                "events_seen": 1,
+                "needs_attention": [],
+                "waiting_or_blocked": [],
+                "ready": [],
+                "completed": [],
+                "rollups": [],
+                "noise_candidates": [],
+                "error": None,
+            },
+        ) as mock_inbox,
+        patch(
+            "notification_hub.server.run_personal_ops_action_export",
+            return_value={
+                "status": "ok",
+                "schema_version": "notification-hub.personal_ops_action_export.v1",
+                "generated_at": "2026-05-09T00:00:00+00:00",
+                "hours": 2,
+                "actions": [],
+                "review_package": {
+                    "requested": False,
+                    "status": "not_requested",
+                    "path": None,
+                    "error": None,
+                },
+                "inbox": {
+                    "status": "ok",
+                    "hours": 2,
+                    "events_seen": 1,
+                    "needs_attention": [],
+                    "waiting_or_blocked": [],
+                    "ready": [],
+                    "completed": [],
+                    "rollups": [],
+                    "noise_candidates": [],
+                    "error": None,
+                },
+                "error": None,
+            },
+        ) as mock_actions,
+        patch(
+            "notification_hub.server._review_runtime_status",
+            new_callable=AsyncMock,
+            return_value={
+                "status": "ok",
+                "health_url": "http://127.0.0.1:9199/health/details",
+                "daemon_reachable": True,
+                "watcher_active": True,
+                "events_processed": 1,
+                "uptime_seconds": 1.0,
+                "policy_config_found": True,
+                "policy_warning_count": 0,
+                "retention_enabled": True,
+                "retention_last_status": "ok",
+                "runtime_wiring_current": True,
+                "push_notifier_available": True,
+                "slack_configured": True,
+                "slack_delivery_failures": 0,
+                "next_action": "No action needed.",
+            },
+        ) as mock_status,
+    ):
+        resp = await client.get("/review/data?hours=2&limit=3")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert data["trust"]["applied"] is False
+    assert data["trust"]["validated"] is False
+    mock_inbox.assert_called_once_with(hours=2, limit=3)
+    mock_actions.assert_called_once_with(hours=2, limit=3)
+    mock_status.assert_awaited_once_with()
+
+
+async def test_review_save_package_endpoint_stages_without_applying(client: AsyncClient) -> None:
+    server_mod.reset_review_package_state()
+    with patch(
+        "notification_hub.server.run_personal_ops_action_export",
+        return_value={
+            "status": "ok",
+            "schema_version": "notification-hub.personal_ops_action_export.v1",
+            "generated_at": "2026-05-09T00:00:00+00:00",
+            "hours": 2,
+            "actions": [{"action_id": "a"}],
+            "review_package": {
+                "requested": True,
+                "status": "ok",
+                "path": "/tmp/actions.json",
+                "error": None,
+            },
+            "inbox": {},
+            "error": None,
+        },
+    ) as mock_export:
+        resp = await client.post("/review/save-package?hours=2&limit=3")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert data["applied"] is False
+    assert data["review_package"]["path"] == "/tmp/actions.json"
+    assert server_mod.get_latest_review_package_path() == "/tmp/actions.json"
+    mock_export.assert_called_once_with(hours=2, limit=3, save_review_package=True)
+
+
+async def test_review_validate_package_endpoint_validates_latest_package(client: AsyncClient) -> None:
+    server_mod.reset_review_package_state()
+    with patch(
+        "notification_hub.server.get_latest_review_package_path",
+        return_value="/tmp/actions.json",
+    ), patch(
+        "notification_hub.server.validate_action_package",
+        return_value={
+            "status": "ok",
+            "path": "/tmp/actions.json",
+            "schema_version": "notification-hub.personal_ops_action_export.v1",
+            "action_count": 1,
+            "valid_action_count": 1,
+            "warning_count": 0,
+            "error_count": 0,
+            "warnings": [],
+            "errors": [],
+        },
+    ) as mock_validate:
+        resp = await client.post("/review/validate-package")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert data["applied"] is False
+    assert data["validation"]["valid_action_count"] == 1
+    assert data["review_package"]["validation_status"] == "ok"
+    mock_validate.assert_called_once()
 
 
 async def test_create_event_valid(client: AsyncClient) -> None:

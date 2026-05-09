@@ -30,6 +30,10 @@ tuning pass.
 - Saved action review packages can be validated before any future personal-ops import/apply step.
 - A personal-ops import stub now validates packages and refuses mutation, preserving the operator
   gate for any future apply behavior.
+- A localhost-only review page is available at `/review` on the daemon. It shows runtime health,
+  inbox rollups, action proposals, and trust state without applying anything.
+- The review page can stage a local review package and validate the latest staged package while
+  keeping import/apply behavior disabled.
 - A local logs command is available for recent event and daemon log inspection, including accepted
   versus rejected `/events` counts from the visible daemon tail.
 - A local burn-in command is available for recent accepted/rejected event counts and repeated
@@ -120,6 +124,9 @@ tuning pass.
   fields, duplicate action IDs, and priority/state validity.
 - Added `personal-ops-import` as a non-mutating apply boundary: it validates a package and reports
   `applied: false` until an explicit personal-ops integration exists.
+- Added the first local review UI at `GET /review`, backed by read-only `GET /review/data`.
+- Added review UI controls backed by `POST /review/save-package` and
+  `POST /review/validate-package`; both preserve `applied: false`.
 
 ## Verified Baseline
 
@@ -141,6 +148,7 @@ uv run --frozen notification-hub personal-ops-actions --save-review-package
 uv run --frozen notification-hub validate-action-package path/to/actions.json
 uv run --frozen notification-hub personal-ops-import path/to/actions.json
 uv run --frozen notification-hub logs
+curl http://127.0.0.1:9199/review
 uv run --frozen notification-hub burn-in --minutes 10
 uv run --frozen notification-hub verify-runtime
 uv run --frozen notification-hub delivery-check --slack
@@ -169,6 +177,10 @@ Expected current outcome:
   without mutating personal-ops
 - `notification-hub validate-action-package`: validates a saved review package without importing it
 - `notification-hub personal-ops-import`: validates a package and stops before mutation
+- `/review`: localhost-only review UI for runtime state, inbox rollups, action proposals, and trust
+  state
+- `/review/save-package` and `/review/validate-package`: review UI controls for staging and
+  validating packages without importing or applying them
 - `notification-hub logs`: `status: ok` with recent event and daemon log tails, including Slack
   delivery failure counts
 - `notification-hub burn-in`: top-level command status plus nested health counters, repeated-event
@@ -230,9 +242,8 @@ It is not part of normal day-to-day work.
 
 Start future work from `main`, keep using the frozen verification commands, and treat the repo-owned
 runtime templates as the source of truth for live launcher and hook wiring.
-The next work here should review the validated package shape with live personal-ops expectations,
-then decide whether the first real apply target should be a personal-ops inbox item or a small local
-UI for scanning and approving actions.
+The next work here should decide whether the first real apply target should be a personal-ops inbox
+item or whether the review UI should remain the only consumption surface for another burn-in pass.
 
 ## Optional Follow-Up
 
