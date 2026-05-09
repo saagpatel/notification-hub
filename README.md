@@ -63,15 +63,16 @@ The doctor command checks the local API, LaunchAgent presence, bridge file path,
 Slack Keychain setup, and policy-config load status.
 The smoke command posts a harmless `info` event and verifies it lands in the live JSONL log.
 The status command shows the compact day-to-day runtime view and suggests the next repair action
-when something is degraded.
+when something is degraded, including recent Slack delivery failures found in daemon logs.
 The logs command shows recent stored events, daemon stdout/stderr tails, and a summary of accepted
-versus rejected `/events` posts without changing local runtime state.
+versus rejected `/events` posts plus Slack delivery failures without changing local runtime state.
 The burn-in command summarizes recent accepted/rejected event posts and repeated event signatures
 so noisy producers are easy to spot. Validation-error counts are scoped to the latest visible daemon
-start so fixed pre-restart errors do not keep appearing as current burn-in failures.
+start so fixed pre-restart errors do not keep appearing as current burn-in failures. Recent Slack
+delivery failures now degrade burn-in health so configured-but-broken delivery does not look clean.
 The verify-runtime command combines doctor, policy-check, `/health/details`, and runtime wiring
-checks into one read-only report by default. Pass `--include-smoke` when you intentionally want it
-to post a harmless smoke event too.
+checks with recent burn-in health into one read-only report by default. Pass `--include-smoke` when
+you intentionally want it to post a harmless smoke event too.
 The policy-check command inspects the current policy config for overlapping keywords, shadowed
 routing rules, and no-op rules before they cause confusing behavior, and now also suggests likely
 fixes for each warning it reports.

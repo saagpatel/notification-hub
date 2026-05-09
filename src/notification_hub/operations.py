@@ -78,6 +78,8 @@ class DaemonLogSummary(TypedDict):
     rejected_event_posts: int
     validation_error_count: int
     recent_validation_errors: list[str]
+    slack_delivery_failure_count: int
+    recent_slack_delivery_failures: list[str]
 
 
 class RepeatedSignatureReport(TypedDict):
@@ -93,6 +95,7 @@ class BurnInHealthReport(TypedDict):
     accepted_event_posts: int
     rejected_event_posts: int
     validation_error_count: int
+    slack_delivery_failure_count: int
     status: str
 
 
@@ -147,6 +150,7 @@ class VerifyRuntimeReport(TypedDict):
     runtime_wiring: dict[str, bool]
     doctor: dict[str, object]
     policy_check: PolicyCheckReport
+    burn_in: BurnInReport
     smoke: SmokeReport | None
 
 
@@ -164,6 +168,7 @@ class StatusReport(TypedDict):
     runtime_wiring_current: bool
     push_notifier_available: bool | None
     slack_configured: bool | None
+    slack_delivery_failures: int
     next_action: str
 
 
@@ -209,6 +214,12 @@ _DAEMON_START_MARKERS = (
     "INFO:     Started server process",
     "INFO:     Uvicorn running on ",
 )
+_SLACK_DELIVERY_FAILURE_PREFIXES = (
+    "Slack send failed",
+    "Slack digest failed",
+    "Slack webhook returned",
+    "Slack digest webhook returned",
+)
 
 
 def _lines_since_latest_daemon_start(lines: list[str]) -> list[str]:
@@ -233,6 +244,11 @@ def _summarize_daemon_logs(stdout_tail: list[str], stderr_tail: list[str]) -> Da
 
     current_stderr_tail = _lines_since_latest_daemon_start(stderr_tail)
     validation_errors = [line for line in current_stderr_tail if line.startswith("Rejected event payload")]
+    slack_delivery_failures = [
+        line
+        for line in current_stderr_tail
+        if any(line.startswith(prefix) for prefix in _SLACK_DELIVERY_FAILURE_PREFIXES)
+    ]
     return {
         "access_status_counts": status_counts,
         "accepted_event_posts": sum(
@@ -241,6 +257,8 @@ def _summarize_daemon_logs(stdout_tail: list[str], stderr_tail: list[str]) -> Da
         "rejected_event_posts": status_counts.get("422", 0),
         "validation_error_count": len(validation_errors),
         "recent_validation_errors": validation_errors[-5:],
+        "slack_delivery_failure_count": len(slack_delivery_failures),
+        "recent_slack_delivery_failures": slack_delivery_failures[-5:],
     }
 
 
@@ -459,6 +477,7 @@ def run_burn_in(*, minutes: int = 10, lines: int = 200) -> BurnInReport:
                 "accepted_event_posts": 0,
                 "rejected_event_posts": 0,
                 "validation_error_count": 0,
+                "slack_delivery_failure_count": 0,
                 "status": "degraded",
             },
             "noise_candidates": [],
@@ -473,6 +492,7 @@ def run_burn_in(*, minutes: int = 10, lines: int = 200) -> BurnInReport:
         "ok"
         if daemon_summary["rejected_event_posts"] == 0
         and daemon_summary["validation_error_count"] == 0
+        and daemon_summary["slack_delivery_failure_count"] == 0
         else "degraded"
     )
     noise_candidates = repeated[:10]
@@ -487,6 +507,7 @@ def run_burn_in(*, minutes: int = 10, lines: int = 200) -> BurnInReport:
             "accepted_event_posts": daemon_summary["accepted_event_posts"],
             "rejected_event_posts": daemon_summary["rejected_event_posts"],
             "validation_error_count": daemon_summary["validation_error_count"],
+            "slack_delivery_failure_count": daemon_summary["slack_delivery_failure_count"],
             "status": health_status,
         },
         "noise_candidates": noise_candidates,
@@ -640,6 +661,7 @@ def run_verify_runtime(*, include_smoke: bool = False) -> VerifyRuntimeReport:
     """Aggregate the core runtime checks into one operator-facing report."""
     doctor = collect_doctor_report()
     policy_check = run_policy_check()
+    burn_in = run_burn_in(minutes=10, lines=200)
     smoke = run_smoke_check() if include_smoke else None
 
     doctor_checks = _as_dict(doctor.get("checks"))
@@ -651,6 +673,7 @@ def run_verify_runtime(*, include_smoke: bool = False) -> VerifyRuntimeReport:
         "policy_check_ok": policy_check["status"] != "degraded",
         "health_details_reachable": local_api.get("reachable") is True,
         "runtime_wiring_current": doctor_checks.get("runtime_wiring_current") is True,
+        "recent_runtime_health_ok": burn_in["health"]["status"] == "ok",
         "smoke_ok": smoke is None or smoke["status"] == "ok",
     }
     status = "ok" if all(checks.values()) else "degraded"
@@ -665,6 +688,7 @@ def run_verify_runtime(*, include_smoke: bool = False) -> VerifyRuntimeReport:
         "runtime_wiring": {key: bool(value) for key, value in runtime_wiring.items()},
         "doctor": doctor,
         "policy_check": policy_check,
+        "burn_in": burn_in,
         "smoke": smoke,
     }
 
@@ -680,10 +704,13 @@ def run_status() -> StatusReport:
     config = _as_dict(doctor.get("config"))
     delivery = _as_dict(doctor.get("delivery"))
     retention = _as_dict(payload.get("retention"))
+    burn_in = verification["burn_in"]
+    burn_in_health = burn_in["health"]
 
     daemon_reachable = checks["health_details_reachable"]
     runtime_wiring_current = checks["runtime_wiring_current"]
     policy_load_ok = doctor_checks.get("policy_load_ok") is True
+    slack_delivery_failures = burn_in_health["slack_delivery_failure_count"]
 
     if verification["status"] == "ok":
         next_action = "No action needed."
@@ -691,6 +718,8 @@ def run_status() -> StatusReport:
         next_action = "Start or restart the LaunchAgent, then run verify-runtime again."
     elif not runtime_wiring_current:
         next_action = "Refresh runtime templates from ops/, then run verify-runtime again."
+    elif not checks["recent_runtime_health_ok"] and slack_delivery_failures > 0:
+        next_action = "Inspect notification-hub logs for Slack delivery failures, then verify Slack transport."
     elif not policy_load_ok or not checks["policy_check_ok"]:
         next_action = "Run notification-hub policy-check and fix the reported policy issue."
     else:
@@ -710,5 +739,6 @@ def run_status() -> StatusReport:
         "runtime_wiring_current": runtime_wiring_current,
         "push_notifier_available": _as_bool(delivery.get("push_notifier_available")),
         "slack_configured": _as_bool(delivery.get("slack_webhook_configured")),
+        "slack_delivery_failures": slack_delivery_failures,
         "next_action": next_action,
     }

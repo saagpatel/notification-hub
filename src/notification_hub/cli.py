@@ -225,6 +225,7 @@ def _print_status_report(report: StatusReport) -> None:
     print(f"- retention last status: {report['retention_last_status']}")
     print(f"- events processed: {report['events_processed']}")
     print(f"- Slack configured: {report['slack_configured']}")
+    print(f"- Slack delivery failures: {report['slack_delivery_failures']}")
     print(f"- push notifier available: {report['push_notifier_available']}")
     print(f"- next action: {report['next_action']}")
 
@@ -244,6 +245,7 @@ def _print_logs_report(report: LogsReport) -> None:
     print(f"  accepted event posts: {summary['accepted_event_posts']}")
     print(f"  rejected event posts: {summary['rejected_event_posts']}")
     print(f"  validation errors: {summary['validation_error_count']}")
+    print(f"  Slack delivery failures: {summary['slack_delivery_failure_count']}")
     if summary["access_status_counts"]:
         counts = ", ".join(
             f"{status}={count}" for status, count in sorted(summary["access_status_counts"].items())
@@ -271,6 +273,7 @@ def _print_burn_in_report(report: BurnInReport) -> None:
     print(f"- accepted event posts: {report['accepted_event_posts']}")
     print(f"- rejected event posts: {report['rejected_event_posts']}")
     print(f"- validation errors: {report['validation_error_count']}")
+    print(f"- Slack delivery failures: {report['health']['slack_delivery_failure_count']}")
     print(f"- health: {report['health']['status']}")
     print(f"- Slack-eligible events: {report['slack_eligible_events']}")
     if report["error"] is not None:
@@ -302,6 +305,7 @@ def _print_verify_runtime_report(report: VerifyRuntimeReport) -> None:
     print(f"- policy check OK: {checks['policy_check_ok']}")
     print(f"- health details reachable: {checks['health_details_reachable']}")
     print(f"- runtime wiring current: {checks['runtime_wiring_current']}")
+    print(f"- recent runtime health OK: {checks['recent_runtime_health_ok']}")
     print(f"- smoke included: {report['include_smoke']}")
     if smoke is not None:
         print(f"- smoke OK: {checks['smoke_ok']}")

@@ -82,7 +82,7 @@ def explain_classification(event: Event) -> ClassificationDecision:
 def classify(event: Event) -> Level:
     """Classify an event's urgency. Returns the determined level.
 
-    Priority: urgent > normal > info (explicit source level is a hint,
+    Priority: urgent > info > normal (explicit source level is a hint,
     but keywords can escalate or demote).
     """
     return explain_classification(event).output_level

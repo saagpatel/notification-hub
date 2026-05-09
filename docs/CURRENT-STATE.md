@@ -1,15 +1,17 @@
 # Current State
 
-Last updated: 2026-04-24
+Last updated: 2026-05-09
 
 ## Snapshot
 
-`notification-hub` is in a healthy, normal operating state.
+`notification-hub` is in a mostly healthy operating state, with one active delivery-trust issue to
+resolve before calling the runtime fully clean.
 
 - Local `main` matches `origin/main`.
 - GitHub Actions CI is configured and passing on `main`.
 - The daemon is running locally via LaunchAgent on `127.0.0.1:9199`.
-- Slack delivery is configured through macOS Keychain and is working.
+- Slack delivery is configured through macOS Keychain, but the current daemon stderr log shows recent
+  Slack send/digest failures that need investigation.
 - Policy-based runtime overrides are now supported through an optional config file.
 - A local doctor command is available for operator checks.
 - The repo now also includes a sample policy config, a smoke command, and a log-retention command.
@@ -22,7 +24,7 @@ Last updated: 2026-04-24
 - A local burn-in command is available for recent accepted/rejected event counts and repeated
   event signatures, with validation-error summaries scoped to the latest visible daemon start.
   Burn-in now reports health failures separately from repeated-event noise candidates and includes
-  Slack-eligible volume by source/level.
+  Slack-eligible volume by source/level. Recent Slack delivery failures now degrade burn-in health.
 - A local explain command can preview classification, routing, and delivery without sending anything.
 - A local policy-check command can audit the ruleset for overlaps, shadowing, and no-op rules,
   and now suggests likely fixes for each warning.
@@ -83,6 +85,8 @@ Last updated: 2026-04-24
   pre-restart `422` diagnostics do not appear as current failures.
 - Added configurable noise rules so repeated accepted producer events can be suppressed by
   source/project/text/level/window instead of relying only on hard-coded producer behavior.
+- Added Slack delivery failure detection to daemon log summaries so `logs`, `burn-in`,
+  `verify-runtime`, and `status` no longer treat a configured webhook as proof of working delivery.
 
 ## Verified Baseline
 
@@ -107,16 +111,19 @@ uv run --frozen notification-hub retention --max-events 2000
 
 Expected current outcome:
 
-- `pytest`: 218 passed
+- `pytest`: 221 passed
 - `ruff`: clean
 - `pyright`: 0 errors
 - `/health/details`: `status: ok`, watcher active, push available, Slack configured
 - `notification-hub-doctor`: `status: ok`
-- `notification-hub status`: `status: ok` with a compact read-only runtime summary
-- `notification-hub logs`: `status: ok` with recent event and daemon log tails
-- `notification-hub burn-in`: `status: ok` with health counters, repeated-event noise candidates,
-  and Slack-eligible event volume
-- `notification-hub verify-runtime`: `status: ok` without posting an event by default
+- `notification-hub status`: compact read-only runtime summary; degrades when recent Slack delivery
+  failures are present
+- `notification-hub logs`: `status: ok` with recent event and daemon log tails, including Slack
+  delivery failure counts
+- `notification-hub burn-in`: top-level command status plus nested health counters, repeated-event
+  noise candidates, Slack-eligible event volume, and Slack delivery failure counts
+- `notification-hub verify-runtime`: read-only by default; degrades when doctor, policy, runtime
+  wiring, or recent burn-in health is degraded
 - `notification-hub-policy-check`: `status: ok` or `warn`, depending on the active policy file,
   plus warning-specific fix suggestions when issues are found
 - `notification-hub-explain`: returns a non-mutating classification/routing/delivery preview
@@ -170,10 +177,12 @@ It is not part of normal day-to-day work.
 
 Start future work from `main`, keep using the frozen verification commands, and treat the repo-owned
 runtime templates as the source of truth for live launcher and hook wiring.
-The next work here should build on the doctor/config/runtime-wiring surfaces rather than reopening
-repo-baseline repair.
+The next work here should investigate current Slack transport failures, then tune accepted-event
+noise with a live policy config before moving into new coordination features.
 
 ## Optional Follow-Up
 
 - Delete `archive/local-history-pre-import` later if that old local-only history is no longer needed.
 - Remove local untracked junk files like `.DS_Store` if you want a tidier working directory on disk.
+- Install or customize `~/.config/notification-hub/config.toml` from `config/policy.example.toml`
+  when you are ready to suppress repeated accepted `personal-ops` and Codex completion events.

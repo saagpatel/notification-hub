@@ -115,6 +115,7 @@ def test_logs_report_tails_events_and_daemon_logs(
     assert report["daemon_summary"]["accepted_event_posts"] == 0
     assert report["daemon_summary"]["rejected_event_posts"] == 1
     assert report["daemon_summary"]["validation_error_count"] == 1
+    assert report["daemon_summary"]["slack_delivery_failure_count"] == 0
     assert report["stdout_tail"] == [
         'INFO:     127.0.0.1:2 - "POST /events HTTP/1.1" 422 Unprocessable Entity',
         'INFO:     127.0.0.1:3 - "GET /health/details HTTP/1.1" 200 OK',
@@ -181,6 +182,46 @@ def test_logs_report_counts_validation_errors_since_latest_daemon_start(
     assert report["daemon_summary"]["validation_error_count"] == 1
     assert report["daemon_summary"]["recent_validation_errors"] == [
         "Rejected event payload from 127.0.0.1: [{'type': 'current_error'}]"
+    ]
+    assert report["daemon_summary"]["slack_delivery_failure_count"] == 0
+
+
+def test_logs_report_counts_slack_delivery_failures_since_latest_daemon_start(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events_log = tmp_path / "events.jsonl"
+    events_log.write_text("", encoding="utf-8")
+    stdout_log = tmp_path / "stdout.log"
+    stderr_log = tmp_path / "stderr.log"
+    stdout_log.write_text("", encoding="utf-8")
+    stderr_log.write_text(
+        "\n".join(
+            [
+                "Slack send failed for old: [Errno 2] No such file or directory",
+                "INFO:     Started server process [123]",
+                "INFO:     Waiting for application startup.",
+                "INFO:     Application startup complete.",
+                "Slack digest failed: [Errno 2] No such file or directory",
+                "Failed to flush overflow digest; returning 11 events to buffer",
+                "Slack send failed for current: [Errno 2] No such file or directory",
+                "Slack delivery failed for current",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(ops_mod, "EVENTS_LOG", events_log)
+    monkeypatch.setattr(ops_mod, "DAEMON_STDOUT_LOG", stdout_log)
+    monkeypatch.setattr(ops_mod, "DAEMON_STDERR_LOG", stderr_log)
+
+    report = run_logs(events=0, lines=20)
+
+    assert report["daemon_summary"]["slack_delivery_failure_count"] == 2
+    assert report["daemon_summary"]["recent_slack_delivery_failures"] == [
+        "Slack digest failed: [Errno 2] No such file or directory",
+        "Slack send failed for current: [Errno 2] No such file or directory",
     ]
 
 
@@ -273,6 +314,7 @@ def test_burn_in_reports_repeated_signatures_and_daemon_counts(
         "accepted_event_posts": 1,
         "rejected_event_posts": 1,
         "validation_error_count": 1,
+        "slack_delivery_failure_count": 0,
         "status": "degraded",
     }
     assert report["noise_candidates"] == report["repeated_signatures"]
@@ -286,6 +328,39 @@ def test_burn_in_reports_repeated_signatures_and_daemon_counts(
             "level": "normal",
         }
     ]
+
+
+def test_burn_in_degrades_on_slack_delivery_failures(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events_log = tmp_path / "events.jsonl"
+    events_log.write_text("", encoding="utf-8")
+    stdout_log = tmp_path / "stdout.log"
+    stderr_log = tmp_path / "stderr.log"
+    stdout_log.write_text(
+        'INFO:     127.0.0.1:1 - "POST /events HTTP/1.1" 201 Created\n',
+        encoding="utf-8",
+    )
+    stderr_log.write_text(
+        "Slack send failed for abc123: [Errno 2] No such file or directory\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(ops_mod, "EVENTS_LOG", events_log)
+    monkeypatch.setattr(ops_mod, "DAEMON_STDOUT_LOG", stdout_log)
+    monkeypatch.setattr(ops_mod, "DAEMON_STDERR_LOG", stderr_log)
+
+    report = run_burn_in(minutes=10, lines=20)
+
+    assert report["status"] == "ok"
+    assert report["health"] == {
+        "accepted_event_posts": 1,
+        "rejected_event_posts": 0,
+        "validation_error_count": 0,
+        "slack_delivery_failure_count": 1,
+        "status": "degraded",
+    }
 
 
 def test_retention_noop_when_log_missing() -> None:
