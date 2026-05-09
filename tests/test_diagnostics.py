@@ -159,6 +159,7 @@ def _burn_in_report(
             "status": status,
         },
         "noise_candidates": [],
+        "noise_rule_suggestions": [],
         "repeated_signatures": [],
         "slack_eligible_events": 0,
         "slack_volume": [],
@@ -209,7 +210,9 @@ def _import_queue_health(
         "needs_review": queued_count > 0,
         "oldest_queued_at": "2026-05-09T10:00:00+00:00" if queued_count else None,
         "oldest_queued_age_seconds": 60.0 if queued_count else None,
-        "oldest_promoted_pending_at": "2026-05-09T08:00:00+00:00" if promoted_pending_count else None,
+        "oldest_promoted_pending_at": "2026-05-09T08:00:00+00:00"
+        if promoted_pending_count
+        else None,
         "oldest_promoted_pending_age_seconds": 7200.0 if promoted_pending_count else None,
         "stale_after_hours": 4.0,
         "next_action": next_action,
@@ -236,7 +239,10 @@ def _delivery_check_report(
 def test_collect_runtime_readiness_reports_config_and_paths() -> None:
     with (
         patch("notification_hub.diagnostics.channels_mod.has_push_notifier", return_value=True),
-        patch("notification_hub.diagnostics.config_mod.has_slack_webhook_configured", return_value=False),
+        patch(
+            "notification_hub.diagnostics.config_mod.has_slack_webhook_configured",
+            return_value=False,
+        ),
         patch(
             "notification_hub.diagnostics.config_mod.get_policy_config",
             return_value=MagicMock(
@@ -252,7 +258,10 @@ def test_collect_runtime_readiness_reports_config_and_paths() -> None:
                 ),
             ),
         ),
-        patch("notification_hub.diagnostics.config_mod.analyze_policy_config", return_value=("w1", "w2", "w3")),
+        patch(
+            "notification_hub.diagnostics.config_mod.analyze_policy_config",
+            return_value=("w1", "w2", "w3"),
+        ),
         patch("notification_hub.diagnostics._path_exists", side_effect=[True, True, False, True]),
         patch(
             "notification_hub.diagnostics.collect_runtime_wiring",
@@ -397,8 +406,18 @@ def test_cli_json_output(capsys: CaptureFixture[str]) -> None:
         return_value={
             "status": "ok",
             "checks": {"local_api_healthy": True},
-            "config": {"path": "/tmp/config.toml", "load_error": None, "routing_rule_count": 0, "warning_count": 0},
-            "retention": {"enabled": True, "interval_minutes": 60, "max_events": 2000, "keep_archives": 10},
+            "config": {
+                "path": "/tmp/config.toml",
+                "load_error": None,
+                "routing_rule_count": 0,
+                "warning_count": 0,
+            },
+            "retention": {
+                "enabled": True,
+                "interval_minutes": 60,
+                "max_events": 2000,
+                "keep_archives": 10,
+            },
             "local_api": {"url": "http://127.0.0.1:9199/health/details"},
         },
     ):
@@ -549,7 +568,10 @@ def test_run_status_suggests_runtime_wiring_repair() -> None:
 
     assert report["status"] == "degraded"
     assert report["runtime_wiring_current"] is False
-    assert report["next_action"] == "Refresh runtime templates from ops/, then run verify-runtime again."
+    assert (
+        report["next_action"]
+        == "Refresh runtime templates from ops/, then run verify-runtime again."
+    )
 
 
 def test_run_status_suggests_slack_delivery_investigation() -> None:
@@ -882,7 +904,9 @@ def test_run_verify_runtime_reports_import_queue_attention() -> None:
         patch("notification_hub.operations.run_burn_in", return_value=_burn_in_report()),
         patch(
             "notification_hub.operations.summarize_personal_ops_import_queue",
-            return_value=_import_queue_health(promoted_pending_count=1, promoted_pending_stale_count=1),
+            return_value=_import_queue_health(
+                promoted_pending_count=1, promoted_pending_stale_count=1
+            ),
         ),
     ):
         report = run_verify_runtime()
@@ -1167,7 +1191,9 @@ def test_cli_coordination_snapshot_json_output(capsys: CaptureFixture[str]) -> N
     )
 
 
-def test_cli_coordination_snapshot_writes_output(tmp_path: Path, capsys: CaptureFixture[str]) -> None:
+def test_cli_coordination_snapshot_writes_output(
+    tmp_path: Path, capsys: CaptureFixture[str]
+) -> None:
     output_path = tmp_path / "snapshot.json"
     with patch(
         "notification_hub.cli.run_coordination_snapshot",
@@ -1224,7 +1250,9 @@ def test_cli_personal_ops_actions_json_output(capsys: CaptureFixture[str]) -> No
     )
 
 
-def test_cli_personal_ops_actions_writes_output(tmp_path: Path, capsys: CaptureFixture[str]) -> None:
+def test_cli_personal_ops_actions_writes_output(
+    tmp_path: Path, capsys: CaptureFixture[str]
+) -> None:
     output_path = tmp_path / "actions.json"
     with patch(
         "notification_hub.cli.run_personal_ops_action_export",
@@ -1263,7 +1291,9 @@ def test_cli_personal_ops_actions_can_save_review_package(tmp_path: Path) -> Non
     )
 
 
-def test_cli_validate_action_package_json_output(tmp_path: Path, capsys: CaptureFixture[str]) -> None:
+def test_cli_validate_action_package_json_output(
+    tmp_path: Path, capsys: CaptureFixture[str]
+) -> None:
     package_path = tmp_path / "actions.json"
     package_path.write_text(json.dumps(_personal_ops_action_export_report()), encoding="utf-8")
 
@@ -1326,7 +1356,9 @@ def test_cli_personal_ops_queue_health_json_output(capsys: CaptureFixture[str]) 
             "applied": False,
         },
     ) as mock_health:
-        exit_code = main(["personal-ops-queue-health", "--json", "--limit", "3", "--stale-after-hours", "2"])
+        exit_code = main(
+            ["personal-ops-queue-health", "--json", "--limit", "3", "--stale-after-hours", "2"]
+        )
 
     captured = capsys.readouterr()
     assert exit_code == 0
@@ -1366,12 +1398,24 @@ def test_cli_personal_ops_queue_burn_in_json_output(capsys: CaptureFixture[str])
             },
             "runtime_burn_in": _burn_in_report(),
             "ready_for_live_promotion": True,
+            "outcome_sync_posture": "operator-mediated",
             "operator_steps": ["Queue loop is ready."],
             "next_action": "Queue loop is ready; use the operator steps when the next real handoff appears.",
             "applied": False,
         },
     ) as mock_burn_in:
-        exit_code = main(["personal-ops-queue-burn-in", "--json", "--minutes", "5", "--lines", "20", "--limit", "3"])
+        exit_code = main(
+            [
+                "personal-ops-queue-burn-in",
+                "--json",
+                "--minutes",
+                "5",
+                "--lines",
+                "20",
+                "--limit",
+                "3",
+            ]
+        )
 
     captured = capsys.readouterr()
     assert exit_code == 0
@@ -1406,7 +1450,13 @@ def test_cli_explain_json_output(capsys: CaptureFixture[str]) -> None:
     with patch(
         "notification_hub.cli.build_event_explanation_report",
         return_value={
-            "event": {"source": "codex", "level": "info", "title": "x", "body": "y", "project": None},
+            "event": {
+                "source": "codex",
+                "level": "info",
+                "title": "x",
+                "body": "y",
+                "project": None,
+            },
             "classification": {
                 "input_level": "info",
                 "output_level": "urgent",
@@ -1491,8 +1541,18 @@ def test_doctor_main_forwards_flags(capsys: CaptureFixture[str]) -> None:
         return_value={
             "status": "ok",
             "checks": {"local_api_healthy": True},
-            "config": {"path": "/tmp/config.toml", "load_error": None, "routing_rule_count": 0, "warning_count": 0},
-            "retention": {"enabled": True, "interval_minutes": 60, "max_events": 2000, "keep_archives": 10},
+            "config": {
+                "path": "/tmp/config.toml",
+                "load_error": None,
+                "routing_rule_count": 0,
+                "warning_count": 0,
+            },
+            "retention": {
+                "enabled": True,
+                "interval_minutes": 60,
+                "max_events": 2000,
+                "keep_archives": 10,
+            },
             "local_api": {"url": "http://127.0.0.1:9199/health/details"},
         },
     ):
@@ -1629,6 +1689,9 @@ def test_cli_burn_in_json_output(capsys: CaptureFixture[str]) -> None:
                     "body": "Approval expires soon: review or cancel",
                 }
             ],
+            "noise_rule_suggestions": [
+                "Review noise rule candidate: source='personal-ops', project='personal-ops', title_contains='Approval expires soon', level='info', window_minutes=10"
+            ],
             "repeated_signatures": [
                 {
                     "count": 2,
@@ -1679,6 +1742,7 @@ def test_burn_in_wrapper_forwards_flags(capsys: CaptureFixture[str]) -> None:
                 "status": "ok",
             },
             "noise_candidates": [],
+            "noise_rule_suggestions": [],
             "repeated_signatures": [],
             "slack_eligible_events": 0,
             "slack_volume": [],
@@ -1876,6 +1940,7 @@ def test_personal_ops_queue_burn_in_wrapper_forwards_flags(capsys: CaptureFixtur
             },
             "runtime_burn_in": _burn_in_report(),
             "ready_for_live_promotion": True,
+            "outcome_sync_posture": "operator-mediated",
             "operator_steps": ["Queue loop is ready."],
             "next_action": "Queue loop is ready; use the operator steps when the next real handoff appears.",
             "applied": False,
@@ -1917,7 +1982,13 @@ def test_explain_wrapper_forwards_flags(capsys: CaptureFixture[str]) -> None:
     with patch(
         "notification_hub.cli.build_event_explanation_report",
         return_value={
-            "event": {"source": "codex", "level": "info", "title": "x", "body": "y", "project": None},
+            "event": {
+                "source": "codex",
+                "level": "info",
+                "title": "x",
+                "body": "y",
+                "project": None,
+            },
             "classification": {
                 "input_level": "info",
                 "output_level": "normal",

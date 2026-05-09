@@ -716,7 +716,9 @@ def _print_personal_ops_queue_report(report: dict[str, object]) -> None:
             print(f"    promotion outcome: {item['promotion_outcome']}")
 
 
-def _print_personal_ops_queue_health_report(report: PersonalOpsImportQueueHealthCheckReport) -> None:
+def _print_personal_ops_queue_health_report(
+    report: PersonalOpsImportQueueHealthCheckReport,
+) -> None:
     health = report["health"]
     print(f"notification-hub personal-ops-queue-health: {report['status']}")
     print(f"- queue path: {health['queue_path']}")
@@ -752,6 +754,7 @@ def _print_personal_ops_queue_burn_in_report(report: PersonalOpsQueueBurnInRepor
     print(f"- promoted pending stale: {health['promoted_pending_stale_count']}")
     print(f"- scenario: {report['scenario']['status']}")
     print(f"- runtime health: {runtime_health['status']}")
+    print(f"- outcome sync posture: {report['outcome_sync_posture']}")
     print(f"- next action: {report['next_action']}")
     print("- operator steps:")
     for step in report["operator_steps"]:
@@ -796,7 +799,9 @@ def _print_logs_report(report: LogsReport) -> None:
     print("- recent events:")
     for event in report["recent_events"]:
         project = f" ({event['project']})" if event["project"] else ""
-        print(f"  - {event['timestamp']} [{event['level']}] {event['source']}{project}: {event['title']}")
+        print(
+            f"  - {event['timestamp']} [{event['level']}] {event['source']}{project}: {event['title']}"
+        )
 
     print("- stdout tail:")
     for line in report["stdout_tail"]:
@@ -824,10 +829,12 @@ def _print_burn_in_report(report: BurnInReport) -> None:
         print("  none")
     for item in report["noise_candidates"]:
         project = f" ({item['project']})" if item["project"] else ""
-        print(
-            f"  - x{item['count']} {item['source']}{project} "
-            f"[{item['level']}]: {item['title']}"
-        )
+        print(f"  - x{item['count']} {item['source']}{project} [{item['level']}]: {item['title']}")
+    print("- noise rule suggestions:")
+    if not report["noise_rule_suggestions"]:
+        print("  none")
+    for suggestion in report["noise_rule_suggestions"]:
+        print(f"  - {suggestion}")
     print("- Slack volume:")
     if not report["slack_volume"]:
         print("  none")

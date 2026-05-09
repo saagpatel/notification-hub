@@ -113,7 +113,9 @@ queued item age, promoted handoffs still waiting on downstream outcome sync, sta
 promotions, and the next safe operator commands without applying work.
 The personal-ops-queue-burn-in command combines queue health, the temporary queue lifecycle
 scenario, and recent runtime burn-in into one non-applying readiness report. Use it before promoting
-real handoffs or after syncing a downstream personal-ops outcome.
+real handoffs or after syncing a downstream personal-ops outcome. The report now states the
+outcome-sync posture explicitly: notification-hub can show pending or stale promoted outcomes, but
+the operator still owns creating and syncing the downstream personal-ops work.
 The personal-ops-queue-scenario command runs a temporary end-to-end queue lifecycle, including a
 promoted handoff with an accepted outcome, without touching the real operator queue.
 See `docs/PRODUCT-BOUNDARY.md` for the current ownership split between notification-hub,
@@ -124,6 +126,8 @@ The burn-in command summarizes recent accepted/rejected event posts and repeated
 so noisy producers are easy to spot. Validation-error counts are scoped to the latest visible daemon
 start so fixed pre-restart errors do not keep appearing as current burn-in failures. Recent Slack
 delivery failures now degrade burn-in health so configured-but-broken delivery does not look clean.
+Repeated-event candidates now include review-only noise-rule suggestions so policy changes can be
+copied deliberately instead of inferred from raw event rows.
 The verify-runtime command combines doctor, policy-check, `/health/details`, runtime wiring checks,
 and recent burn-in health into one read-only report by default. Pass `--include-smoke` when you
 intentionally want it to post a harmless smoke event too. Pass `--verify-slack` or `--verify-push`
@@ -166,9 +170,10 @@ The local review surface is available at `http://127.0.0.1:9199/review` while th
 It shows runtime state, inbox rollups, action proposals, and the current trust boundary without
 mutating local state.
 The review page can also stage a review package, show recent saved review packages, inspect package
-actions/evidence, queue import handoff items, filter queued/promoted/pending/stale/resolved handoffs,
-mark queued items reviewed/rejected/snoozed/promoted, delete saved review packages, and validate the
-latest staged or saved package. These controls still do not apply, approve, send, or mutate personal-ops.
+actions/evidence, show queue lineage for already queued packages, queue import handoff items, filter
+queued/promoted/pending/stale/resolved handoffs, mark queued items reviewed/rejected/snoozed/promoted,
+delete saved review packages, and validate the latest staged or saved package. These controls still
+do not apply, approve, send, or mutate personal-ops.
 Coordination snapshots target bridge-db's `codex` snapshot shape: the emitted
 `bridge_snapshot` object can be passed as snapshot data after operator review, or saved directly
 with the explicit `--save-bridge-db` flag.

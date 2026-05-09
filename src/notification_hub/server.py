@@ -176,7 +176,9 @@ async def _review_runtime_status() -> dict[str, object]:
         "push_notifier_available": delivery.get("push_notifier_available"),
         "slack_configured": delivery.get("slack_webhook_configured"),
         "slack_delivery_failures": slack_failures,
-        "next_action": "No action needed." if details.get("status") == "ok" else "Review health details.",
+        "next_action": "No action needed."
+        if details.get("status") == "ok"
+        else "Review health details.",
     }
 
 
@@ -497,11 +499,19 @@ REVIEW_HTML = """<!doctype html>
         <div class="next">Action ID: ${esc(a.action_id)}</div>
         <div class="next">Evidence: ${esc(a.evidence_event_id)} / ${esc(a.evidence_timestamp)}</div>
       `));
+      const queueItems = data.queue_items || [];
+      const queueRows = queueItems.slice(0, 6).map(q => item(`
+        <div class="line"><span class="title">${esc(q.title)}</span><span class="meta">${esc(q.status)}${q.promotion_outcome ? " / " + esc(q.promotion_outcome) : ""}</span></div>
+        <div class="next">Queue ID: ${esc(q.queue_id)}${q.promotion_target_id ? " / target " + esc(q.promotion_target_id) : ""}</div>
+        <div class="next">Updated: ${esc(q.updated_at || q.enqueued_at || "unknown")}</div>
+      `));
       packageDetail.replaceChildren(
         item(`<div class="line"><span class="title">${esc(data.name)}</span><span class="meta">${esc(data.status)}</span></div>`),
         item(`<div class="next">${esc(data.path)}</div>`),
         item(`<div class="line"><span class="title">Generated</span><span class="meta">${esc(data.generated_at || "unknown")} / ${esc(data.hours || "unknown")}h</span></div>`),
         item(`<div class="line"><span class="title">Validation</span><span class="meta">${esc(data.validation.valid_action_count)} valid / ${esc(data.validation.error_count)} errors</span></div>`),
+        item(`<div class="line"><span class="title">Queue lineage</span><span class="meta">${esc(queueItems.length)}</span></div>`),
+        ...(queueRows.length ? queueRows : [item(`<div class="next">No queue lineage for this package yet.</div>`)]),
         ...((data.validation.errors || []).map(error => item(`<div class="next">${esc(error)}</div>`))),
         ...actionRows
       );
@@ -746,7 +756,9 @@ async def review_data(hours: int = 2, limit: int = 6) -> dict[str, object]:
     actions = run_personal_ops_action_export(hours=safe_hours, limit=safe_limit)
     runtime = await _review_runtime_status()
     return {
-        "status": "ok" if inbox["status"] == "ok" and actions["status"] == "ok" and runtime["status"] == "ok" else "degraded",
+        "status": "ok"
+        if inbox["status"] == "ok" and actions["status"] == "ok" and runtime["status"] == "ok"
+        else "degraded",
         "hours": safe_hours,
         "limit": safe_limit,
         "runtime": runtime,
@@ -811,7 +823,9 @@ async def review_queue_package(name: str) -> dict[str, object]:
 @app.get("/review/import-queue")
 async def review_import_queue(limit: int = 10, stale_after_hours: float = 4.0) -> dict[str, object]:
     """List queued personal-ops handoff items without applying them."""
-    queue_health = run_personal_ops_import_queue_health_check(limit=max(limit, 1), stale_after_hours=stale_after_hours)
+    queue_health = run_personal_ops_import_queue_health_check(
+        limit=max(limit, 1), stale_after_hours=stale_after_hours
+    )
     return {
         "status": "ok",
         "items": list_personal_ops_import_queue(limit=max(limit, 1)),
@@ -846,10 +860,18 @@ async def review_update_import_queue(queue_id: str, request: Request) -> dict[st
         status=status,
         reason=reason_value if isinstance(reason_value, str) else None,
         snoozed_until=snoozed_until_value if isinstance(snoozed_until_value, str) else None,
-        promotion_target=promotion_target_value if isinstance(promotion_target_value, str) else None,
-        promotion_target_id=promotion_target_id_value if isinstance(promotion_target_id_value, str) else None,
-        promotion_outcome=promotion_outcome_value if isinstance(promotion_outcome_value, str) else None,
-        promotion_outcome_note=promotion_outcome_note_value if isinstance(promotion_outcome_note_value, str) else None,
+        promotion_target=promotion_target_value
+        if isinstance(promotion_target_value, str)
+        else None,
+        promotion_target_id=promotion_target_id_value
+        if isinstance(promotion_target_id_value, str)
+        else None,
+        promotion_outcome=promotion_outcome_value
+        if isinstance(promotion_outcome_value, str)
+        else None,
+        promotion_outcome_note=promotion_outcome_note_value
+        if isinstance(promotion_outcome_note_value, str)
+        else None,
     )
     return dict(report)
 

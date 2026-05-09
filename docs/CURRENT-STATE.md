@@ -39,19 +39,23 @@ tuning pass.
   item age, promoted handoffs still waiting on outcome sync, stale pending outcomes, and the next
   safe operator commands without applying work.
 - A queue burn-in command now combines queue health, the temporary queue lifecycle scenario, and
-  recent runtime burn-in into one non-applying readiness report for live operator handoffs.
+  recent runtime burn-in into one non-applying readiness report for live operator handoffs. It now
+  states that outcome sync remains operator-mediated and that notification-hub reports pending or
+  stale outcomes without syncing personal-ops itself.
 - A localhost-only review page is available at `/review` on the daemon. It shows runtime health,
   inbox rollups, action proposals, and trust state without applying anything.
 - The review page can stage a local review package, list recent saved review packages, inspect
-  package actions/evidence, queue import handoff items, filter queued/promoted/pending/stale/resolved
-  handoffs, mark queued items reviewed/rejected/snoozed/promoted, delete saved review packages, and
-  validate the latest staged or saved package while keeping apply behavior disabled.
+  package actions/evidence plus queue lineage, queue import handoff items, filter
+  queued/promoted/pending/stale/resolved handoffs, mark queued items reviewed/rejected/snoozed/promoted,
+  delete saved review packages, and validate the latest staged or saved package while keeping apply
+  behavior disabled.
 - A local logs command is available for recent event and daemon log inspection, including accepted
   versus rejected `/events` counts from the visible daemon tail.
 - A local burn-in command is available for recent accepted/rejected event counts and repeated
   event signatures, with validation-error summaries scoped to the latest visible daemon start.
   Burn-in now reports health failures separately from repeated-event noise candidates and includes
-  Slack-eligible volume by source/level. Recent Slack delivery failures now degrade burn-in health.
+  Slack-eligible volume by source/level. Repeated-event candidates now include review-only
+  noise-rule suggestions, and recent Slack delivery failures now degrade burn-in health.
 - Explicit delivery checks are available through `notification-hub delivery-check` and the
   `verify-runtime --verify-slack` / `--verify-push` flags, so Slack and push transport can be
   tested intentionally without making default verification noisy.
@@ -144,7 +148,7 @@ tuning pass.
 - Added `GET /review/packages` and recent package display so saved review packages remain visible
   across daemon restarts.
 - Added `GET /review/package/{name}` and package detail display for action proposals, evidence IDs,
-  and validation errors without importing or applying anything.
+  validation errors, and any existing queue lineage without importing or applying anything.
 - Added `DELETE /review/package/{name}` so saved review packages can be cleaned up without touching
   personal-ops.
 - Added `POST /review/package/{name}/queue` and `GET /review/import-queue` so the review UI can
@@ -155,6 +159,8 @@ tuning pass.
   outcome sync, stale promoted-pending handoffs, and the next safe non-mutating commands.
 - Added `personal-ops-queue-burn-in` so queue lifecycle readiness, live queue attention, and recent
   runtime noise can be checked together before or after real operator promotion.
+- Added explicit queue burn-in outcome-sync posture so reports make clear that notification-hub
+  tracks pending/stale promoted outcomes but does not create or sync personal-ops work.
 - Added review UI queue-health summary and filters for pending outcome, stale outcome, queued,
   promoted, resolved, and open handoffs.
 - Added `personal-ops-queue-scenario` as a temporary end-to-end lifecycle proof that does not touch
@@ -232,7 +238,7 @@ Expected current outcome:
   stale pending promoted outcomes, and next safe commands without applying work
 - `notification-hub-personal-ops-queue-health`: script shortcut for the same queue-health report
 - `notification-hub personal-ops-queue-burn-in`: checks queue health, temporary lifecycle scenario,
-  runtime burn-in, and live operator steps without applying personal-ops work
+  runtime burn-in, outcome-sync posture, and live operator steps without applying personal-ops work
 - `notification-hub-personal-ops-queue-burn-in`: script shortcut for the same burn-in report
 - `notification-hub personal-ops-queue-scenario`: runs a temporary queue lifecycle and records a
   final accepted promotion outcome without touching runtime queue state
@@ -243,7 +249,7 @@ Expected current outcome:
 - `/review/packages`: lists recent saved review packages and validation summaries without importing
   or applying them
 - `/review/package/{name}`: inspects one saved review package, including action proposals, evidence
-  IDs, and validation errors, without importing or applying it
+  IDs, queue lineage, and validation errors, without importing or applying it
 - `DELETE /review/package/{name}`: deletes one saved review package without importing or applying it
 - `POST /review/package/{name}/queue` and `/review/import-queue`: enqueue and display local
   personal-ops handoff items without applying them
@@ -252,7 +258,8 @@ Expected current outcome:
 - `notification-hub logs`: `status: ok` with recent event and daemon log tails, including Slack
   delivery failure counts
 - `notification-hub burn-in`: top-level command status plus nested health counters, repeated-event
-  noise candidates, Slack-eligible event volume, and Slack delivery failure counts
+  noise candidates, review-only noise-rule suggestions, Slack-eligible event volume, and Slack
+  delivery failure counts
 - `notification-hub verify-runtime`: read-only by default; degrades when doctor, policy, runtime
   wiring, recent burn-in health, or an explicitly requested delivery check is degraded
 - `notification-hub delivery-check --slack` / `--push`: sends one explicit transport-check

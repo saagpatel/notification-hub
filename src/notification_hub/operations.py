@@ -168,6 +168,7 @@ class ActionReviewPackageDetailReport(TypedDict):
     generated_at: str | None
     hours: int | None
     actions: list[dict[str, object]]
+    queue_items: list[PersonalOpsImportQueueItemReport]
     validation: ActionPackageValidationReport
     applied: bool
     error: str | None
@@ -285,6 +286,7 @@ class PersonalOpsQueueBurnInReport(TypedDict):
     scenario: PersonalOpsQueueScenarioReport
     runtime_burn_in: BurnInReport
     ready_for_live_promotion: bool
+    outcome_sync_posture: str
     operator_steps: list[str]
     next_action: str
     applied: bool
@@ -368,6 +370,7 @@ class BurnInReport(TypedDict):
     validation_error_count: int
     health: BurnInHealthReport
     noise_candidates: list[RepeatedSignatureReport]
+    noise_rule_suggestions: list[str]
     repeated_signatures: list[RepeatedSignatureReport]
     slack_eligible_events: int
     slack_volume: list[SlackVolumeReport]
@@ -435,8 +438,19 @@ ACTION_EXPORT_DIR = EVENTS_DIR / "action-exports"
 PERSONAL_OPS_IMPORT_QUEUE = EVENTS_DIR / "personal-ops-import-queue.jsonl"
 ACTION_EXPORT_SCHEMA_VERSION = "notification-hub.personal_ops_action_export.v1"
 PERSONAL_OPS_IMPORT_QUEUE_SCHEMA_VERSION = "notification-hub.personal_ops_import_queue.v1"
-PERSONAL_OPS_QUEUE_STATUSES = {"queued", "reviewed", "rejected", "snoozed", "superseded", "promoted"}
+PERSONAL_OPS_QUEUE_STATUSES = {
+    "queued",
+    "reviewed",
+    "rejected",
+    "snoozed",
+    "superseded",
+    "promoted",
+}
 PERSONAL_OPS_PROMOTION_OUTCOMES = {"pending", "accepted", "rejected", "ignored"}
+PERSONAL_OPS_OUTCOME_SYNC_POSTURE = (
+    "operator-mediated; notification-hub reports pending or stale promoted outcomes "
+    "but does not create, accept, reject, or sync personal-ops work itself"
+)
 
 
 def _as_dict(value: object) -> dict[str, object]:
@@ -579,7 +593,9 @@ def _summarize_daemon_logs(stdout_tail: list[str], stderr_tail: list[str]) -> Da
         status_counts[status] = status_counts.get(status, 0) + 1
 
     current_stderr_tail = _lines_since_latest_daemon_start(stderr_tail)
-    validation_errors = [line for line in current_stderr_tail if line.startswith("Rejected event payload")]
+    validation_errors = [
+        line for line in current_stderr_tail if line.startswith("Rejected event payload")
+    ]
     slack_delivery_failures = [
         line
         for line in current_stderr_tail
@@ -695,7 +711,9 @@ def _suggested_action(intent: str, title: str) -> str:
 def _action_from_rollup(rollup: InboxRollupReport) -> PersonalOpsActionReport:
     project_part = rollup["project"] or "general"
     normalized_title = re.sub(r"[^a-z0-9]+", "-", rollup["title"].lower()).strip("-") or "signal"
-    evidence_part = re.sub(r"[^a-z0-9]+", "-", rollup["latest_event_id"].lower()).strip("-") or "event"
+    evidence_part = (
+        re.sub(r"[^a-z0-9]+", "-", rollup["latest_event_id"].lower()).strip("-") or "event"
+    )
     action_id = (
         f"notification-hub:{rollup['source']}:{project_part}:"
         f"{rollup['intent']}:{normalized_title}:{evidence_part}"
@@ -726,7 +744,9 @@ def _write_action_review_package(
     target_path = target_dir / f"personal-ops-actions-{timestamp}.json"
     try:
         target_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-        target_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        target_path.write_text(
+            json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
         os.chmod(target_path, 0o600)
     except OSError as exc:
         return {
@@ -796,13 +816,17 @@ def _empty_package_validation(path: Path, error: str) -> ActionPackageValidation
 
 
 def _is_safe_action_review_package_name(name: str) -> bool:
-    return Path(name).name == name and re.fullmatch(r"personal-ops-actions-\d{8}-\d{6}\.json", name) is not None
+    return (
+        Path(name).name == name
+        and re.fullmatch(r"personal-ops-actions-\d{8}-\d{6}\.json", name) is not None
+    )
 
 
 def load_action_review_package_detail(
     *,
     name: str,
     review_dir: Path | None = None,
+    queue_path: Path | None = None,
 ) -> ActionReviewPackageDetailReport:
     """Load a saved review package summary without importing or applying it."""
     target_dir = review_dir or ACTION_EXPORT_DIR
@@ -817,6 +841,7 @@ def load_action_review_package_detail(
             "generated_at": None,
             "hours": None,
             "actions": [],
+            "queue_items": [],
             "validation": _empty_package_validation(target_path, error),
             "applied": False,
             "error": error,
@@ -834,6 +859,7 @@ def load_action_review_package_detail(
             "generated_at": None,
             "hours": None,
             "actions": [],
+            "queue_items": [],
             "validation": validation,
             "applied": False,
             "error": str(exc),
@@ -849,6 +875,7 @@ def load_action_review_package_detail(
             "generated_at": None,
             "hours": None,
             "actions": [],
+            "queue_items": [],
             "validation": validation,
             "applied": False,
             "error": error,
@@ -856,6 +883,11 @@ def load_action_review_package_detail(
 
     package = cast(dict[str, object], payload)
     actions = _action_dicts_from_payload(package)
+    queue_items = [
+        item
+        for item in list_personal_ops_import_queue(queue_path=queue_path, limit=500)
+        if item["source_package_name"] == name
+    ]
     return {
         "status": validation["status"],
         "path": str(target_path),
@@ -864,6 +896,7 @@ def load_action_review_package_detail(
         "generated_at": _as_str(package.get("generated_at")),
         "hours": _as_int(package.get("hours")),
         "actions": actions,
+        "queue_items": queue_items,
         "validation": validation,
         "applied": False,
         "error": None if validation["status"] == "ok" else "package validation failed",
@@ -1038,27 +1071,34 @@ def summarize_personal_ops_import_queue(
     pending_items = [
         item
         for item in raw_items
-        if item.get("status") == "promoted" and (_as_str(item.get("promotion_outcome")) or "pending") == "pending"
+        if item.get("status") == "promoted"
+        and (_as_str(item.get("promotion_outcome")) or "pending") == "pending"
     ]
     pending_datetimes = [
         parsed
         for item in pending_items
         if (
             parsed := _parse_iso_datetime(
-                _as_str(item.get("promotion_outcome_at")) or _as_str(item.get("promoted_at")) or _as_str(item.get("updated_at"))
+                _as_str(item.get("promotion_outcome_at"))
+                or _as_str(item.get("promoted_at"))
+                or _as_str(item.get("updated_at"))
             )
         )
         is not None
     ]
     oldest_pending = min(pending_datetimes) if pending_datetimes else None
-    oldest_pending_age = (now - oldest_pending).total_seconds() if oldest_pending is not None else None
+    oldest_pending_age = (
+        (now - oldest_pending).total_seconds() if oldest_pending is not None else None
+    )
     stale_after_seconds = max(stale_after_hours, 0) * 60 * 60
     stale_pending_count = sum(
         1
         for item in pending_items
         if (
             parsed := _parse_iso_datetime(
-                _as_str(item.get("promotion_outcome_at")) or _as_str(item.get("promoted_at")) or _as_str(item.get("updated_at"))
+                _as_str(item.get("promotion_outcome_at"))
+                or _as_str(item.get("promoted_at"))
+                or _as_str(item.get("updated_at"))
             )
         )
         is not None
@@ -1094,7 +1134,9 @@ def summarize_personal_ops_import_queue(
         "needs_review": queued_count > 0,
         "oldest_queued_at": oldest.isoformat() if oldest is not None else None,
         "oldest_queued_age_seconds": age,
-        "oldest_promoted_pending_at": oldest_pending.isoformat() if oldest_pending is not None else None,
+        "oldest_promoted_pending_at": oldest_pending.isoformat()
+        if oldest_pending is not None
+        else None,
         "oldest_promoted_pending_age_seconds": oldest_pending_age,
         "stale_after_hours": stale_after_hours,
         "next_action": next_action,
@@ -1108,16 +1150,20 @@ def run_personal_ops_import_queue_health_check(
     stale_after_hours: float = 4.0,
 ) -> PersonalOpsImportQueueHealthCheckReport:
     """Return the operator-facing queue maintenance state without mutating queue items."""
-    health = summarize_personal_ops_import_queue(queue_path=queue_path, stale_after_hours=stale_after_hours)
+    health = summarize_personal_ops_import_queue(
+        queue_path=queue_path, stale_after_hours=stale_after_hours
+    )
     items = list_personal_ops_import_queue(queue_path=queue_path, limit=max(limit, 1))
     queued_items = [item for item in items if item["status"] == "queued"]
     pending_items = [
-        item for item in items if item["status"] == "promoted" and (item["promotion_outcome"] or "pending") == "pending"
+        item
+        for item in items
+        if item["status"] == "promoted" and (item["promotion_outcome"] or "pending") == "pending"
     ]
     next_commands: list[str] = []
     if health["queued_count"] > 0:
         next_commands.append("uv run notification-hub personal-ops-queue")
-        next_commands.append("personal-ops notification-hub promote QUEUE_ID --note \"...\"")
+        next_commands.append('personal-ops notification-hub promote QUEUE_ID --note "..."')
     if health["promoted_pending_count"] > 0:
         next_commands.append("personal-ops notification-hub sync-outcomes")
     next_commands.append("uv run notification-hub personal-ops-queue-health")
@@ -1180,7 +1226,9 @@ def run_personal_ops_queue_burn_in(
     elif health["promoted_pending_count"] > 0:
         next_action = "Wait for or sync the pending promoted handoff outcome."
     elif ready_for_live_promotion:
-        next_action = "Queue loop is ready; use the operator steps when the next real handoff appears."
+        next_action = (
+            "Queue loop is ready; use the operator steps when the next real handoff appears."
+        )
     else:
         next_action = "Fix the queue scenario or runtime burn-in warning before live promotion."
     return {
@@ -1189,6 +1237,7 @@ def run_personal_ops_queue_burn_in(
         "scenario": scenario,
         "runtime_burn_in": runtime_burn_in,
         "ready_for_live_promotion": ready_for_live_promotion,
+        "outcome_sync_posture": PERSONAL_OPS_OUTCOME_SYNC_POSTURE,
         "operator_steps": operator_steps,
         "next_action": next_action,
         "applied": False,
@@ -1339,7 +1388,9 @@ def update_personal_ops_import_queue_item(
             item["promotion_target"] = promotion_target or "personal-ops task suggestion"
             if promotion_target_id:
                 item["promotion_target_id"] = promotion_target_id
-            item["promotion_outcome"] = promotion_outcome or _as_str(item.get("promotion_outcome")) or "pending"
+            item["promotion_outcome"] = (
+                promotion_outcome or _as_str(item.get("promotion_outcome")) or "pending"
+            )
             if promotion_outcome is not None:
                 item["promotion_outcome_at"] = now
             if promotion_outcome_note:
@@ -1388,7 +1439,9 @@ def update_personal_ops_import_queue_item(
     if status == "promoted":
         item_report = _import_queue_item_report(matched)
         if item_report["promotion_outcome"] == "pending":
-            next_action = "Accept or reject the matching personal-ops task suggestion, then sync the outcome."
+            next_action = (
+                "Accept or reject the matching personal-ops task suggestion, then sync the outcome."
+            )
         else:
             next_action = "Promotion outcome is recorded; no queue action is needed."
     elif status == "rejected":
@@ -1597,6 +1650,21 @@ def run_logs(*, events: int = 5, lines: int = 20) -> LogsReport:
     }
 
 
+def _noise_rule_suggestions(noise_candidates: list[RepeatedSignatureReport]) -> list[str]:
+    suggestions: list[str] = []
+    for item in noise_candidates[:5]:
+        parts = [
+            f"source={item['source']!r}",
+            f"title_contains={item['title']!r}",
+            f"level={item['level']!r}",
+            "window_minutes=10",
+        ]
+        if item["project"] is not None:
+            parts.insert(1, f"project={item['project']!r}")
+        suggestions.append("Review noise rule candidate: " + ", ".join(parts))
+    return suggestions
+
+
 def run_burn_in(*, minutes: int = 10, lines: int = 200) -> BurnInReport:
     """Summarize recent health failures and repeated/noisy event signatures."""
     window_minutes = max(minutes, 1)
@@ -1605,9 +1673,7 @@ def run_burn_in(*, minutes: int = 10, lines: int = 200) -> BurnInReport:
     try:
         stored_events = read_jsonl(path=EVENTS_LOG)
         recent_events = [
-            event
-            for event in stored_events
-            if event.timestamp.astimezone(timezone.utc) >= cutoff
+            event for event in stored_events if event.timestamp.astimezone(timezone.utc) >= cutoff
         ]
         signatures: dict[tuple[str, str | None, str, str, str], int] = {}
         for event in recent_events:
@@ -1663,6 +1729,7 @@ def run_burn_in(*, minutes: int = 10, lines: int = 200) -> BurnInReport:
                 "status": "degraded",
             },
             "noise_candidates": [],
+            "noise_rule_suggestions": [],
             "repeated_signatures": [],
             "slack_eligible_events": 0,
             "slack_volume": [],
@@ -1678,6 +1745,7 @@ def run_burn_in(*, minutes: int = 10, lines: int = 200) -> BurnInReport:
         else "degraded"
     )
     noise_candidates = repeated[:10]
+    noise_rule_suggestions = _noise_rule_suggestions(noise_candidates)
     return {
         "status": "ok",
         "minutes": window_minutes,
@@ -1693,6 +1761,7 @@ def run_burn_in(*, minutes: int = 10, lines: int = 200) -> BurnInReport:
             "status": health_status,
         },
         "noise_candidates": noise_candidates,
+        "noise_rule_suggestions": noise_rule_suggestions,
         "repeated_signatures": noise_candidates,
         "slack_eligible_events": sum(item["count"] for item in slack_volume),
         "slack_volume": slack_volume[:10],
@@ -1770,7 +1839,9 @@ def run_coordination_snapshot(
     if inbox["noise_candidates"]:
         follow_up.append("Review top inbox noise candidates before adding more delivery surfaces.")
     if inbox["waiting_or_blocked"]:
-        follow_up.append("Route waiting or blocked items into the action layer once bridge export is proven.")
+        follow_up.append(
+            "Route waiting or blocked items into the action layer once bridge export is proven."
+        )
     if not follow_up:
         follow_up.append("No immediate operator action needed.")
 
@@ -1854,7 +1925,15 @@ def run_personal_ops_action_export(
     actions = [
         _action_from_rollup(rollup)
         for rollup in inbox["rollups"]
-        if rollup["intent"] in {"needs_attention", "blocked", "waiting_on_user", "ready_to_review", "ready_to_merge", "automation_failed"}
+        if rollup["intent"]
+        in {
+            "needs_attention",
+            "blocked",
+            "waiting_on_user",
+            "ready_to_review",
+            "ready_to_merge",
+            "automation_failed",
+        }
     ][:item_limit]
 
     report: PersonalOpsActionExportReport = {
@@ -2015,9 +2094,9 @@ def run_personal_ops_import_stub(
         "skipped_count": skipped_count,
         "queue_path": queue_result_path,
         "validation": validation,
-        "next_action": "Review the queued personal-ops handoff items." if enqueue else (
-            "Package is valid. Use --enqueue to add it to the personal-ops import queue."
-        ),
+        "next_action": "Review the queued personal-ops handoff items."
+        if enqueue
+        else ("Package is valid. Use --enqueue to add it to the personal-ops import queue."),
         "error": None,
     }
 
@@ -2054,7 +2133,9 @@ def run_personal_ops_queue_scenario() -> PersonalOpsQueueScenarioReport:
             ),
             encoding="utf-8",
         )
-        imported = run_personal_ops_import_stub(path=package_path, enqueue=True, queue_path=queue_path)
+        imported = run_personal_ops_import_stub(
+            path=package_path, enqueue=True, queue_path=queue_path
+        )
         queue_items = list_personal_ops_import_queue(queue_path=queue_path, limit=1)
         queue_id = queue_items[0]["queue_id"] if queue_items else None
         if imported["status"] != "ok" or queue_id is None:
@@ -2101,7 +2182,11 @@ def run_personal_ops_queue_scenario() -> PersonalOpsQueueScenarioReport:
         )
         final_item = accepted["item"] or promoted["item"] or reviewed["item"]
         final_health = summarize_personal_ops_import_queue(queue_path=queue_path)
-        status = "ok" if reviewed["status"] == promoted["status"] == accepted["status"] == "ok" else "degraded"
+        status = (
+            "ok"
+            if reviewed["status"] == promoted["status"] == accepted["status"] == "ok"
+            else "degraded"
+        )
         return {
             "status": status,
             "queue_path": str(queue_path),
@@ -2110,12 +2195,14 @@ def run_personal_ops_queue_scenario() -> PersonalOpsQueueScenarioReport:
             "queued_count": imported["queued_count"],
             "review_status": reviewed["status"],
             "promotion_status": promoted["status"],
-            "promotion_outcome": final_item["promotion_outcome"] if final_item is not None else None,
+            "promotion_outcome": final_item["promotion_outcome"]
+            if final_item is not None
+            else None,
             "final_health": final_health,
             "applied": final_item["applied"] if final_item is not None else False,
-            "next_action": "Scenario passed; use the same lifecycle for real queued handoffs." if status == "ok" else (
-                "Inspect the scenario update reports before promoting real handoffs."
-            ),
+            "next_action": "Scenario passed; use the same lifecycle for real queued handoffs."
+            if status == "ok"
+            else ("Inspect the scenario update reports before promoting real handoffs."),
             "error": accepted["error"] or promoted["error"] or reviewed["error"],
         }
 
@@ -2258,7 +2345,9 @@ def run_policy_check() -> PolicyCheckReport:
     }
 
 
-def run_delivery_check(*, verify_slack: bool = False, verify_push: bool = False) -> DeliveryCheckReport:
+def run_delivery_check(
+    *, verify_slack: bool = False, verify_push: bool = False
+) -> DeliveryCheckReport:
     """Send explicit opt-in transport checks for Slack and/or push delivery."""
     event = StoredEvent(
         source="codex",
@@ -2353,7 +2442,8 @@ def run_status() -> StatusReport:
     burn_in_health = burn_in["health"]
     import_queue = cast(
         PersonalOpsImportQueueHealthReport,
-        cast(dict[str, object], verification).get("import_queue") or summarize_personal_ops_import_queue(),
+        cast(dict[str, object], verification).get("import_queue")
+        or summarize_personal_ops_import_queue(),
     )
 
     daemon_reachable = checks["health_details_reachable"]

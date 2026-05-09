@@ -259,25 +259,30 @@ async def test_review_save_package_endpoint_stages_without_applying(client: Asyn
     mock_export.assert_called_once_with(hours=2, limit=3, save_review_package=True)
 
 
-async def test_review_validate_package_endpoint_validates_latest_package(client: AsyncClient) -> None:
+async def test_review_validate_package_endpoint_validates_latest_package(
+    client: AsyncClient,
+) -> None:
     server_mod.reset_review_package_state()
-    with patch(
-        "notification_hub.server.get_latest_review_package_path",
-        return_value="/tmp/actions.json",
-    ), patch(
-        "notification_hub.server.validate_action_package",
-        return_value={
-            "status": "ok",
-            "path": "/tmp/actions.json",
-            "schema_version": "notification-hub.personal_ops_action_export.v1",
-            "action_count": 1,
-            "valid_action_count": 1,
-            "warning_count": 0,
-            "error_count": 0,
-            "warnings": [],
-            "errors": [],
-        },
-    ) as mock_validate:
+    with (
+        patch(
+            "notification_hub.server.get_latest_review_package_path",
+            return_value="/tmp/actions.json",
+        ),
+        patch(
+            "notification_hub.server.validate_action_package",
+            return_value={
+                "status": "ok",
+                "path": "/tmp/actions.json",
+                "schema_version": "notification-hub.personal_ops_action_export.v1",
+                "action_count": 1,
+                "valid_action_count": 1,
+                "warning_count": 0,
+                "error_count": 0,
+                "warnings": [],
+                "errors": [],
+            },
+        ) as mock_validate,
+    ):
         resp = await client.post("/review/validate-package")
 
     assert resp.status_code == 200
@@ -335,6 +340,31 @@ async def test_review_package_detail_endpoint_inspects_saved_package(client: Asy
                     "evidence_timestamp": "2026-05-09T00:00:00+00:00",
                 }
             ],
+            "queue_items": [
+                {
+                    "queue_id": "queue123",
+                    "status": "promoted",
+                    "enqueued_at": "2026-05-09T10:05:00+00:00",
+                    "updated_at": "2026-05-09T10:10:00+00:00",
+                    "source_package_name": "personal-ops-actions-20260509-100000.json",
+                    "source_package_path": "/tmp/personal-ops-actions-20260509-100000.json",
+                    "action_id": "abc",
+                    "title": "Approval Requested",
+                    "summary": "summary",
+                    "priority": "high",
+                    "state": "waiting",
+                    "evidence_event_id": "abc123",
+                    "applied": True,
+                    "snoozed_until": None,
+                    "outcome_reason": None,
+                    "promoted_at": "2026-05-09T10:10:00+00:00",
+                    "promotion_target": "personal-ops task suggestion",
+                    "promotion_target_id": "task123",
+                    "promotion_outcome": "accepted",
+                    "promotion_outcome_at": "2026-05-09T10:15:00+00:00",
+                    "promotion_outcome_note": None,
+                }
+            ],
             "validation": {
                 "status": "ok",
                 "path": "/tmp/personal-ops-actions-20260509-100000.json",
@@ -357,6 +387,7 @@ async def test_review_package_detail_endpoint_inspects_saved_package(client: Asy
     assert data["status"] == "ok"
     assert data["applied"] is False
     assert data["actions"][0]["evidence_event_id"] == "abc123"
+    assert data["queue_items"][0]["queue_id"] == "queue123"
     mock_detail.assert_called_once_with(name="personal-ops-actions-20260509-100000.json")
 
 
@@ -384,56 +415,60 @@ async def test_review_delete_package_endpoint_removes_saved_package(client: Asyn
 
 
 async def test_review_queue_package_endpoint_enqueues_without_applying(client: AsyncClient) -> None:
-    with patch(
-        "notification_hub.server.load_action_review_package_detail",
-        return_value={
-            "status": "ok",
-            "path": "/tmp/personal-ops-actions-20260509-100000.json",
-            "name": "personal-ops-actions-20260509-100000.json",
-            "schema_version": "notification-hub.personal_ops_action_export.v1",
-            "generated_at": "2026-05-09T10:00:00+00:00",
-            "hours": 2,
-            "actions": [],
-            "validation": {
+    with (
+        patch(
+            "notification_hub.server.load_action_review_package_detail",
+            return_value={
                 "status": "ok",
                 "path": "/tmp/personal-ops-actions-20260509-100000.json",
+                "name": "personal-ops-actions-20260509-100000.json",
                 "schema_version": "notification-hub.personal_ops_action_export.v1",
-                "action_count": 1,
-                "valid_action_count": 1,
-                "warning_count": 0,
-                "error_count": 0,
-                "warnings": [],
-                "errors": [],
+                "generated_at": "2026-05-09T10:00:00+00:00",
+                "hours": 2,
+                "actions": [],
+                "queue_items": [],
+                "validation": {
+                    "status": "ok",
+                    "path": "/tmp/personal-ops-actions-20260509-100000.json",
+                    "schema_version": "notification-hub.personal_ops_action_export.v1",
+                    "action_count": 1,
+                    "valid_action_count": 1,
+                    "warning_count": 0,
+                    "error_count": 0,
+                    "warnings": [],
+                    "errors": [],
+                },
+                "applied": False,
+                "error": None,
             },
-            "applied": False,
-            "error": None,
-        },
-    ), patch(
-        "notification_hub.server.run_personal_ops_import_stub",
-        return_value={
-            "status": "ok",
-            "path": "/tmp/personal-ops-actions-20260509-100000.json",
-            "dry_run": True,
-            "applied": False,
-            "enqueued": True,
-            "queued_count": 1,
-            "skipped_count": 0,
-            "queue_path": "/tmp/queue.jsonl",
-            "validation": {
+        ),
+        patch(
+            "notification_hub.server.run_personal_ops_import_stub",
+            return_value={
                 "status": "ok",
                 "path": "/tmp/personal-ops-actions-20260509-100000.json",
-                "schema_version": "notification-hub.personal_ops_action_export.v1",
-                "action_count": 1,
-                "valid_action_count": 1,
-                "warning_count": 0,
-                "error_count": 0,
-                "warnings": [],
-                "errors": [],
+                "dry_run": True,
+                "applied": False,
+                "enqueued": True,
+                "queued_count": 1,
+                "skipped_count": 0,
+                "queue_path": "/tmp/queue.jsonl",
+                "validation": {
+                    "status": "ok",
+                    "path": "/tmp/personal-ops-actions-20260509-100000.json",
+                    "schema_version": "notification-hub.personal_ops_action_export.v1",
+                    "action_count": 1,
+                    "valid_action_count": 1,
+                    "warning_count": 0,
+                    "error_count": 0,
+                    "warnings": [],
+                    "errors": [],
+                },
+                "next_action": "Review the queued personal-ops handoff items.",
+                "error": None,
             },
-            "next_action": "Review the queued personal-ops handoff items.",
-            "error": None,
-        },
-    ) as mock_import:
+        ) as mock_import,
+    ):
         resp = await client.post("/review/package/personal-ops-actions-20260509-100000.json/queue")
 
     assert resp.status_code == 200
@@ -580,33 +615,36 @@ async def test_review_import_queue_patch_updates_lifecycle(client: AsyncClient) 
 
 async def test_review_validate_package_uses_newest_saved_package(client: AsyncClient) -> None:
     server_mod.reset_review_package_state()
-    with patch(
-        "notification_hub.server.list_action_review_packages",
-        return_value=[
-            {
+    with (
+        patch(
+            "notification_hub.server.list_action_review_packages",
+            return_value=[
+                {
+                    "path": "/tmp/newest-actions.json",
+                    "name": "newest-actions.json",
+                    "modified_at": "2026-05-09T00:00:00+00:00",
+                    "size_bytes": 100,
+                    "validation_status": "ok",
+                    "action_count": 1,
+                    "valid_action_count": 1,
+                    "error_count": 0,
+                }
+            ],
+        ),
+        patch(
+            "notification_hub.server.validate_action_package",
+            return_value={
+                "status": "ok",
                 "path": "/tmp/newest-actions.json",
-                "name": "newest-actions.json",
-                "modified_at": "2026-05-09T00:00:00+00:00",
-                "size_bytes": 100,
-                "validation_status": "ok",
+                "schema_version": "notification-hub.personal_ops_action_export.v1",
                 "action_count": 1,
                 "valid_action_count": 1,
+                "warning_count": 0,
                 "error_count": 0,
-            }
-        ],
-    ), patch(
-        "notification_hub.server.validate_action_package",
-        return_value={
-            "status": "ok",
-            "path": "/tmp/newest-actions.json",
-            "schema_version": "notification-hub.personal_ops_action_export.v1",
-            "action_count": 1,
-            "valid_action_count": 1,
-            "warning_count": 0,
-            "error_count": 0,
-            "warnings": [],
-            "errors": [],
-        },
+                "warnings": [],
+                "errors": [],
+            },
+        ),
     ):
         resp = await client.post("/review/validate-package")
 
@@ -790,6 +828,7 @@ def test_run_retention_once_updates_runtime_status(monkeypatch: pytest.MonkeyPat
             )
         ),
     )
+
     def _run_retention(*, max_events: int, keep_archives: int) -> dict[str, object]:
         return {
             "status": "ok",

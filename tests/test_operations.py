@@ -53,7 +53,9 @@ def test_smoke_check_reports_success_when_event_hits_log() -> None:
         patch("notification_hub.operations.httpx.post", return_value=response),
         patch(
             "notification_hub.operations.read_jsonl",
-            return_value=[StoredEvent(source="codex", level="info", title="x", body="y", event_id="abc123")],
+            return_value=[
+                StoredEvent(source="codex", level="info", title="x", body="y", event_id="abc123")
+            ],
         ),
     ):
         report = run_smoke_check()
@@ -220,9 +222,9 @@ def test_coordination_snapshot_wraps_inbox_and_runtime_for_bridge_db() -> None:
         "needs_attention": [],
         "waiting_or_blocked": [],
         "ready": inbox_report["ready"],
-            "completed": [],
-            "rollups": [],
-            "noise_candidates": [],
+        "completed": [],
+        "rollups": [],
+        "noise_candidates": [],
     }
     assert report["bridge_snapshot"]["runtime"] == status_report
     assert report["bridge_save"]["status"] == "not_requested"
@@ -447,8 +449,36 @@ def test_load_action_review_package_detail_returns_actions(tmp_path: Path) -> No
         ),
         encoding="utf-8",
     )
+    queue_path = tmp_path / "queue.jsonl"
+    queue_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "notification-hub.personal_ops_import_queue.v1",
+                "queue_id": "queue123",
+                "status": "promoted",
+                "enqueued_at": "2026-05-09T10:05:00+00:00",
+                "updated_at": "2026-05-09T10:10:00+00:00",
+                "source_package_path": str(package_path),
+                "source_package_name": package_name,
+                "action_id": "notification-hub:personal-ops:mail:waiting_on_user:approval-requested",
+                "action": {
+                    "title": "Approval Requested",
+                    "summary": "2 repeated personal-ops events",
+                    "priority": "high",
+                    "state": "waiting",
+                    "evidence_event_id": "abc123",
+                },
+                "applied": True,
+                "promotion_outcome": "accepted",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
-    detail = load_action_review_package_detail(name=package_name, review_dir=tmp_path)
+    detail = load_action_review_package_detail(
+        name=package_name, review_dir=tmp_path, queue_path=queue_path
+    )
 
     assert detail["status"] == "ok"
     assert detail["applied"] is False
@@ -456,6 +486,8 @@ def test_load_action_review_package_detail_returns_actions(tmp_path: Path) -> No
     assert detail["hours"] == 2
     assert detail["validation"]["valid_action_count"] == 1
     assert detail["actions"][0]["evidence_event_id"] == "abc123"
+    assert detail["queue_items"][0]["queue_id"] == "queue123"
+    assert detail["queue_items"][0]["promotion_outcome"] == "accepted"
 
 
 def test_load_action_review_package_detail_rejects_unsafe_name(tmp_path: Path) -> None:
@@ -574,7 +606,9 @@ def test_personal_ops_import_can_enqueue_valid_package(tmp_path: Path) -> None:
     )
 
     report = run_personal_ops_import_stub(path=package_path, enqueue=True, queue_path=queue_path)
-    duplicate_report = run_personal_ops_import_stub(path=package_path, enqueue=True, queue_path=queue_path)
+    duplicate_report = run_personal_ops_import_stub(
+        path=package_path, enqueue=True, queue_path=queue_path
+    )
     queue_items = list_personal_ops_import_queue(queue_path=queue_path)
 
     assert report["status"] == "ok"
@@ -705,7 +739,9 @@ def test_personal_ops_import_queue_health_flags_stale_promotions(tmp_path: Path)
     )
 
     health = summarize_personal_ops_import_queue(queue_path=queue_path, stale_after_hours=0)
-    report = ops_mod.run_personal_ops_import_queue_health_check(queue_path=queue_path, stale_after_hours=0)
+    report = ops_mod.run_personal_ops_import_queue_health_check(
+        queue_path=queue_path, stale_after_hours=0
+    )
 
     assert health["status"] == "warn"
     assert health["promoted_pending_count"] == 1
@@ -729,7 +765,9 @@ def test_personal_ops_queue_scenario_records_final_outcome() -> None:
 
 def test_personal_ops_queue_burn_in_reports_operator_steps() -> None:
     with (
-        patch("notification_hub.operations.run_personal_ops_import_queue_health_check") as mock_health,
+        patch(
+            "notification_hub.operations.run_personal_ops_import_queue_health_check"
+        ) as mock_health,
         patch("notification_hub.operations.run_personal_ops_queue_scenario") as mock_scenario,
         patch("notification_hub.operations.run_burn_in") as mock_burn_in,
     ):
@@ -793,6 +831,7 @@ def test_personal_ops_queue_burn_in_reports_operator_steps() -> None:
                 "status": "ok",
             },
             "noise_candidates": [],
+            "noise_rule_suggestions": [],
             "repeated_signatures": [],
             "slack_eligible_events": 0,
             "slack_volume": [],
@@ -812,6 +851,7 @@ def test_personal_ops_queue_burn_in_reports_operator_steps() -> None:
 
     assert report["status"] == "warn"
     assert report["ready_for_live_promotion"] is True
+    assert "operator-mediated" in report["outcome_sync_posture"]
     assert "Promote one reviewed handoff" in report["next_action"]
     assert any("sync" in step for step in report["operator_steps"])
     mock_health.assert_called_once_with(limit=3)
@@ -931,11 +971,13 @@ def test_logs_report_tails_events_and_daemon_logs(
         )
         for i in range(3)
     ]
-    events_log.write_text("\n".join(event.model_dump_json() for event in events) + "\n", encoding="utf-8")
+    events_log.write_text(
+        "\n".join(event.model_dump_json() for event in events) + "\n", encoding="utf-8"
+    )
     stdout_log = tmp_path / "stdout.log"
     stderr_log = tmp_path / "stderr.log"
     stdout_log.write_text(
-        '\n'.join(
+        "\n".join(
             [
                 'INFO:     127.0.0.1:1 - "POST /events HTTP/1.1" 201 Created',
                 'INFO:     127.0.0.1:2 - "POST /events HTTP/1.1" 422 Unprocessable Entity',
@@ -1084,7 +1126,8 @@ def test_logs_report_handles_zero_limits(
 ) -> None:
     events_log = tmp_path / "events.jsonl"
     events_log.write_text(
-        StoredEvent(source="codex", level="info", title="title", body="body").model_dump_json() + "\n",
+        StoredEvent(source="codex", level="info", title="title", body="body").model_dump_json()
+        + "\n",
         encoding="utf-8",
     )
     stdout_log = tmp_path / "stdout.log"
@@ -1135,11 +1178,13 @@ def test_burn_in_reports_repeated_signatures_and_daemon_counts(
             project="notification-hub",
         ),
     ]
-    events_log.write_text("\n".join(event.model_dump_json() for event in events) + "\n", encoding="utf-8")
+    events_log.write_text(
+        "\n".join(event.model_dump_json() for event in events) + "\n", encoding="utf-8"
+    )
     stdout_log = tmp_path / "stdout.log"
     stderr_log = tmp_path / "stderr.log"
     stdout_log.write_text(
-        '\n'.join(
+        "\n".join(
             [
                 'INFO:     127.0.0.1:1 - "POST /events HTTP/1.1" 201 Created',
                 'INFO:     127.0.0.1:2 - "POST /events HTTP/1.1" 422 Unprocessable Entity',
@@ -1171,6 +1216,9 @@ def test_burn_in_reports_repeated_signatures_and_daemon_counts(
         "status": "degraded",
     }
     assert report["noise_candidates"] == report["repeated_signatures"]
+    assert report["noise_rule_suggestions"] == [
+        "Review noise rule candidate: source='personal-ops', project='personal-ops', title_contains='Approval expires soon', level='info', window_minutes=10"
+    ]
     assert report["repeated_signatures"][0]["count"] == 2
     assert report["repeated_signatures"][0]["source"] == "personal-ops"
     assert report["slack_eligible_events"] == 1
@@ -1232,7 +1280,9 @@ def test_retention_archives_older_events(
     events_dir.mkdir()
     events_log = events_dir / "events.jsonl"
     lines = [
-        json.dumps({"event_id": f"id-{i}", "source": "codex", "level": "info", "title": "t", "body": "b"})
+        json.dumps(
+            {"event_id": f"id-{i}", "source": "codex", "level": "info", "title": "t", "body": "b"}
+        )
         + "\n"
         for i in range(5)
     ]
@@ -1259,7 +1309,7 @@ def test_bootstrap_policy_config_copies_example(
 ) -> None:
     example_path = tmp_path / "policy.example.toml"
     config_path = tmp_path / "config" / "config.toml"
-    example_path.write_text("[classifier]\nurgent_keywords = [\"database down\"]\n", encoding="utf-8")
+    example_path.write_text('[classifier]\nurgent_keywords = ["database down"]\n', encoding="utf-8")
 
     monkeypatch.setattr(ops_mod, "EXAMPLE_POLICY_CONFIG", example_path)
     monkeypatch.setattr(ops_mod, "POLICY_CONFIG", config_path)
@@ -1279,8 +1329,8 @@ def test_bootstrap_policy_config_noop_without_force(
     example_path = tmp_path / "policy.example.toml"
     config_path = tmp_path / "config" / "config.toml"
     config_path.parent.mkdir(parents=True)
-    example_path.write_text("[classifier]\nurgent_keywords = [\"database down\"]\n", encoding="utf-8")
-    config_path.write_text("[classifier]\nurgent_keywords = [\"keep me\"]\n", encoding="utf-8")
+    example_path.write_text('[classifier]\nurgent_keywords = ["database down"]\n', encoding="utf-8")
+    config_path.write_text('[classifier]\nurgent_keywords = ["keep me"]\n', encoding="utf-8")
 
     monkeypatch.setattr(ops_mod, "EXAMPLE_POLICY_CONFIG", example_path)
     monkeypatch.setattr(ops_mod, "POLICY_CONFIG", config_path)
@@ -1303,14 +1353,11 @@ def test_policy_check_reports_warnings(
             info_keywords=(),
         ),
         suppression=SuppressionPolicy(),
-        routing=RoutingPolicy(
-            rules=(
-                RoutingRule(source="codex"),
-            )
-        ),
+        routing=RoutingPolicy(rules=(RoutingRule(source="codex"),)),
     )
 
     monkeypatch.setattr(ops_mod, "get_policy_config", lambda: policy)
+
     def _warnings_for_policy(_policy: PolicyConfig) -> tuple[str, ...]:
         return ("warning one", "warning two")
 
@@ -1338,6 +1385,7 @@ def test_policy_check_reports_degraded_on_load_error(
     )
 
     monkeypatch.setattr(ops_mod, "get_policy_config", lambda: policy)
+
     def _no_warnings(_policy: PolicyConfig) -> tuple[str, ...]:
         return ()
 
@@ -1371,7 +1419,9 @@ def test_policy_check_maps_shadowed_rule_to_fix_suggestion(
     report = run_policy_check()
 
     assert report["status"] == "warn"
-    assert any("Move the narrower rule earlier" in suggestion for suggestion in report["suggestions"])
+    assert any(
+        "Move the narrower rule earlier" in suggestion for suggestion in report["suggestions"]
+    )
 
 
 def test_policy_check_maps_shared_priority_warning_to_fix_suggestion(
@@ -1394,7 +1444,10 @@ def test_policy_check_maps_shared_priority_warning_to_fix_suggestion(
     report = run_policy_check()
 
     assert report["status"] == "warn"
-    assert any("Give the more important rule a higher `priority`" in suggestion for suggestion in report["suggestions"])
+    assert any(
+        "Give the more important rule a higher `priority`" in suggestion
+        for suggestion in report["suggestions"]
+    )
 
 
 def test_policy_check_maps_retention_and_continue_warnings_to_fix_suggestions(
@@ -1422,7 +1475,10 @@ def test_policy_check_maps_retention_and_continue_warnings_to_fix_suggestions(
 
     assert report["status"] == "warn"
     assert any("Re-enable retention" in suggestion for suggestion in report["suggestions"])
-    assert any("Remove `continue_matching` on the final rule" in suggestion for suggestion in report["suggestions"])
+    assert any(
+        "Remove `continue_matching` on the final rule" in suggestion
+        for suggestion in report["suggestions"]
+    )
 
 
 def test_policy_check_maps_redundant_continue_chain_warning_to_fix_suggestion(
