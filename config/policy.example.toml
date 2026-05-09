@@ -30,6 +30,12 @@ level = "info"
 window_minutes = 5
 
 [[noise.rules]]
+source = "codex"
+text_contains = "session complete"
+level = "info"
+window_minutes = 10
+
+[[noise.rules]]
 source = "notion-os"
 title_contains = "external-signal-sync complete"
 level = "info"

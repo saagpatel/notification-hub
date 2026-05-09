@@ -20,6 +20,9 @@ from notification_hub.operations import (
     LogsReport,
     PersonalOpsActionExportReport,
     PersonalOpsImportReport,
+    PersonalOpsImportQueueHealthReport,
+    PersonalOpsImportQueueItemReport,
+    PersonalOpsImportQueueUpdateReport,
     ActionPackageValidationReport,
     PolicyCheckReport,
     RetentionReport,
@@ -34,6 +37,9 @@ from notification_hub.operations import (
     run_logs,
     run_personal_ops_action_export,
     run_personal_ops_import_stub,
+    list_personal_ops_import_queue,
+    summarize_personal_ops_import_queue,
+    update_personal_ops_import_queue_item,
     validate_action_package,
     run_policy_check,
     run_retention,
@@ -310,6 +316,47 @@ def _build_parser(prog: str = "notification-hub") -> argparse.ArgumentParser:
         help="Emit the import report as JSON.",
     )
 
+    personal_ops_queue = subparsers.add_parser(
+        "personal-ops-queue",
+        help="List or update queued personal-ops handoff items without applying work.",
+    )
+    personal_ops_queue.add_argument(
+        "--queue-id",
+        help="Queue item id to update. Omit to list queue items.",
+    )
+    personal_ops_queue.add_argument(
+        "--status",
+        choices=["queued", "reviewed", "rejected", "snoozed", "superseded", "promoted"],
+        help="Lifecycle status to set for the queue item.",
+    )
+    personal_ops_queue.add_argument(
+        "--reason",
+        help="Optional review or promotion note.",
+    )
+    personal_ops_queue.add_argument(
+        "--snoozed-until",
+        help="Required when setting --status snoozed.",
+    )
+    personal_ops_queue.add_argument(
+        "--promotion-target",
+        help="Optional target label when setting --status promoted.",
+    )
+    personal_ops_queue.add_argument(
+        "--queue-path",
+        help="Optional JSONL queue path.",
+    )
+    personal_ops_queue.add_argument(
+        "--limit",
+        type=int,
+        default=10,
+        help="Maximum queue items to list.",
+    )
+    personal_ops_queue.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the queue report as JSON.",
+    )
+
     explain = subparsers.add_parser(
         "explain",
         help="Show how an event would classify, route, and deliver without sending it.",
@@ -456,6 +503,7 @@ def _print_status_report(report: StatusReport) -> None:
     print(f"- events processed: {report['events_processed']}")
     print(f"- Slack configured: {report['slack_configured']}")
     print(f"- Slack delivery failures: {report['slack_delivery_failures']}")
+    print(f"- import queue queued: {report['import_queue']['queued_count']}")
     print(f"- push notifier available: {report['push_notifier_available']}")
     print(f"- next action: {report['next_action']}")
 
@@ -545,6 +593,38 @@ def _print_personal_ops_import_report(report: PersonalOpsImportReport) -> None:
         print(f"- error: {report['error']}")
 
 
+def _print_personal_ops_queue_report(report: dict[str, object]) -> None:
+    health = cast(PersonalOpsImportQueueHealthReport, report["health"])
+    print(f"notification-hub personal-ops-queue: {report['status']}")
+    print(f"- queue path: {health['queue_path']}")
+    print(f"- queued: {health['queued_count']}")
+    print(f"- reviewed: {health['reviewed_count']}")
+    print(f"- rejected: {health['rejected_count']}")
+    print(f"- snoozed: {health['snoozed_count']}")
+    print(f"- promoted: {health['promoted_count']}")
+    print(f"- next action: {health['next_action']}")
+    update = cast(PersonalOpsImportQueueUpdateReport | None, report.get("update"))
+    if update is not None:
+        print(f"- updated: {update['updated']}")
+        if update["error"] is not None:
+            print(f"- error: {update['error']}")
+    items = cast(list[PersonalOpsImportQueueItemReport], report.get("items") or [])
+    if not items:
+        print("- items: none")
+        return
+    print("- items:")
+    for item in items:
+        print(
+            f"  - {item['queue_id']} [{item['status']}] "
+            f"{item['priority']}/{item['state']}: {item['title']}"
+        )
+        print(f"    package: {item['source_package_name']}")
+        if item["snoozed_until"] is not None:
+            print(f"    snoozed until: {item['snoozed_until']}")
+        if item["promotion_target"] is not None:
+            print(f"    promotion target: {item['promotion_target']}")
+
+
 def _print_logs_report(report: LogsReport) -> None:
     print(f"notification-hub logs: {report['status']}")
     print(f"- events log: {report['events_log']}")
@@ -622,6 +702,7 @@ def _print_verify_runtime_report(report: VerifyRuntimeReport) -> None:
     print(f"- runtime wiring current: {checks['runtime_wiring_current']}")
     print(f"- recent runtime health OK: {checks['recent_runtime_health_ok']}")
     print(f"- delivery check OK: {checks['delivery_check_ok']}")
+    print(f"- import queue queued: {report['import_queue']['queued_count']}")
     print(f"- smoke included: {report['include_smoke']}")
     delivery_check = report["delivery_check"]
     if delivery_check is not None:
@@ -819,6 +900,33 @@ def main(argv: Sequence[str] | None = None) -> int:
         else:
             _print_personal_ops_import_report(report)
         return 0 if report["status"] == "ok" else 1
+
+    if args.command == "personal-ops-queue":
+        queue_path = Path(args.queue_path).expanduser() if args.queue_path else None
+        update = None
+        if args.queue_id is not None or args.status is not None:
+            if args.queue_id is None or args.status is None:
+                print("--queue-id and --status must be provided together", file=sys.stderr)
+                return 2
+            update = update_personal_ops_import_queue_item(
+                queue_id=args.queue_id,
+                status=args.status,
+                reason=args.reason,
+                snoozed_until=args.snoozed_until,
+                promotion_target=args.promotion_target,
+                queue_path=queue_path,
+            )
+        queue_report: dict[str, object] = {
+            "status": update["status"] if update is not None else "ok",
+            "health": summarize_personal_ops_import_queue(queue_path=queue_path),
+            "items": list_personal_ops_import_queue(queue_path=queue_path, limit=args.limit),
+            "update": update,
+        }
+        if args.json:
+            print(json.dumps(queue_report, indent=2, sort_keys=True))
+        else:
+            _print_personal_ops_queue_report(queue_report)
+        return 0 if queue_report["status"] == "ok" else 1
 
     if args.command == "policy-check":
         report = run_policy_check()

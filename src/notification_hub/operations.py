@@ -199,13 +199,46 @@ class PersonalOpsImportQueueItemReport(TypedDict):
     queue_id: str
     status: str
     enqueued_at: str
+    updated_at: str | None
     source_package_name: str
+    source_package_path: str
     action_id: str
     title: str
+    summary: str
     priority: str
     state: str
     evidence_event_id: str
     applied: bool
+    snoozed_until: str | None
+    outcome_reason: str | None
+    promoted_at: str | None
+    promotion_target: str | None
+
+
+class PersonalOpsImportQueueUpdateReport(TypedDict):
+    status: str
+    queue_id: str
+    queue_path: str
+    updated: bool
+    item: PersonalOpsImportQueueItemReport | None
+    next_action: str
+    error: str | None
+
+
+class PersonalOpsImportQueueHealthReport(TypedDict):
+    status: str
+    queue_path: str
+    total_count: int
+    queued_count: int
+    reviewed_count: int
+    rejected_count: int
+    snoozed_count: int
+    superseded_count: int
+    promoted_count: int
+    needs_review: bool
+    oldest_queued_at: str | None
+    oldest_queued_age_seconds: float | None
+    next_action: str
 
 
 class BridgeSaveReport(TypedDict):
@@ -319,6 +352,7 @@ class VerifyRuntimeReport(TypedDict):
     include_smoke: bool
     health_url: str | None
     checks: dict[str, bool]
+    import_queue: PersonalOpsImportQueueHealthReport
     runtime_wiring: dict[str, bool]
     doctor: dict[str, object]
     policy_check: PolicyCheckReport
@@ -342,6 +376,7 @@ class StatusReport(TypedDict):
     push_notifier_available: bool | None
     slack_configured: bool | None
     slack_delivery_failures: int
+    import_queue: PersonalOpsImportQueueHealthReport
     next_action: str
 
 
@@ -351,6 +386,7 @@ ACTION_EXPORT_DIR = EVENTS_DIR / "action-exports"
 PERSONAL_OPS_IMPORT_QUEUE = EVENTS_DIR / "personal-ops-import-queue.jsonl"
 ACTION_EXPORT_SCHEMA_VERSION = "notification-hub.personal_ops_action_export.v1"
 PERSONAL_OPS_IMPORT_QUEUE_SCHEMA_VERSION = "notification-hub.personal_ops_import_queue.v1"
+PERSONAL_OPS_QUEUE_STATUSES = {"queued", "reviewed", "rejected", "snoozed", "superseded", "promoted"}
 
 
 def _as_dict(value: object) -> dict[str, object]:
@@ -869,6 +905,94 @@ def _read_import_queue_items(queue_path: Path) -> list[dict[str, object]]:
     return items
 
 
+def _write_import_queue_items(queue_path: Path, items: list[dict[str, object]]) -> None:
+    queue_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    tmp_path = queue_path.with_suffix(f"{queue_path.suffix}.tmp")
+    with open(tmp_path, "w", encoding="utf-8") as file:
+        for item in items:
+            file.write(json.dumps(item, sort_keys=True))
+            file.write("\n")
+    os.chmod(tmp_path, 0o600)
+    os.replace(tmp_path, queue_path)
+
+
+def _import_queue_item_report(item: dict[str, object]) -> PersonalOpsImportQueueItemReport:
+    action = _as_dict(item.get("action"))
+    return {
+        "queue_id": _as_str(item.get("queue_id")) or "",
+        "status": _as_str(item.get("status")) or "unknown",
+        "enqueued_at": _as_str(item.get("enqueued_at")) or "",
+        "updated_at": _as_str(item.get("updated_at")),
+        "source_package_name": _as_str(item.get("source_package_name")) or "",
+        "source_package_path": _as_str(item.get("source_package_path")) or "",
+        "action_id": _as_str(item.get("action_id")) or "",
+        "title": _as_str(action.get("title")) or "",
+        "summary": _as_str(action.get("summary")) or "",
+        "priority": _as_str(action.get("priority")) or "",
+        "state": _as_str(action.get("state")) or "",
+        "evidence_event_id": _as_str(action.get("evidence_event_id")) or "",
+        "applied": bool(item.get("applied")),
+        "snoozed_until": _as_str(item.get("snoozed_until")),
+        "outcome_reason": _as_str(item.get("outcome_reason")),
+        "promoted_at": _as_str(item.get("promoted_at")),
+        "promotion_target": _as_str(item.get("promotion_target")),
+    }
+
+
+def _parse_iso_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def summarize_personal_ops_import_queue(
+    *,
+    queue_path: Path | None = None,
+) -> PersonalOpsImportQueueHealthReport:
+    """Summarize queue lifecycle health without applying queued items."""
+    target_queue_path = queue_path or PERSONAL_OPS_IMPORT_QUEUE
+    try:
+        raw_items = _read_import_queue_items(target_queue_path)
+    except OSError:
+        raw_items = []
+    counts = {status: 0 for status in PERSONAL_OPS_QUEUE_STATUSES}
+    for item in raw_items:
+        status = _as_str(item.get("status")) or "unknown"
+        if status in counts:
+            counts[status] += 1
+    queued_items = [item for item in raw_items if item.get("status") == "queued"]
+    queued_datetimes = [
+        parsed
+        for item in queued_items
+        if (parsed := _parse_iso_datetime(_as_str(item.get("enqueued_at")))) is not None
+    ]
+    oldest = min(queued_datetimes) if queued_datetimes else None
+    age = (datetime.now(timezone.utc) - oldest).total_seconds() if oldest is not None else None
+    queued_count = counts["queued"]
+    status = "warn" if queued_count > 0 else "ok"
+    return {
+        "status": status,
+        "queue_path": str(target_queue_path),
+        "total_count": len(raw_items),
+        "queued_count": queued_count,
+        "reviewed_count": counts["reviewed"],
+        "rejected_count": counts["rejected"],
+        "snoozed_count": counts["snoozed"],
+        "superseded_count": counts["superseded"],
+        "promoted_count": counts["promoted"],
+        "needs_review": queued_count > 0,
+        "oldest_queued_at": oldest.isoformat() if oldest is not None else None,
+        "oldest_queued_age_seconds": age,
+        "next_action": "Review queued personal-ops handoff items." if queued_count > 0 else "No queued personal-ops handoff items.",
+    }
+
+
 def _enqueue_personal_ops_import_actions(
     *,
     package_path: Path,
@@ -927,24 +1051,126 @@ def list_personal_ops_import_queue(
         return []
     reports: list[PersonalOpsImportQueueItemReport] = []
     for item in reversed(raw_items):
-        action = _as_dict(item.get("action"))
-        reports.append(
-            {
-                "queue_id": _as_str(item.get("queue_id")) or "",
-                "status": _as_str(item.get("status")) or "unknown",
-                "enqueued_at": _as_str(item.get("enqueued_at")) or "",
-                "source_package_name": _as_str(item.get("source_package_name")) or "",
-                "action_id": _as_str(item.get("action_id")) or "",
-                "title": _as_str(action.get("title")) or "",
-                "priority": _as_str(action.get("priority")) or "",
-                "state": _as_str(action.get("state")) or "",
-                "evidence_event_id": _as_str(action.get("evidence_event_id")) or "",
-                "applied": bool(item.get("applied")),
-            }
-        )
+        reports.append(_import_queue_item_report(item))
         if len(reports) >= max(limit, 1):
             break
     return reports
+
+
+def update_personal_ops_import_queue_item(
+    *,
+    queue_id: str,
+    status: str,
+    reason: str | None = None,
+    snoozed_until: str | None = None,
+    promotion_target: str | None = None,
+    queue_path: Path | None = None,
+) -> PersonalOpsImportQueueUpdateReport:
+    """Update one queued personal-ops handoff lifecycle state without applying work."""
+    target_queue_path = queue_path or PERSONAL_OPS_IMPORT_QUEUE
+    if status not in PERSONAL_OPS_QUEUE_STATUSES:
+        return {
+            "status": "degraded",
+            "queue_id": queue_id,
+            "queue_path": str(target_queue_path),
+            "updated": False,
+            "item": None,
+            "next_action": "Use one of: queued, reviewed, rejected, snoozed, superseded, promoted.",
+            "error": f"invalid queue status: {status}",
+        }
+    if status == "snoozed" and snoozed_until is None:
+        return {
+            "status": "degraded",
+            "queue_id": queue_id,
+            "queue_path": str(target_queue_path),
+            "updated": False,
+            "item": None,
+            "next_action": "Pass --snoozed-until when snoozing a queued handoff.",
+            "error": "snoozed_until is required for snoozed status",
+        }
+    try:
+        raw_items = _read_import_queue_items(target_queue_path)
+    except OSError as exc:
+        return {
+            "status": "degraded",
+            "queue_id": queue_id,
+            "queue_path": str(target_queue_path),
+            "updated": False,
+            "item": None,
+            "next_action": "Fix queue read errors, then retry the lifecycle update.",
+            "error": str(exc),
+        }
+
+    matched: dict[str, object] | None = None
+    now = datetime.now(timezone.utc).isoformat()
+    for item in raw_items:
+        if item.get("queue_id") != queue_id:
+            continue
+        item["status"] = status
+        item["updated_at"] = now
+        if reason:
+            item["outcome_reason"] = reason
+        if status == "reviewed":
+            item["reviewed_at"] = now
+        elif status == "rejected":
+            item["rejected_at"] = now
+        elif status == "snoozed":
+            item["snoozed_at"] = now
+            item["snoozed_until"] = snoozed_until
+        elif status == "superseded":
+            item["superseded_at"] = now
+        elif status == "promoted":
+            item["promoted_at"] = now
+            item["promotion_target"] = promotion_target or "personal-ops task suggestion"
+            item["applied"] = True
+        elif status == "queued":
+            item["applied"] = False
+            item.pop("promoted_at", None)
+            item.pop("promotion_target", None)
+        matched = item
+        break
+
+    if matched is None:
+        return {
+            "status": "degraded",
+            "queue_id": queue_id,
+            "queue_path": str(target_queue_path),
+            "updated": False,
+            "item": None,
+            "next_action": "Refresh the import queue and choose an existing queue id.",
+            "error": "queue item not found",
+        }
+
+    try:
+        _write_import_queue_items(target_queue_path, raw_items)
+    except OSError as exc:
+        return {
+            "status": "degraded",
+            "queue_id": queue_id,
+            "queue_path": str(target_queue_path),
+            "updated": False,
+            "item": None,
+            "next_action": "Fix queue write errors, then retry the lifecycle update.",
+            "error": str(exc),
+        }
+
+    if status == "promoted":
+        next_action = "Accept or reject the matching personal-ops task suggestion, then leave the queue item promoted."
+    elif status == "rejected":
+        next_action = "No personal-ops action will be created for this handoff."
+    elif status == "snoozed":
+        next_action = "Review this handoff again after the snooze window."
+    else:
+        next_action = "Continue reviewing the import queue."
+    return {
+        "status": "ok",
+        "queue_id": queue_id,
+        "queue_path": str(target_queue_path),
+        "updated": True,
+        "item": _import_queue_item_report(matched),
+        "next_action": next_action,
+        "error": None,
+    }
 
 
 def _require_str(value: object, field: str, errors: list[str]) -> str | None:
@@ -1738,6 +1964,7 @@ def run_verify_runtime(
     doctor = collect_doctor_report()
     policy_check = run_policy_check()
     burn_in = run_burn_in(minutes=10, lines=200)
+    import_queue = summarize_personal_ops_import_queue()
     smoke = run_smoke_check() if include_smoke else None
     delivery_check = (
         run_delivery_check(verify_slack=verify_slack, verify_push=verify_push)
@@ -1767,6 +1994,7 @@ def run_verify_runtime(
         "include_smoke": include_smoke,
         "health_url": health_url if isinstance(health_url, str) else None,
         "checks": checks,
+        "import_queue": import_queue,
         "runtime_wiring": {key: bool(value) for key, value in runtime_wiring.items()},
         "doctor": doctor,
         "policy_check": policy_check,
@@ -1789,13 +2017,19 @@ def run_status() -> StatusReport:
     retention = _as_dict(payload.get("retention"))
     burn_in = verification["burn_in"]
     burn_in_health = burn_in["health"]
+    import_queue = cast(
+        PersonalOpsImportQueueHealthReport,
+        cast(dict[str, object], verification).get("import_queue") or summarize_personal_ops_import_queue(),
+    )
 
     daemon_reachable = checks["health_details_reachable"]
     runtime_wiring_current = checks["runtime_wiring_current"]
     policy_load_ok = doctor_checks.get("policy_load_ok") is True
     slack_delivery_failures = burn_in_health["slack_delivery_failure_count"]
 
-    if verification["status"] == "ok":
+    if import_queue["needs_review"]:
+        next_action = import_queue["next_action"]
+    elif verification["status"] == "ok":
         next_action = "No action needed."
     elif not daemon_reachable:
         next_action = "Start or restart the LaunchAgent, then run verify-runtime again."
@@ -1823,5 +2057,6 @@ def run_status() -> StatusReport:
         "push_notifier_available": _as_bool(delivery.get("push_notifier_available")),
         "slack_configured": _as_bool(delivery.get("slack_webhook_configured")),
         "slack_delivery_failures": slack_delivery_failures,
+        "import_queue": import_queue,
         "next_action": next_action,
     }

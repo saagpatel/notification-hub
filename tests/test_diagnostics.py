@@ -173,6 +173,24 @@ def _burn_in_report(
     }
 
 
+def _import_queue_health(*, queued_count: int = 0) -> dict[str, object]:
+    return {
+        "status": "warn" if queued_count else "ok",
+        "queue_path": "/tmp/personal-ops-import-queue.jsonl",
+        "total_count": queued_count,
+        "queued_count": queued_count,
+        "reviewed_count": 0,
+        "rejected_count": 0,
+        "snoozed_count": 0,
+        "superseded_count": 0,
+        "promoted_count": 0,
+        "needs_review": queued_count > 0,
+        "oldest_queued_at": "2026-05-09T10:00:00+00:00" if queued_count else None,
+        "oldest_queued_age_seconds": 60.0 if queued_count else None,
+        "next_action": "Review queued personal-ops handoff items." if queued_count else "No queued personal-ops handoff items.",
+    }
+
+
 def _delivery_check_report(
     *,
     status: str = "ok",
@@ -433,6 +451,7 @@ def test_run_status_summarizes_healthy_runtime() -> None:
                 "suggestions": [],
             },
             "burn_in": _burn_in_report(),
+            "import_queue": _import_queue_health(),
             "delivery_check": None,
             "smoke": None,
         },
@@ -454,6 +473,7 @@ def test_run_status_summarizes_healthy_runtime() -> None:
         "push_notifier_available": True,
         "slack_configured": True,
         "slack_delivery_failures": 0,
+        "import_queue": _import_queue_health(),
         "next_action": "No action needed.",
     }
 
@@ -495,6 +515,7 @@ def test_run_status_suggests_runtime_wiring_repair() -> None:
                 "suggestions": [],
             },
             "burn_in": _burn_in_report(),
+            "import_queue": _import_queue_health(),
             "delivery_check": None,
             "smoke": None,
         },
@@ -543,6 +564,7 @@ def test_run_status_suggests_slack_delivery_investigation() -> None:
                 "suggestions": [],
             },
             "burn_in": _burn_in_report(status="degraded", slack_delivery_failure_count=3),
+            "import_queue": _import_queue_health(),
             "smoke": None,
         },
     ):

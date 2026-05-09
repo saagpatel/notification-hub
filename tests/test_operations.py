@@ -36,6 +36,8 @@ from notification_hub.operations import (
     run_policy_check,
     run_retention,
     run_smoke_check,
+    summarize_personal_ops_import_queue,
+    update_personal_ops_import_queue_item,
     validate_action_package,
 )
 
@@ -582,6 +584,81 @@ def test_personal_ops_import_can_enqueue_valid_package(tmp_path: Path) -> None:
     assert len(queue_items) == 1
     assert queue_items[0]["title"] == "Approval Requested"
     assert queue_items[0]["applied"] is False
+    assert queue_items[0]["source_package_path"] == str(package_path)
+
+
+def test_personal_ops_import_queue_lifecycle_and_health(tmp_path: Path) -> None:
+    package_path = tmp_path / "actions.json"
+    queue_path = tmp_path / "queue.jsonl"
+    package_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "notification-hub.personal_ops_action_export.v1",
+                "actions": [
+                    {
+                        "action_id": "notification-hub:personal-ops:mail:waiting_on_user:approval-requested",
+                        "source": "personal-ops",
+                        "project": "mail",
+                        "intent": "waiting_on_user",
+                        "priority": "high",
+                        "state": "waiting",
+                        "title": "Approval Requested",
+                        "summary": "2 repeated personal-ops events",
+                        "suggested_next_action": "Review the waiting item.",
+                        "evidence_event_id": "abc123",
+                        "evidence_timestamp": "2026-05-09T00:00:00+00:00",
+                        "count": 2,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    run_personal_ops_import_stub(path=package_path, enqueue=True, queue_path=queue_path)
+    queue_id = list_personal_ops_import_queue(queue_path=queue_path)[0]["queue_id"]
+
+    health_before = summarize_personal_ops_import_queue(queue_path=queue_path)
+    reviewed = update_personal_ops_import_queue_item(
+        queue_id=queue_id,
+        status="reviewed",
+        reason="operator checked evidence",
+        queue_path=queue_path,
+    )
+    promoted = update_personal_ops_import_queue_item(
+        queue_id=queue_id,
+        status="promoted",
+        reason="created personal-ops task suggestion",
+        promotion_target="personal-ops task suggestion",
+        queue_path=queue_path,
+    )
+    health_after = summarize_personal_ops_import_queue(queue_path=queue_path)
+
+    assert health_before["queued_count"] == 1
+    assert health_before["needs_review"] is True
+    assert reviewed["status"] == "ok"
+    assert reviewed["item"] is not None
+    assert reviewed["item"]["status"] == "reviewed"
+    assert reviewed["item"]["outcome_reason"] == "operator checked evidence"
+    assert promoted["status"] == "ok"
+    assert promoted["item"] is not None
+    assert promoted["item"]["status"] == "promoted"
+    assert promoted["item"]["applied"] is True
+    assert promoted["item"]["promotion_target"] == "personal-ops task suggestion"
+    assert health_after["queued_count"] == 0
+    assert health_after["promoted_count"] == 1
+    assert health_after["needs_review"] is False
+
+
+def test_personal_ops_import_queue_snooze_requires_until(tmp_path: Path) -> None:
+    report = update_personal_ops_import_queue_item(
+        queue_id="missing",
+        status="snoozed",
+        queue_path=tmp_path / "queue.jsonl",
+    )
+
+    assert report["status"] == "degraded"
+    assert report["updated"] is False
+    assert "snoozed_until" in str(report["error"])
 
 
 def test_personal_ops_import_stub_rejects_invalid_package(tmp_path: Path) -> None:

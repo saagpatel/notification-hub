@@ -33,11 +33,14 @@ tuning pass.
 - Valid review packages can now be explicitly queued into a local personal-ops import queue. Queue
   items are durable handoff records under notification-hub runtime state, not personal-ops tasks or
   applied changes.
+- Queued personal-ops handoffs now have explicit lifecycle states: queued, reviewed, rejected,
+  snoozed, superseded, and promoted. Queue health is visible in status and runtime verification.
 - A localhost-only review page is available at `/review` on the daemon. It shows runtime health,
   inbox rollups, action proposals, and trust state without applying anything.
 - The review page can stage a local review package, list recent saved review packages, inspect
-  package actions/evidence, queue import handoff items, delete saved review packages, and validate
-  the latest staged or saved package while keeping apply behavior disabled.
+  package actions/evidence, queue import handoff items, mark queued items reviewed/rejected/snoozed/promoted,
+  delete saved review packages, and validate the latest staged or saved package while keeping apply
+  behavior disabled.
 - A local logs command is available for recent event and daemon log inspection, including accepted
   versus rejected `/events` counts from the visible daemon tail.
 - A local burn-in command is available for recent accepted/rejected event counts and repeated
@@ -162,12 +165,15 @@ uv run --frozen notification-hub personal-ops-actions --save-review-package
 uv run --frozen notification-hub validate-action-package path/to/actions.json
 uv run --frozen notification-hub personal-ops-import path/to/actions.json
 uv run --frozen notification-hub personal-ops-import path/to/actions.json --enqueue
+uv run --frozen notification-hub personal-ops-queue
+uv run --frozen notification-hub personal-ops-queue --queue-id QUEUE_ID --status reviewed --reason "evidence checked"
 uv run --frozen notification-hub logs
 curl http://127.0.0.1:9199/review
 curl http://127.0.0.1:9199/review/packages
 curl http://127.0.0.1:9199/review/package/personal-ops-actions-YYYYMMDD-HHMMSS.json
 curl -X POST http://127.0.0.1:9199/review/package/personal-ops-actions-YYYYMMDD-HHMMSS.json/queue
 curl http://127.0.0.1:9199/review/import-queue
+curl -X PATCH http://127.0.0.1:9199/review/import-queue/QUEUE_ID -H 'Content-Type: application/json' -d '{"status":"reviewed","reason":"evidence checked"}'
 curl -X DELETE http://127.0.0.1:9199/review/package/personal-ops-actions-YYYYMMDD-HHMMSS.json
 uv run --frozen notification-hub burn-in --minutes 10
 uv run --frozen notification-hub verify-runtime
@@ -198,6 +204,8 @@ Expected current outcome:
 - `notification-hub validate-action-package`: validates a saved review package without importing it
 - `notification-hub personal-ops-import`: validates a package and stops before mutation; `--enqueue`
   adds valid action proposals to the local import queue while keeping `applied: false`
+- `notification-hub personal-ops-queue`: lists and updates queued handoff lifecycle state without
+  creating personal-ops tasks, approvals, or sends
 - `/review`: localhost-only review UI for runtime state, inbox rollups, action proposals, and trust
   state
 - `/review/save-package` and `/review/validate-package`: review UI controls for staging and
@@ -209,6 +217,8 @@ Expected current outcome:
 - `DELETE /review/package/{name}`: deletes one saved review package without importing or applying it
 - `POST /review/package/{name}/queue` and `/review/import-queue`: enqueue and display local
   personal-ops handoff items without applying them
+- `PATCH /review/import-queue/{queue_id}`: marks a queued handoff reviewed, rejected, snoozed,
+  superseded, or promoted without creating personal-ops work
 - `notification-hub logs`: `status: ok` with recent event and daemon log tails, including Slack
   delivery failure counts
 - `notification-hub burn-in`: top-level command status plus nested health counters, repeated-event
@@ -270,12 +280,12 @@ It is not part of normal day-to-day work.
 
 Start future work from `main`, keep using the frozen verification commands, and treat the repo-owned
 runtime templates as the source of truth for live launcher and hook wiring.
-The next work here should teach personal-ops to read this import queue as an operator inbox source,
-then decide whether any queued item should ever promote into a real personal-ops task.
+The next work here should burn in the queue lifecycle with real operator use, then tighten the
+promotion UX once the personal-ops task-suggestion flow has enough evidence.
 
 ## Optional Follow-Up
 
 - Delete `archive/local-history-pre-import` later if that old local-only history is no longer needed.
 - Remove local untracked junk files like `.DS_Store` if you want a tidier working directory on disk.
-- Install or customize `~/.config/notification-hub/config.toml` from `config/policy.example.toml`
-  when you are ready to suppress repeated accepted `personal-ops` and Codex completion events.
+- Install or customize `~/.config/notification-hub/config.toml` from the refreshed
+  `config/policy.example.toml` when you want the sample repeated-event tuning in live policy.

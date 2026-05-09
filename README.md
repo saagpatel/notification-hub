@@ -57,6 +57,9 @@ uv run notification-hub-personal-ops-actions --json
 uv run notification-hub personal-ops-actions --save-review-package
 uv run notification-hub validate-action-package path/to/actions.json
 uv run notification-hub personal-ops-import path/to/actions.json
+uv run notification-hub personal-ops-import path/to/actions.json --enqueue
+uv run notification-hub personal-ops-queue
+uv run notification-hub personal-ops-queue --queue-id QUEUE_ID --status reviewed --reason "evidence checked"
 uv run notification-hub logs
 uv run notification-hub-logs --json
 uv run notification-hub burn-in --minutes 10
@@ -94,6 +97,10 @@ The personal-ops-import command validates the package and stops before mutation 
 `--enqueue` to add valid action proposals to a local personal-ops import queue under
 notification-hub runtime state; queued items are handoff records only and are not personal-ops tasks,
 approvals, sends, or applied changes.
+The personal-ops-queue command lists and updates queued handoffs through explicit lifecycle states:
+`queued`, `reviewed`, `rejected`, `snoozed`, `superseded`, and `promoted`. Marking an item
+`promoted` records that an operator-mediated personal-ops task suggestion was created; it does not
+create that suggestion by itself.
 The logs command shows recent stored events, daemon stdout/stderr tails, and a summary of accepted
 versus rejected `/events` posts plus Slack delivery failures without changing local runtime state.
 The burn-in command summarizes recent accepted/rejected event posts and repeated event signatures
@@ -142,8 +149,9 @@ The local review surface is available at `http://127.0.0.1:9199/review` while th
 It shows runtime state, inbox rollups, action proposals, and the current trust boundary without
 mutating local state.
 The review page can also stage a review package, show recent saved review packages, inspect package
-actions/evidence, queue import handoff items, delete saved review packages, and validate the latest
-staged or saved package. These controls still do not apply, approve, send, or mutate personal-ops.
+actions/evidence, queue import handoff items, mark queued items reviewed/rejected/snoozed/promoted,
+delete saved review packages, and validate the latest staged or saved package. These controls still
+do not apply, approve, send, or mutate personal-ops.
 Coordination snapshots target bridge-db's `codex` snapshot shape: the emitted
 `bridge_snapshot` object can be passed as snapshot data after operator review, or saved directly
 with the explicit `--save-bridge-db` flag.
@@ -291,12 +299,17 @@ uv run --frozen notification-hub personal-ops-actions --save-review-package
 uv run --frozen notification-hub validate-action-package path/to/actions.json
 uv run --frozen notification-hub personal-ops-import path/to/actions.json
 uv run --frozen notification-hub personal-ops-import path/to/actions.json --enqueue
+uv run --frozen notification-hub personal-ops-queue
+uv run --frozen notification-hub personal-ops-queue --queue-id QUEUE_ID --status rejected --reason "duplicate"
 uv run --frozen notification-hub logs
 curl http://127.0.0.1:9199/review
 curl http://127.0.0.1:9199/review/packages
 curl http://127.0.0.1:9199/review/package/personal-ops-actions-YYYYMMDD-HHMMSS.json
 curl -X POST http://127.0.0.1:9199/review/package/personal-ops-actions-YYYYMMDD-HHMMSS.json/queue
 curl http://127.0.0.1:9199/review/import-queue
+curl -X PATCH http://127.0.0.1:9199/review/import-queue/QUEUE_ID \
+  -H 'Content-Type: application/json' \
+  -d '{"status":"reviewed","reason":"evidence checked"}'
 curl -X DELETE http://127.0.0.1:9199/review/package/personal-ops-actions-YYYYMMDD-HHMMSS.json
 uv run --frozen notification-hub verify-runtime
 uv run --frozen notification-hub delivery-check --slack

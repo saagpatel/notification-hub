@@ -26,6 +26,8 @@ from notification_hub.operations import (
     run_personal_ops_action_export,
     run_personal_ops_import_stub,
     run_retention,
+    summarize_personal_ops_import_queue,
+    update_personal_ops_import_queue_item,
     validate_action_package,
 )
 from notification_hub.pipeline import get_suppression_engine, process_event
@@ -499,7 +501,36 @@ REVIEW_HTML = """<!doctype html>
         <div class="line"><span class="title">${esc(q.title)}</span><span class="meta">${esc(q.priority)}/${esc(q.state)}</span></div>
         <div class="next">${esc(q.status)} / ${esc(q.source_package_name)}</div>
         <div class="next">Evidence: ${esc(q.evidence_event_id)}</div>
+        <div class="button-row">
+          <button type="button" data-queue-id="${esc(q.queue_id)}" data-queue-status="reviewed">Reviewed</button>
+          <button type="button" data-queue-id="${esc(q.queue_id)}" data-queue-status="promoted">Promote</button>
+          <button type="button" data-queue-id="${esc(q.queue_id)}" data-queue-status="snoozed">Snooze</button>
+          <button type="button" data-queue-id="${esc(q.queue_id)}" data-queue-status="rejected">Reject</button>
+        </div>
       `), "No queued import handoff items.");
+      importQueue.querySelectorAll("button[data-queue-id]").forEach(button => {
+        button.addEventListener("click", () => updateQueueItem(button.dataset.queueId, button.dataset.queueStatus));
+      });
+    }
+    async function updateQueueItem(queueId, status) {
+      if (!queueId || !status) {
+        return;
+      }
+      const body = { status, reason: `Review UI marked ${status}` };
+      if (status === "snoozed") {
+        body.snoozed_until = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+      }
+      const res = await fetch(`/review/import-queue/${encodeURIComponent(queueId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      const data = await res.json();
+      packageDetail.replaceChildren(
+        item(`<div class="line"><span class="title">${esc(queueId)}</span><span class="meta">${esc(data.status)}</span></div>`),
+        item(`<div class="next">${esc(data.next_action || data.error)}</div>`)
+      );
+      await loadImportQueue();
     }
     document.getElementById("refresh").addEventListener("click", load);
     document.getElementById("savePackage").addEventListener("click", () => post("/review/save-package"));
@@ -685,8 +716,36 @@ async def review_import_queue(limit: int = 10) -> dict[str, object]:
     return {
         "status": "ok",
         "items": list_personal_ops_import_queue(limit=max(limit, 1)),
+        "health": summarize_personal_ops_import_queue(),
         "applied": False,
     }
+
+
+@app.patch("/review/import-queue/{queue_id}")
+async def review_update_import_queue(queue_id: str, request: Request) -> dict[str, object]:
+    """Update one queued handoff lifecycle state without applying it."""
+    body = cast(dict[str, object], await request.json())
+    status = body.get("status")
+    if not isinstance(status, str):
+        return {
+            "status": "degraded",
+            "queue_id": queue_id,
+            "updated": False,
+            "item": None,
+            "next_action": "Choose a lifecycle status before updating this queue item.",
+            "error": "missing status",
+        }
+    reason_value = body.get("reason")
+    snoozed_until_value = body.get("snoozed_until")
+    promotion_target_value = body.get("promotion_target")
+    report = update_personal_ops_import_queue_item(
+        queue_id=queue_id,
+        status=status,
+        reason=reason_value if isinstance(reason_value, str) else None,
+        snoozed_until=snoozed_until_value if isinstance(snoozed_until_value, str) else None,
+        promotion_target=promotion_target_value if isinstance(promotion_target_value, str) else None,
+    )
+    return dict(report)
 
 
 @app.delete("/review/package/{name}")

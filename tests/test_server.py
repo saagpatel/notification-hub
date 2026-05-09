@@ -453,24 +453,100 @@ async def test_review_import_queue_endpoint_lists_queue_items(client: AsyncClien
                 "queue_id": "queue123",
                 "status": "queued",
                 "enqueued_at": "2026-05-09T10:00:00+00:00",
+                "updated_at": None,
                 "source_package_name": "personal-ops-actions-20260509-100000.json",
+                "source_package_path": "/tmp/personal-ops-actions-20260509-100000.json",
                 "action_id": "action123",
                 "title": "Approval Requested",
+                "summary": "2 repeated personal-ops events",
                 "priority": "high",
                 "state": "waiting",
                 "evidence_event_id": "abc123",
                 "applied": False,
+                "snoozed_until": None,
+                "outcome_reason": None,
+                "promoted_at": None,
+                "promotion_target": None,
             }
         ],
     ) as mock_queue:
-        resp = await client.get("/review/import-queue?limit=3")
+        with patch(
+            "notification_hub.server.summarize_personal_ops_import_queue",
+            return_value={
+                "status": "warn",
+                "queue_path": "/tmp/queue.jsonl",
+                "total_count": 1,
+                "queued_count": 1,
+                "reviewed_count": 0,
+                "rejected_count": 0,
+                "snoozed_count": 0,
+                "superseded_count": 0,
+                "promoted_count": 0,
+                "needs_review": True,
+                "oldest_queued_at": "2026-05-09T10:00:00+00:00",
+                "oldest_queued_age_seconds": 1.0,
+                "next_action": "Review queued personal-ops handoff items.",
+            },
+        ):
+            resp = await client.get("/review/import-queue?limit=3")
 
     assert resp.status_code == 200
     data = resp.json()
     assert data["status"] == "ok"
     assert data["applied"] is False
     assert data["items"][0]["status"] == "queued"
+    assert data["health"]["needs_review"] is True
     mock_queue.assert_called_once_with(limit=3)
+
+
+async def test_review_import_queue_patch_updates_lifecycle(client: AsyncClient) -> None:
+    with patch(
+        "notification_hub.server.update_personal_ops_import_queue_item",
+        return_value={
+            "status": "ok",
+            "queue_id": "queue123",
+            "queue_path": "/tmp/queue.jsonl",
+            "updated": True,
+            "item": {
+                "queue_id": "queue123",
+                "status": "rejected",
+                "enqueued_at": "2026-05-09T10:00:00+00:00",
+                "updated_at": "2026-05-09T10:05:00+00:00",
+                "source_package_name": "personal-ops-actions-20260509-100000.json",
+                "source_package_path": "/tmp/personal-ops-actions-20260509-100000.json",
+                "action_id": "action123",
+                "title": "Approval Requested",
+                "summary": "2 repeated personal-ops events",
+                "priority": "high",
+                "state": "waiting",
+                "evidence_event_id": "abc123",
+                "applied": False,
+                "snoozed_until": None,
+                "outcome_reason": "duplicate",
+                "promoted_at": None,
+                "promotion_target": None,
+            },
+            "next_action": "No personal-ops action will be created for this handoff.",
+            "error": None,
+        },
+    ) as mock_update:
+        resp = await client.patch(
+            "/review/import-queue/queue123",
+            json={"status": "rejected", "reason": "duplicate"},
+        )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert data["updated"] is True
+    assert data["item"]["status"] == "rejected"
+    mock_update.assert_called_once_with(
+        queue_id="queue123",
+        status="rejected",
+        reason="duplicate",
+        snoozed_until=None,
+        promotion_target=None,
+    )
 
 
 async def test_review_validate_package_uses_newest_saved_package(client: AsyncClient) -> None:
