@@ -33,6 +33,7 @@ from notification_hub.operations import (
     run_logs,
     run_personal_ops_action_export,
     run_personal_ops_import_stub,
+    run_personal_ops_outcome_sync_reminder,
     run_personal_ops_queue_burn_in,
     run_personal_ops_queue_scenario,
     run_policy_check,
@@ -747,9 +748,64 @@ def test_personal_ops_import_queue_health_flags_stale_promotions(tmp_path: Path)
     assert health["promoted_pending_count"] == 1
     assert health["promoted_pending_stale_count"] == 1
     assert health["needs_outcome_sync"] is True
-    assert "sync-outcomes" in health["next_action"]
+    assert "record the promotion outcome" in health["next_action"]
     assert report["pending_promotion_items"][0]["queue_id"] == "queue-stale"
-    assert "personal-ops notification-hub sync-outcomes" in report["next_commands"]
+    assert (
+        'personal-ops suggestion accept|reject SUGGESTION_ID --note "..."'
+        in report["next_commands"]
+    )
+
+
+def test_personal_ops_outcome_sync_reminder_reports_pending_promotions(tmp_path: Path) -> None:
+    queue_path = tmp_path / "queue.jsonl"
+    old_timestamp = "2026-05-09T00:00:00+00:00"
+    queue_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "notification-hub.personal_ops_import_queue.v1",
+                "queue_id": "queue-pending",
+                "status": "promoted",
+                "enqueued_at": old_timestamp,
+                "updated_at": old_timestamp,
+                "promoted_at": old_timestamp,
+                "promotion_target": "personal-ops task suggestion",
+                "promotion_target_id": "suggestion-pending",
+                "promotion_outcome": "pending",
+                "promotion_outcome_at": old_timestamp,
+                "source_package_path": "/tmp/actions.json",
+                "source_package_name": "actions.json",
+                "action_id": "action-pending",
+                "applied": True,
+                "action": {
+                    "action_id": "action-pending",
+                    "title": "Pending promoted handoff",
+                    "summary": "Waiting on outcome sync.",
+                    "priority": "high",
+                    "state": "waiting",
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    report = run_personal_ops_outcome_sync_reminder(
+        queue_path=queue_path,
+        stale_after_hours=0,
+    )
+
+    assert report["status"] == "warn"
+    assert report["should_remind"] is True
+    assert report["pending_count"] == 1
+    assert report["stale_count"] == 1
+    assert report["reminders"][0]["queue_id"] == "queue-pending"
+    assert report["next_commands"] == [
+        'personal-ops suggestion accept|reject SUGGESTION_ID --note "..."',
+        "uv run notification-hub personal-ops-queue --queue-id QUEUE_ID "
+        "--status promoted --promotion-target-id SUGGESTION_ID "
+        '--promotion-outcome accepted|rejected --promotion-outcome-note "..."',
+    ]
+    assert report["applied"] is False
 
 
 def test_personal_ops_queue_scenario_records_final_outcome() -> None:
@@ -853,7 +909,7 @@ def test_personal_ops_queue_burn_in_reports_operator_steps() -> None:
     assert report["ready_for_live_promotion"] is True
     assert "operator-mediated" in report["outcome_sync_posture"]
     assert "Promote one reviewed handoff" in report["next_action"]
-    assert any("sync" in step for step in report["operator_steps"])
+    assert any("record the outcome" in step for step in report["operator_steps"])
     mock_health.assert_called_once_with(limit=3)
     mock_burn_in.assert_called_once_with(minutes=5, lines=20)
 

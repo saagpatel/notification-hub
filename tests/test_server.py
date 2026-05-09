@@ -543,7 +543,20 @@ async def test_review_import_queue_endpoint_lists_queue_items(client: AsyncClien
                 "applied": False,
             },
         ) as mock_health:
-            resp = await client.get("/review/import-queue?limit=3")
+            with patch(
+                "notification_hub.server.run_personal_ops_outcome_sync_reminder",
+                return_value={
+                    "status": "ok",
+                    "should_remind": False,
+                    "pending_count": 0,
+                    "stale_count": 0,
+                    "reminders": [],
+                    "next_commands": ["uv run notification-hub personal-ops-queue-health"],
+                    "next_action": "No pending promoted personal-ops handoff outcomes.",
+                    "applied": False,
+                },
+            ) as mock_reminder:
+                resp = await client.get("/review/import-queue?limit=3")
 
     assert resp.status_code == 200
     data = resp.json()
@@ -552,8 +565,41 @@ async def test_review_import_queue_endpoint_lists_queue_items(client: AsyncClien
     assert data["items"][0]["status"] == "queued"
     assert data["health"]["needs_review"] is True
     assert data["next_commands"] == ["uv run notification-hub personal-ops-queue"]
+    assert data["outcome_sync_reminder"]["should_remind"] is False
     mock_queue.assert_called_once_with(limit=3)
     mock_health.assert_called_once_with(limit=3, stale_after_hours=4.0)
+    mock_reminder.assert_called_once_with(limit=3, stale_after_hours=4.0)
+
+
+async def test_review_outcome_sync_reminder_endpoint_reports_pending(
+    client: AsyncClient,
+) -> None:
+    with patch(
+        "notification_hub.server.run_personal_ops_outcome_sync_reminder",
+        return_value={
+            "status": "warn",
+            "should_remind": True,
+            "pending_count": 1,
+            "stale_count": 1,
+            "reminders": [],
+            "next_commands": [
+                'personal-ops suggestion accept|reject SUGGESTION_ID --note "..."',
+                "uv run notification-hub personal-ops-queue --queue-id QUEUE_ID "
+                "--status promoted --promotion-target-id SUGGESTION_ID "
+                '--promotion-outcome accepted|rejected --promotion-outcome-note "..."',
+            ],
+            "next_action": "Resolve stale promoted personal-ops handoff outcomes before promoting more work.",
+            "applied": False,
+        },
+    ) as mock_reminder:
+        resp = await client.get("/review/outcome-sync-reminder?limit=3&stale_after_hours=2")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "warn"
+    assert data["should_remind"] is True
+    assert data["applied"] is False
+    mock_reminder.assert_called_once_with(limit=3, stale_after_hours=2.0)
 
 
 async def test_review_import_queue_patch_updates_lifecycle(client: AsyncClient) -> None:

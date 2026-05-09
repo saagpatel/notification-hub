@@ -25,9 +25,11 @@ max_quiet_queue = 200
 
 [[noise.rules]]
 source = "personal-ops"
+project = "personal-ops"
 title_contains = "approval expires soon"
+body_contains = "approval expires soon: review or cancel"
 level = "info"
-window_minutes = 5
+window_minutes = 10
 
 [[noise.rules]]
 source = "codex"

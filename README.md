@@ -63,6 +63,8 @@ uv run notification-hub personal-ops-queue --queue-id QUEUE_ID --status reviewed
 uv run notification-hub personal-ops-queue --queue-id QUEUE_ID --status promoted --promotion-target-id SUGGESTION_ID --promotion-outcome accepted
 uv run notification-hub personal-ops-queue-health
 uv run notification-hub-personal-ops-queue-health --json
+uv run notification-hub personal-ops-outcome-sync-reminder
+uv run notification-hub-personal-ops-outcome-sync-reminder --json
 uv run notification-hub personal-ops-queue-burn-in
 uv run notification-hub-personal-ops-queue-burn-in --json
 uv run notification-hub personal-ops-queue-scenario
@@ -111,6 +113,9 @@ and final `pending`, `accepted`, `rejected`, or `ignored` outcome.
 The personal-ops-queue-health command is the normal maintenance check for this queue. It reports
 queued item age, promoted handoffs still waiting on downstream outcome sync, stale pending
 promotions, and the next safe operator commands without applying work.
+The personal-ops-outcome-sync-reminder command is a narrower read-only reminder for promoted
+handoffs that still need downstream personal-ops outcome sync. It returns `status: warn` when a
+reminder should be shown, but still leaves syncing to the operator.
 The personal-ops-queue-burn-in command combines queue health, the temporary queue lifecycle
 scenario, and recent runtime burn-in into one non-applying readiness report. Use it before promoting
 real handoffs or after syncing a downstream personal-ops outcome. The report now states the
@@ -172,8 +177,8 @@ mutating local state.
 The review page can also stage a review package, show recent saved review packages, inspect package
 actions/evidence, show queue lineage for already queued packages, queue import handoff items, filter
 queued/promoted/pending/stale/resolved handoffs, mark queued items reviewed/rejected/snoozed/promoted,
-delete saved review packages, and validate the latest staged or saved package. These controls still
-do not apply, approve, send, or mutate personal-ops.
+show pending outcome-sync reminders, delete saved review packages, and validate the latest staged or
+saved package. These controls still do not apply, approve, send, or mutate personal-ops.
 Coordination snapshots target bridge-db's `codex` snapshot shape: the emitted
 `bridge_snapshot` object can be passed as snapshot data after operator review, or saved directly
 with the explicit `--save-bridge-db` flag.
@@ -215,9 +220,11 @@ max_quiet_queue = 200
 
 [[noise.rules]]
 source = "personal-ops"
+project = "personal-ops"
 title_contains = "approval expires soon"
+body_contains = "approval expires soon: review or cancel"
 level = "info"
-window_minutes = 5
+window_minutes = 10
 
 [[noise.rules]]
 source = "notion-os"
@@ -325,6 +332,8 @@ uv run --frozen notification-hub personal-ops-queue
 uv run --frozen notification-hub personal-ops-queue --queue-id QUEUE_ID --status rejected --reason "duplicate"
 uv run --frozen notification-hub personal-ops-queue-health
 uv run --frozen notification-hub-personal-ops-queue-health --json
+uv run --frozen notification-hub personal-ops-outcome-sync-reminder
+uv run --frozen notification-hub-personal-ops-outcome-sync-reminder --json
 uv run --frozen notification-hub personal-ops-queue-burn-in
 uv run --frozen notification-hub-personal-ops-queue-burn-in --json
 uv run --frozen notification-hub personal-ops-queue-scenario
@@ -334,6 +343,7 @@ curl http://127.0.0.1:9199/review/packages
 curl http://127.0.0.1:9199/review/package/personal-ops-actions-YYYYMMDD-HHMMSS.json
 curl -X POST http://127.0.0.1:9199/review/package/personal-ops-actions-YYYYMMDD-HHMMSS.json/queue
 curl http://127.0.0.1:9199/review/import-queue
+curl http://127.0.0.1:9199/review/outcome-sync-reminder
 curl -X PATCH http://127.0.0.1:9199/review/import-queue/QUEUE_ID \
   -H 'Content-Type: application/json' \
   -d '{"status":"reviewed","reason":"evidence checked"}'

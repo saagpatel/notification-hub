@@ -24,6 +24,7 @@ from notification_hub.operations import (
     PersonalOpsImportQueueHealthReport,
     PersonalOpsImportQueueItemReport,
     PersonalOpsImportQueueUpdateReport,
+    PersonalOpsOutcomeSyncReminderReport,
     PersonalOpsQueueBurnInReport,
     PersonalOpsQueueScenarioReport,
     ActionPackageValidationReport,
@@ -41,6 +42,7 @@ from notification_hub.operations import (
     run_personal_ops_action_export,
     run_personal_ops_import_queue_health_check,
     run_personal_ops_import_stub,
+    run_personal_ops_outcome_sync_reminder,
     run_personal_ops_queue_burn_in,
     run_personal_ops_queue_scenario,
     list_personal_ops_import_queue,
@@ -440,6 +442,32 @@ def _build_parser(prog: str = "notification-hub") -> argparse.ArgumentParser:
         help="Emit the burn-in report as JSON.",
     )
 
+    personal_ops_outcome_sync_reminder = subparsers.add_parser(
+        "personal-ops-outcome-sync-reminder",
+        help="Report promoted personal-ops handoffs that still need outcome sync.",
+    )
+    personal_ops_outcome_sync_reminder.add_argument(
+        "--queue-path",
+        help="Override the local import queue path.",
+    )
+    personal_ops_outcome_sync_reminder.add_argument(
+        "--limit",
+        type=int,
+        default=10,
+        help="Maximum pending promoted items to include.",
+    )
+    personal_ops_outcome_sync_reminder.add_argument(
+        "--stale-after-hours",
+        type=float,
+        default=4.0,
+        help="Age threshold for stale promoted-pending handoffs.",
+    )
+    personal_ops_outcome_sync_reminder.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the reminder report as JSON.",
+    )
+
     explain = subparsers.add_parser(
         "explain",
         help="Show how an event would classify, route, and deliver without sending it.",
@@ -741,6 +769,28 @@ def _print_personal_ops_queue_health_report(
         print("- queued items:")
         for item in report["queued_items"]:
             print(f"  - {item['queue_id']}: {item['title']}")
+
+
+def _print_personal_ops_outcome_sync_reminder_report(
+    report: PersonalOpsOutcomeSyncReminderReport,
+) -> None:
+    print(f"notification-hub personal-ops-outcome-sync-reminder: {report['status']}")
+    print(f"- should remind: {report['should_remind']}")
+    print(f"- pending outcomes: {report['pending_count']}")
+    print(f"- stale outcomes: {report['stale_count']}")
+    print(f"- next action: {report['next_action']}")
+    if report["next_commands"]:
+        print("- next commands:")
+        for command in report["next_commands"]:
+            print(f"  - {command}")
+    if not report["reminders"]:
+        print("- reminders: none")
+        return
+    print("- reminders:")
+    for item in report["reminders"]:
+        target = item["promotion_target_id"] or "missing-target-id"
+        outcome = item["promotion_outcome"] or "pending"
+        print(f"  - {item['queue_id']} -> {target} [{outcome}]: {item['title']}")
 
 
 def _print_personal_ops_queue_burn_in_report(report: PersonalOpsQueueBurnInReport) -> None:
@@ -1116,6 +1166,18 @@ def main(argv: Sequence[str] | None = None) -> int:
             _print_personal_ops_queue_burn_in_report(report)
         return 0 if report["status"] == "ok" else 1
 
+    if args.command == "personal-ops-outcome-sync-reminder":
+        report = run_personal_ops_outcome_sync_reminder(
+            queue_path=Path(args.queue_path).expanduser() if args.queue_path else None,
+            limit=args.limit,
+            stale_after_hours=args.stale_after_hours,
+        )
+        if args.json:
+            print(json.dumps(report, indent=2, sort_keys=True))
+        else:
+            _print_personal_ops_outcome_sync_reminder_report(report)
+        return 0 if report["status"] == "ok" else 1
+
     if args.command == "policy-check":
         report = run_policy_check()
         if args.json:
@@ -1223,6 +1285,11 @@ def personal_ops_queue_health_main(argv: Sequence[str] | None = None) -> int:
 def personal_ops_queue_burn_in_main(argv: Sequence[str] | None = None) -> int:
     forwarded = list(argv) if argv is not None else sys.argv[1:]
     return main(["personal-ops-queue-burn-in", *forwarded])
+
+
+def personal_ops_outcome_sync_reminder_main(argv: Sequence[str] | None = None) -> int:
+    forwarded = list(argv) if argv is not None else sys.argv[1:]
+    return main(["personal-ops-outcome-sync-reminder", *forwarded])
 
 
 def policy_check_main(argv: Sequence[str] | None = None) -> int:

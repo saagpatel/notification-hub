@@ -265,6 +265,17 @@ class PersonalOpsImportQueueHealthCheckReport(TypedDict):
     applied: bool
 
 
+class PersonalOpsOutcomeSyncReminderReport(TypedDict):
+    status: str
+    should_remind: bool
+    pending_count: int
+    stale_count: int
+    reminders: list[PersonalOpsImportQueueItemReport]
+    next_commands: list[str]
+    next_action: str
+    applied: bool
+
+
 class PersonalOpsQueueScenarioReport(TypedDict):
     status: str
     queue_path: str
@@ -1110,9 +1121,12 @@ def summarize_personal_ops_import_queue(
     if queued_count > 0:
         next_action = "Review queued personal-ops handoff items."
     elif stale_pending_count > 0:
-        next_action = "Run personal-ops notification-hub sync-outcomes, then rerun notification-hub personal-ops-queue-health."
+        next_action = (
+            "Resolve the matching personal-ops suggestion, record the promotion outcome, "
+            "then rerun notification-hub personal-ops-queue-health."
+        )
     elif promoted_pending_count > 0:
-        next_action = "Sync promoted personal-ops handoff outcomes."
+        next_action = "Resolve promoted personal-ops handoff outcomes."
     else:
         next_action = "No queued personal-ops handoff items."
     return {
@@ -1165,7 +1179,12 @@ def run_personal_ops_import_queue_health_check(
         next_commands.append("uv run notification-hub personal-ops-queue")
         next_commands.append('personal-ops notification-hub promote QUEUE_ID --note "..."')
     if health["promoted_pending_count"] > 0:
-        next_commands.append("personal-ops notification-hub sync-outcomes")
+        next_commands.append('personal-ops suggestion accept|reject SUGGESTION_ID --note "..."')
+        next_commands.append(
+            "uv run notification-hub personal-ops-queue --queue-id QUEUE_ID "
+            "--status promoted --promotion-target-id SUGGESTION_ID "
+            '--promotion-outcome accepted|rejected --promotion-outcome-note "..."'
+        )
     next_commands.append("uv run notification-hub personal-ops-queue-health")
     return {
         "status": health["status"],
@@ -1177,22 +1196,68 @@ def run_personal_ops_import_queue_health_check(
     }
 
 
+def run_personal_ops_outcome_sync_reminder(
+    *,
+    queue_path: Path | None = None,
+    limit: int = 10,
+    stale_after_hours: float = 4.0,
+) -> PersonalOpsOutcomeSyncReminderReport:
+    """Report promoted handoffs that need downstream outcome sync, without mutating them."""
+    queue_report = run_personal_ops_import_queue_health_check(
+        queue_path=queue_path,
+        limit=limit,
+        stale_after_hours=stale_after_hours,
+    )
+    health = queue_report["health"]
+    reminders = queue_report["pending_promotion_items"]
+    should_remind = health["promoted_pending_count"] > 0
+    if health["promoted_pending_stale_count"] > 0:
+        next_action = (
+            "Resolve stale promoted personal-ops handoff outcomes before promoting more work."
+        )
+    elif should_remind:
+        next_action = "Resolve promoted personal-ops handoff outcomes when downstream decisions are available."
+    else:
+        next_action = "No pending promoted personal-ops handoff outcomes."
+
+    return {
+        "status": "warn" if should_remind else "ok",
+        "should_remind": should_remind,
+        "pending_count": health["promoted_pending_count"],
+        "stale_count": health["promoted_pending_stale_count"],
+        "reminders": reminders,
+        "next_commands": (
+            [
+                'personal-ops suggestion accept|reject SUGGESTION_ID --note "..."',
+                "uv run notification-hub personal-ops-queue --queue-id QUEUE_ID "
+                "--status promoted --promotion-target-id SUGGESTION_ID "
+                '--promotion-outcome accepted|rejected --promotion-outcome-note "..."',
+            ]
+            if should_remind
+            else ["uv run notification-hub personal-ops-queue-health"]
+        ),
+        "next_action": next_action,
+        "applied": False,
+    }
+
+
 def _personal_ops_queue_operator_steps(health: PersonalOpsImportQueueHealthReport) -> list[str]:
     if health["queued_count"] > 0:
         return [
             "Open http://127.0.0.1:9199/review and inspect the queued handoff evidence.",
             "Promote one reviewed handoff through personal-ops, then record it as promoted with the returned suggestion id.",
-            "Run personal-ops notification-hub sync-outcomes after the suggestion is accepted or rejected.",
+            "Accept or reject the matching personal-ops suggestion, then record the outcome on the queue item.",
             "Rerun notification-hub personal-ops-queue-health and confirm pending/stale counts return to zero.",
         ]
     if health["promoted_pending_stale_count"] > 0:
         return [
-            "Run personal-ops notification-hub sync-outcomes.",
+            "Resolve the stale personal-ops suggestion and record the outcome on the queue item.",
             "Rerun notification-hub personal-ops-queue-health and confirm stale pending outcomes clear.",
         ]
     if health["promoted_pending_count"] > 0:
         return [
-            "Run personal-ops notification-hub sync-outcomes when the downstream suggestion decision is available.",
+            "Accept or reject the personal-ops suggestion when the downstream decision is available.",
+            "Record the accepted or rejected outcome on the queue item.",
             "Rerun notification-hub personal-ops-queue-health and confirm pending outcomes clear.",
         ]
     return [

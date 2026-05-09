@@ -22,6 +22,7 @@ from notification_hub.cli import (
     main,
     personal_ops_actions_main,
     personal_ops_import_main,
+    personal_ops_outcome_sync_reminder_main,
     personal_ops_queue_burn_in_main,
     personal_ops_queue_health_main,
     policy_check_main,
@@ -186,9 +187,9 @@ def _import_queue_health(
     if queued_count:
         next_action = "Review queued personal-ops handoff items."
     elif promoted_pending_stale_count:
-        next_action = "Run personal-ops notification-hub sync-outcomes, then rerun notification-hub personal-ops-queue-health."
+        next_action = "Resolve the matching personal-ops suggestion, record the promotion outcome, then rerun notification-hub personal-ops-queue-health."
     elif promoted_pending_count:
-        next_action = "Sync promoted personal-ops handoff outcomes."
+        next_action = "Resolve promoted personal-ops handoff outcomes."
     else:
         next_action = "No queued personal-ops handoff items."
     return {
@@ -1369,6 +1370,47 @@ def test_cli_personal_ops_queue_health_json_output(capsys: CaptureFixture[str]) 
     assert mock_health.call_args.kwargs["stale_after_hours"] == 2.0
 
 
+def test_cli_personal_ops_outcome_sync_reminder_json_output(
+    capsys: CaptureFixture[str],
+) -> None:
+    with patch(
+        "notification_hub.cli.run_personal_ops_outcome_sync_reminder",
+        return_value={
+            "status": "warn",
+            "should_remind": True,
+            "pending_count": 1,
+            "stale_count": 1,
+            "reminders": [],
+            "next_commands": [
+                'personal-ops suggestion accept|reject SUGGESTION_ID --note "..."',
+                "uv run notification-hub personal-ops-queue --queue-id QUEUE_ID "
+                "--status promoted --promotion-target-id SUGGESTION_ID "
+                '--promotion-outcome accepted|rejected --promotion-outcome-note "..."',
+            ],
+            "next_action": "Resolve stale promoted personal-ops handoff outcomes before promoting more work.",
+            "applied": False,
+        },
+    ) as mock_reminder:
+        exit_code = main(
+            [
+                "personal-ops-outcome-sync-reminder",
+                "--json",
+                "--limit",
+                "3",
+                "--stale-after-hours",
+                "2",
+            ]
+        )
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert '"should_remind": true' in captured.out
+    assert '"applied": false' in captured.out
+    mock_reminder.assert_called_once()
+    assert mock_reminder.call_args.kwargs["limit"] == 3
+    assert mock_reminder.call_args.kwargs["stale_after_hours"] == 2.0
+
+
 def test_cli_personal_ops_queue_burn_in_json_output(capsys: CaptureFixture[str]) -> None:
     with patch(
         "notification_hub.cli.run_personal_ops_queue_burn_in",
@@ -1909,6 +1951,31 @@ def test_personal_ops_queue_health_wrapper_forwards_flags(capsys: CaptureFixture
     assert '"next_commands"' in output.out
     mock_health.assert_called_once()
     assert mock_health.call_args.kwargs["limit"] == 2
+
+
+def test_personal_ops_outcome_sync_reminder_wrapper_forwards_flags(
+    capsys: CaptureFixture[str],
+) -> None:
+    with patch(
+        "notification_hub.cli.run_personal_ops_outcome_sync_reminder",
+        return_value={
+            "status": "ok",
+            "should_remind": False,
+            "pending_count": 0,
+            "stale_count": 0,
+            "reminders": [],
+            "next_commands": ["uv run notification-hub personal-ops-queue-health"],
+            "next_action": "No pending promoted personal-ops handoff outcomes.",
+            "applied": False,
+        },
+    ) as mock_reminder:
+        exit_code = personal_ops_outcome_sync_reminder_main(["--json", "--limit", "2"])
+
+    output = capsys.readouterr()
+    assert exit_code == 0
+    assert '"should_remind": false' in output.out
+    mock_reminder.assert_called_once()
+    assert mock_reminder.call_args.kwargs["limit"] == 2
 
 
 def test_personal_ops_queue_burn_in_wrapper_forwards_flags(capsys: CaptureFixture[str]) -> None:

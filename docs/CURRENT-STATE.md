@@ -38,6 +38,8 @@ tuning pass.
 - Queue maintenance now has a dedicated `personal-ops-queue-health` command that reports queued
   item age, promoted handoffs still waiting on outcome sync, stale pending outcomes, and the next
   safe operator commands without applying work.
+- A dedicated `personal-ops-outcome-sync-reminder` command now reports pending or stale promoted
+  handoff outcomes as a read-only reminder without syncing personal-ops itself.
 - A queue burn-in command now combines queue health, the temporary queue lifecycle scenario, and
   recent runtime burn-in into one non-applying readiness report for live operator handoffs. It now
   states that outcome sync remains operator-mediated and that notification-hub reports pending or
@@ -47,8 +49,8 @@ tuning pass.
 - The review page can stage a local review package, list recent saved review packages, inspect
   package actions/evidence plus queue lineage, queue import handoff items, filter
   queued/promoted/pending/stale/resolved handoffs, mark queued items reviewed/rejected/snoozed/promoted,
-  delete saved review packages, and validate the latest staged or saved package while keeping apply
-  behavior disabled.
+  show pending outcome-sync reminders, delete saved review packages, and validate the latest staged
+  or saved package while keeping apply behavior disabled.
 - A local logs command is available for recent event and daemon log inspection, including accepted
   versus rejected `/events` counts from the visible daemon tail.
 - A local burn-in command is available for recent accepted/rejected event counts and repeated
@@ -157,6 +159,8 @@ tuning pass.
   and final `pending`, `accepted`, `rejected`, or `ignored` outcome.
 - Added `personal-ops-queue-health` so routine maintenance can detect queued age, pending promotion
   outcome sync, stale promoted-pending handoffs, and the next safe non-mutating commands.
+- Added `personal-ops-outcome-sync-reminder` so pending or stale promoted handoff outcomes can be
+  surfaced directly without creating, accepting, rejecting, or syncing personal-ops work.
 - Added `personal-ops-queue-burn-in` so queue lifecycle readiness, live queue attention, and recent
   runtime noise can be checked together before or after real operator promotion.
 - Added explicit queue burn-in outcome-sync posture so reports make clear that notification-hub
@@ -192,6 +196,8 @@ uv run --frozen notification-hub personal-ops-queue
 uv run --frozen notification-hub personal-ops-queue --queue-id QUEUE_ID --status reviewed --reason "evidence checked"
 uv run --frozen notification-hub personal-ops-queue-health
 uv run --frozen notification-hub-personal-ops-queue-health --json
+uv run --frozen notification-hub personal-ops-outcome-sync-reminder
+uv run --frozen notification-hub-personal-ops-outcome-sync-reminder --json
 uv run --frozen notification-hub personal-ops-queue-burn-in
 uv run --frozen notification-hub-personal-ops-queue-burn-in --json
 uv run --frozen notification-hub personal-ops-queue-scenario
@@ -201,6 +207,7 @@ curl http://127.0.0.1:9199/review/packages
 curl http://127.0.0.1:9199/review/package/personal-ops-actions-YYYYMMDD-HHMMSS.json
 curl -X POST http://127.0.0.1:9199/review/package/personal-ops-actions-YYYYMMDD-HHMMSS.json/queue
 curl http://127.0.0.1:9199/review/import-queue
+curl http://127.0.0.1:9199/review/outcome-sync-reminder
 curl -X PATCH http://127.0.0.1:9199/review/import-queue/QUEUE_ID -H 'Content-Type: application/json' -d '{"status":"reviewed","reason":"evidence checked"}'
 curl -X DELETE http://127.0.0.1:9199/review/package/personal-ops-actions-YYYYMMDD-HHMMSS.json
 uv run --frozen notification-hub burn-in --minutes 10
@@ -237,6 +244,9 @@ Expected current outcome:
 - `notification-hub personal-ops-queue-health`: reports routine import queue maintenance state,
   stale pending promoted outcomes, and next safe commands without applying work
 - `notification-hub-personal-ops-queue-health`: script shortcut for the same queue-health report
+- `notification-hub personal-ops-outcome-sync-reminder`: reports pending and stale promoted handoff
+  outcomes as read-only reminders without applying personal-ops work
+- `notification-hub-personal-ops-outcome-sync-reminder`: script shortcut for the same reminder report
 - `notification-hub personal-ops-queue-burn-in`: checks queue health, temporary lifecycle scenario,
   runtime burn-in, outcome-sync posture, and live operator steps without applying personal-ops work
 - `notification-hub-personal-ops-queue-burn-in`: script shortcut for the same burn-in report
@@ -253,6 +263,8 @@ Expected current outcome:
 - `DELETE /review/package/{name}`: deletes one saved review package without importing or applying it
 - `POST /review/package/{name}/queue` and `/review/import-queue`: enqueue and display local
   personal-ops handoff items without applying them
+- `/review/outcome-sync-reminder`: reports promoted handoffs that still need downstream outcome sync
+  without applying them
 - `PATCH /review/import-queue/{queue_id}`: marks a queued handoff reviewed, rejected, snoozed,
   superseded, or promoted without creating personal-ops work
 - `notification-hub logs`: `status: ok` with recent event and daemon log tails, including Slack
@@ -318,8 +330,8 @@ It is not part of normal day-to-day work.
 Start future work from `main`, keep using the frozen verification commands, and treat the repo-owned
 runtime templates as the source of truth for live launcher and hook wiring.
 The next work here should use `personal-ops-queue-burn-in` around the first real operator promotion,
-then decide whether the visible queue-health signals should trigger a read-only personal-ops
-outcome-sync reminder or remain an operator-run maintenance command.
+then decide whether real promoted-outcome reminders are frequent enough to justify a higher-level
+coordination console.
 
 ## Optional Follow-Up
 

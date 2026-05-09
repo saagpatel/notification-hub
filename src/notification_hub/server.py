@@ -26,6 +26,7 @@ from notification_hub.operations import (
     run_personal_ops_action_export,
     run_personal_ops_import_queue_health_check,
     run_personal_ops_import_stub,
+    run_personal_ops_outcome_sync_reminder,
     run_retention,
     update_personal_ops_import_queue_item,
     validate_action_package,
@@ -548,6 +549,7 @@ REVIEW_HTML = """<!doctype html>
       const res = await fetch("/review/import-queue?limit=25");
       const data = await res.json();
       const health = data.health || {};
+      const reminder = data.outcome_sync_reminder || {};
       const nextCommands = data.next_commands || [];
       importQueueHealth.replaceChildren(
         item(`
@@ -559,6 +561,7 @@ REVIEW_HTML = """<!doctype html>
             ${badge(`resolved ${(health.promoted_accepted_count ?? 0) + (health.promoted_rejected_count ?? 0) + (health.promoted_ignored_count ?? 0)}`)}
           </div>
           <div class="next">${esc(health.next_action || "")}</div>
+          ${reminder.should_remind ? `<div class="next"><strong>Outcome sync</strong>: ${esc(reminder.next_action || "")}</div>` : ""}
           ${nextCommands.length ? `<div class="next"><strong>Next command</strong>: ${esc(nextCommands[0])}</div>` : ""}
         `)
       );
@@ -826,13 +829,32 @@ async def review_import_queue(limit: int = 10, stale_after_hours: float = 4.0) -
     queue_health = run_personal_ops_import_queue_health_check(
         limit=max(limit, 1), stale_after_hours=stale_after_hours
     )
+    outcome_sync_reminder = run_personal_ops_outcome_sync_reminder(
+        limit=max(limit, 1),
+        stale_after_hours=stale_after_hours,
+    )
     return {
         "status": "ok",
         "items": list_personal_ops_import_queue(limit=max(limit, 1)),
         "health": queue_health["health"],
         "next_commands": queue_health["next_commands"],
+        "outcome_sync_reminder": outcome_sync_reminder,
         "applied": False,
     }
+
+
+@app.get("/review/outcome-sync-reminder")
+async def review_outcome_sync_reminder(
+    limit: int = 10,
+    stale_after_hours: float = 4.0,
+) -> dict[str, object]:
+    """Report promoted handoffs that still need outcome sync without applying work."""
+    return dict(
+        run_personal_ops_outcome_sync_reminder(
+            limit=max(limit, 1),
+            stale_after_hours=stale_after_hours,
+        )
+    )
 
 
 @app.patch("/review/import-queue/{queue_id}")
