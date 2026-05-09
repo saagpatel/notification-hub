@@ -11,7 +11,7 @@ from typing import TypedDict, cast
 
 import httpx
 
-from notification_hub.channels import ensure_log_dir, read_jsonl
+from notification_hub.channels import ensure_log_dir, read_jsonl, send_push, send_slack
 from notification_hub.config import (
     DAEMON_STDERR_LOG,
     DAEMON_STDOUT_LOG,
@@ -24,8 +24,9 @@ from notification_hub.config import (
     analyze_policy_config,
     get_policy_config,
 )
+from notification_hub.coordination import infer_intent
 from notification_hub.diagnostics import collect_doctor_report
-from notification_hub.models import Event, StoredEvent
+from notification_hub.models import Event, Intent, StoredEvent
 
 
 class SmokeReport(TypedDict):
@@ -35,6 +36,16 @@ class SmokeReport(TypedDict):
     event_id: str | None
     log_verified: bool
     response_status: int | None
+    error: str | None
+
+
+class DeliveryCheckReport(TypedDict):
+    status: str
+    verify_slack: bool
+    verify_push: bool
+    slack_ok: bool | None
+    push_ok: bool | None
+    event_id: str | None
     error: str | None
 
 
@@ -57,6 +68,30 @@ class RecentEventReport(TypedDict):
     project: str | None
     title: str
     body: str
+    intent: str
+
+
+class InboxItemReport(TypedDict):
+    event_id: str
+    timestamp: str
+    source: str
+    project: str | None
+    level: str
+    intent: str
+    title: str
+    body: str
+
+
+class InboxReport(TypedDict):
+    status: str
+    hours: int
+    events_seen: int
+    needs_attention: list[InboxItemReport]
+    waiting_or_blocked: list[InboxItemReport]
+    ready: list[InboxItemReport]
+    completed: list[InboxItemReport]
+    noise_candidates: list[RepeatedSignatureReport]
+    error: str | None
 
 
 class LogsReport(TypedDict):
@@ -151,6 +186,7 @@ class VerifyRuntimeReport(TypedDict):
     doctor: dict[str, object]
     policy_check: PolicyCheckReport
     burn_in: BurnInReport
+    delivery_check: DeliveryCheckReport | None
     smoke: SmokeReport | None
 
 
@@ -272,7 +308,33 @@ def _event_report(event: StoredEvent) -> RecentEventReport:
         "project": event.project,
         "title": event.title,
         "body": event.body,
+        "intent": infer_intent(event),
     }
+
+
+def _inbox_item(event: StoredEvent) -> InboxItemReport:
+    return {
+        "event_id": event.event_id,
+        "timestamp": event.timestamp.isoformat(),
+        "source": event.source,
+        "project": event.project,
+        "level": event.classified_level or event.level,
+        "intent": infer_intent(event),
+        "title": event.title,
+        "body": event.body,
+    }
+
+
+def _intent_bucket(intent: Intent) -> str:
+    if intent in ("needs_attention", "automation_failed"):
+        return "needs_attention"
+    if intent in ("blocked", "waiting_on_user"):
+        return "waiting_or_blocked"
+    if intent in ("ready_to_review", "ready_to_merge", "handoff_created"):
+        return "ready"
+    if intent == "completed":
+        return "completed"
+    return "informational"
 
 
 def _suggest_fix_for_warning(warning: str) -> str:
@@ -519,6 +581,55 @@ def run_burn_in(*, minutes: int = 10, lines: int = 200) -> BurnInReport:
     }
 
 
+def run_inbox(*, hours: int = 24, limit: int = 10) -> InboxReport:
+    """Summarize recent events by coordination intent for operator review."""
+    window_hours = max(hours, 1)
+    item_limit = max(limit, 1)
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=window_hours)
+    try:
+        stored_events = [
+            event
+            for event in read_jsonl(path=EVENTS_LOG)
+            if event.timestamp.astimezone(timezone.utc) >= cutoff
+        ]
+    except (OSError, ValueError) as exc:
+        return {
+            "status": "degraded",
+            "hours": window_hours,
+            "events_seen": 0,
+            "needs_attention": [],
+            "waiting_or_blocked": [],
+            "ready": [],
+            "completed": [],
+            "noise_candidates": [],
+            "error": str(exc),
+        }
+
+    buckets: dict[str, list[InboxItemReport]] = {
+        "needs_attention": [],
+        "waiting_or_blocked": [],
+        "ready": [],
+        "completed": [],
+    }
+    for event in sorted(stored_events, key=lambda item: item.timestamp, reverse=True):
+        bucket = _intent_bucket(infer_intent(event))
+        if bucket in buckets:
+            buckets[bucket].append(_inbox_item(event))
+
+    burn_in = run_burn_in(minutes=window_hours * 60, lines=200)
+    return {
+        "status": "ok",
+        "hours": window_hours,
+        "events_seen": len(stored_events),
+        "needs_attention": buckets["needs_attention"][:item_limit],
+        "waiting_or_blocked": buckets["waiting_or_blocked"][:item_limit],
+        "ready": buckets["ready"][:item_limit],
+        "completed": buckets["completed"][:item_limit],
+        "noise_candidates": burn_in["noise_candidates"][:item_limit],
+        "error": None,
+    }
+
+
 def run_retention(*, max_events: int, keep_archives: int) -> RetentionReport:
     """Archive older events when the live JSONL log exceeds the configured size."""
     ensure_log_dir()
@@ -657,12 +768,51 @@ def run_policy_check() -> PolicyCheckReport:
     }
 
 
-def run_verify_runtime(*, include_smoke: bool = False) -> VerifyRuntimeReport:
+def run_delivery_check(*, verify_slack: bool = False, verify_push: bool = False) -> DeliveryCheckReport:
+    """Send explicit opt-in transport checks for Slack and/or push delivery."""
+    event = StoredEvent(
+        source="codex",
+        level="normal",
+        classified_level="normal",
+        title="Notification Hub delivery check",
+        body="Explicit operator-requested delivery verification.",
+        project="notification-hub",
+    )
+    slack_ok = send_slack(event) if verify_slack else None
+    push_ok = send_push(event) if verify_push else None
+    failures: list[str] = []
+    if slack_ok is False:
+        failures.append("Slack delivery check failed")
+    if push_ok is False:
+        failures.append("Push delivery check failed")
+
+    return {
+        "status": "ok" if not failures else "degraded",
+        "verify_slack": verify_slack,
+        "verify_push": verify_push,
+        "slack_ok": slack_ok,
+        "push_ok": push_ok,
+        "event_id": event.event_id,
+        "error": "; ".join(failures) if failures else None,
+    }
+
+
+def run_verify_runtime(
+    *,
+    include_smoke: bool = False,
+    verify_slack: bool = False,
+    verify_push: bool = False,
+) -> VerifyRuntimeReport:
     """Aggregate the core runtime checks into one operator-facing report."""
     doctor = collect_doctor_report()
     policy_check = run_policy_check()
     burn_in = run_burn_in(minutes=10, lines=200)
     smoke = run_smoke_check() if include_smoke else None
+    delivery_check = (
+        run_delivery_check(verify_slack=verify_slack, verify_push=verify_push)
+        if verify_slack or verify_push
+        else None
+    )
 
     doctor_checks = _as_dict(doctor.get("checks"))
     local_api = _as_dict(doctor.get("local_api"))
@@ -675,13 +825,14 @@ def run_verify_runtime(*, include_smoke: bool = False) -> VerifyRuntimeReport:
         "runtime_wiring_current": doctor_checks.get("runtime_wiring_current") is True,
         "recent_runtime_health_ok": burn_in["health"]["status"] == "ok",
         "smoke_ok": smoke is None or smoke["status"] == "ok",
+        "delivery_check_ok": delivery_check is None or delivery_check["status"] == "ok",
     }
     status = "ok" if all(checks.values()) else "degraded"
     health_url = local_api.get("url")
 
     return {
         "status": status,
-        "read_only": smoke is None,
+        "read_only": smoke is None and delivery_check is None,
         "include_smoke": include_smoke,
         "health_url": health_url if isinstance(health_url, str) else None,
         "checks": checks,
@@ -689,6 +840,7 @@ def run_verify_runtime(*, include_smoke: bool = False) -> VerifyRuntimeReport:
         "doctor": doctor,
         "policy_check": policy_check,
         "burn_in": burn_in,
+        "delivery_check": delivery_check,
         "smoke": smoke,
     }
 

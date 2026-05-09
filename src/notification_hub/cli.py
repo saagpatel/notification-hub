@@ -13,6 +13,8 @@ from notification_hub.models import Event
 from notification_hub.operations import (
     BootstrapConfigReport,
     BurnInReport,
+    DeliveryCheckReport,
+    InboxReport,
     LogsReport,
     PolicyCheckReport,
     RetentionReport,
@@ -21,6 +23,8 @@ from notification_hub.operations import (
     VerifyRuntimeReport,
     bootstrap_policy_config,
     run_burn_in,
+    run_delivery_check,
+    run_inbox,
     run_logs,
     run_policy_check,
     run_retention,
@@ -29,6 +33,16 @@ from notification_hub.operations import (
     run_verify_runtime,
 )
 from notification_hub.pipeline import build_event_explanation_report
+
+_INBOX_SECTIONS: tuple[
+    tuple[str, str],
+    ...,
+] = (
+    ("needs_attention", "needs attention"),
+    ("waiting_or_blocked", "waiting or blocked"),
+    ("ready", "ready"),
+    ("completed", "completed"),
+)
 
 
 def _build_parser(prog: str = "notification-hub") -> argparse.ArgumentParser:
@@ -107,6 +121,16 @@ def _build_parser(prog: str = "notification-hub") -> argparse.ArgumentParser:
         help="Also post a harmless smoke event and verify it lands in the log.",
     )
     verify_runtime.add_argument(
+        "--verify-slack",
+        action="store_true",
+        help="Send one explicit Slack delivery-check message.",
+    )
+    verify_runtime.add_argument(
+        "--verify-push",
+        action="store_true",
+        help="Send one explicit local push delivery-check notification.",
+    )
+    verify_runtime.add_argument(
         "--json",
         action="store_true",
         help="Emit the runtime verification report as JSON.",
@@ -120,6 +144,48 @@ def _build_parser(prog: str = "notification-hub") -> argparse.ArgumentParser:
         "--json",
         action="store_true",
         help="Emit the policy-check report as JSON.",
+    )
+
+    delivery_check = subparsers.add_parser(
+        "delivery-check",
+        help="Send explicit opt-in Slack and/or push transport checks.",
+    )
+    delivery_check.add_argument(
+        "--slack",
+        action="store_true",
+        help="Send one Slack delivery-check message.",
+    )
+    delivery_check.add_argument(
+        "--push",
+        action="store_true",
+        help="Send one local push delivery-check notification.",
+    )
+    delivery_check.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the delivery-check report as JSON.",
+    )
+
+    inbox = subparsers.add_parser(
+        "inbox",
+        help="Show recent events grouped by coordination intent.",
+    )
+    inbox.add_argument(
+        "--hours",
+        type=int,
+        default=24,
+        help="Recent event window to summarize.",
+    )
+    inbox.add_argument(
+        "--limit",
+        type=int,
+        default=10,
+        help="Maximum items per inbox section.",
+    )
+    inbox.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the inbox report as JSON.",
     )
 
     explain = subparsers.add_parser(
@@ -214,6 +280,41 @@ def _print_smoke_report(report: SmokeReport) -> None:
         print(f"- error: {report['error']}")
 
 
+def _print_delivery_check_report(report: DeliveryCheckReport) -> None:
+    print(f"notification-hub delivery-check: {report['status']}")
+    print(f"- Slack requested: {report['verify_slack']}")
+    print(f"- Slack OK: {report['slack_ok']}")
+    print(f"- push requested: {report['verify_push']}")
+    print(f"- push OK: {report['push_ok']}")
+    print(f"- event ID: {report['event_id']}")
+    if report["error"] is not None:
+        print(f"- error: {report['error']}")
+
+
+def _print_inbox_report(report: InboxReport) -> None:
+    print(f"notification-hub inbox: {report['status']}")
+    print(f"- window: {report['hours']} hours")
+    print(f"- events seen: {report['events_seen']}")
+    if report["error"] is not None:
+        print(f"- error: {report['error']}")
+
+    for key, label in _INBOX_SECTIONS:
+        print(f"- {label}:")
+        items = cast(list[dict[str, object]], report[key])
+        if not items:
+            print("  none")
+        for item in items:
+            project = f" ({item['project']})" if item["project"] else ""
+            print(f"  - [{item['intent']}] {item['source']}{project}: {item['title']}")
+
+    print("- noise candidates:")
+    if not report["noise_candidates"]:
+        print("  none")
+    for item in report["noise_candidates"]:
+        project = f" ({item['project']})" if item["project"] else ""
+        print(f"  - x{item['count']} {item['source']}{project}: {item['title']}")
+
+
 def _print_status_report(report: StatusReport) -> None:
     print(f"notification-hub status: {report['status']}")
     print(f"- daemon reachable: {report['daemon_reachable']}")
@@ -306,7 +407,13 @@ def _print_verify_runtime_report(report: VerifyRuntimeReport) -> None:
     print(f"- health details reachable: {checks['health_details_reachable']}")
     print(f"- runtime wiring current: {checks['runtime_wiring_current']}")
     print(f"- recent runtime health OK: {checks['recent_runtime_health_ok']}")
+    print(f"- delivery check OK: {checks['delivery_check_ok']}")
     print(f"- smoke included: {report['include_smoke']}")
+    delivery_check = report["delivery_check"]
+    if delivery_check is not None:
+        print(f"- delivery check event ID: {delivery_check['event_id']}")
+        print(f"- Slack OK: {delivery_check['slack_ok']}")
+        print(f"- push OK: {delivery_check['push_ok']}")
     if smoke is not None:
         print(f"- smoke OK: {checks['smoke_ok']}")
         print(f"- smoke event ID: {smoke['event_id']}")
@@ -419,11 +526,33 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0 if report["status"] == "ok" else 1
 
     if args.command == "verify-runtime":
-        report = run_verify_runtime(include_smoke=args.include_smoke)
+        report = run_verify_runtime(
+            include_smoke=args.include_smoke,
+            verify_slack=args.verify_slack,
+            verify_push=args.verify_push,
+        )
         if args.json:
             print(json.dumps(report, indent=2, sort_keys=True))
         else:
             _print_verify_runtime_report(report)
+        return 0 if report["status"] == "ok" else 1
+
+    if args.command == "delivery-check":
+        if not args.slack and not args.push:
+            parser.error("delivery-check requires --slack and/or --push")
+        report = run_delivery_check(verify_slack=args.slack, verify_push=args.push)
+        if args.json:
+            print(json.dumps(report, indent=2, sort_keys=True))
+        else:
+            _print_delivery_check_report(report)
+        return 0 if report["status"] == "ok" else 1
+
+    if args.command == "inbox":
+        report = run_inbox(hours=args.hours, limit=args.limit)
+        if args.json:
+            print(json.dumps(report, indent=2, sort_keys=True))
+        else:
+            _print_inbox_report(report)
         return 0 if report["status"] == "ok" else 1
 
     if args.command == "policy-check":
@@ -493,6 +622,16 @@ def burn_in_main(argv: Sequence[str] | None = None) -> int:
 def verify_runtime_main(argv: Sequence[str] | None = None) -> int:
     forwarded = list(argv) if argv is not None else sys.argv[1:]
     return main(["verify-runtime", *forwarded])
+
+
+def delivery_check_main(argv: Sequence[str] | None = None) -> int:
+    forwarded = list(argv) if argv is not None else sys.argv[1:]
+    return main(["delivery-check", *forwarded])
+
+
+def inbox_main(argv: Sequence[str] | None = None) -> int:
+    forwarded = list(argv) if argv is not None else sys.argv[1:]
+    return main(["inbox", *forwarded])
 
 
 def policy_check_main(argv: Sequence[str] | None = None) -> int:

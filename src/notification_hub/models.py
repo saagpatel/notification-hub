@@ -12,6 +12,17 @@ from pydantic import BaseModel, Field, field_validator
 
 Source = Literal["codex", "cc", "claude_ai", "bridge_watcher", "personal-ops", "notion-os"]
 Level = Literal["urgent", "normal", "info"]
+Intent = Literal[
+    "needs_attention",
+    "blocked",
+    "waiting_on_user",
+    "ready_to_review",
+    "ready_to_merge",
+    "handoff_created",
+    "automation_failed",
+    "completed",
+    "informational",
+]
 
 _CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\r\n]")
 
@@ -24,6 +35,7 @@ class Event(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     body: str = Field(min_length=1, max_length=2000)
     project: str | None = Field(default=None, max_length=100)
+    intent: Intent | None = None
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     @field_validator("level", mode="before")

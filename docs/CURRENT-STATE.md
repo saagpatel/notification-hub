@@ -4,14 +4,14 @@ Last updated: 2026-05-09
 
 ## Snapshot
 
-`notification-hub` is in a mostly healthy operating state, with one active delivery-trust issue to
-resolve before calling the runtime fully clean.
+`notification-hub` is in a healthy operating state after the latest runtime restart and policy
+tuning pass.
 
 - Local `main` matches `origin/main`.
 - GitHub Actions CI is configured and passing on `main`.
 - The daemon is running locally via LaunchAgent on `127.0.0.1:9199`.
-- Slack delivery is configured through macOS Keychain, but the current daemon stderr log shows recent
-  Slack send/digest failures that need investigation.
+- Slack delivery is configured through macOS Keychain, and recent post-restart runtime checks show
+  zero scoped Slack delivery failures.
 - Policy-based runtime overrides are now supported through an optional config file.
 - A local doctor command is available for operator checks.
 - The repo now also includes a sample policy config, a smoke command, and a log-retention command.
@@ -19,12 +19,17 @@ resolve before calling the runtime fully clean.
   config into the live config path.
 - Runtime wiring now has repo-owned LaunchAgent and hook templates under `ops/`.
 - A compact local status command is available for the day-to-day runtime view.
+- A compact local inbox command is available for recent coordination intent: attention,
+  waiting/blocked, ready, completed, and noisy producers.
 - A local logs command is available for recent event and daemon log inspection, including accepted
   versus rejected `/events` counts from the visible daemon tail.
 - A local burn-in command is available for recent accepted/rejected event counts and repeated
   event signatures, with validation-error summaries scoped to the latest visible daemon start.
   Burn-in now reports health failures separately from repeated-event noise candidates and includes
   Slack-eligible volume by source/level. Recent Slack delivery failures now degrade burn-in health.
+- Explicit delivery checks are available through `notification-hub delivery-check` and the
+  `verify-runtime --verify-slack` / `--verify-push` flags, so Slack and push transport can be
+  tested intentionally without making default verification noisy.
 - A local explain command can preview classification, routing, and delivery without sending anything.
 - A local policy-check command can audit the ruleset for overlaps, shadowing, and no-op rules,
   and now suggests likely fixes for each warning.
@@ -87,6 +92,10 @@ resolve before calling the runtime fully clean.
   source/project/text/level/window instead of relying only on hard-coded producer behavior.
 - Added Slack delivery failure detection to daemon log summaries so `logs`, `burn-in`,
   `verify-runtime`, and `status` no longer treat a configured webhook as proof of working delivery.
+- Added opt-in Slack/push delivery verification for operator-requested transport checks.
+- Added optional event `intent` and deterministic intent inference so the hub can group recent
+  work by coordination state instead of only by notification level.
+- Added `notification-hub inbox` as the first operator-facing coordination view.
 
 ## Verified Baseline
 
@@ -100,9 +109,11 @@ uv run --frozen pyright
 curl http://127.0.0.1:9199/health/details
 uv run --frozen notification-hub-doctor
 uv run --frozen notification-hub status
+uv run --frozen notification-hub inbox
 uv run --frozen notification-hub logs
 uv run --frozen notification-hub burn-in --minutes 10
 uv run --frozen notification-hub verify-runtime
+uv run --frozen notification-hub delivery-check --slack
 uv run --frozen notification-hub-policy-check
 uv run --frozen notification-hub-explain --source codex --level info --title "Test" --body "Session complete"
 uv run --frozen notification-hub smoke
@@ -118,12 +129,15 @@ Expected current outcome:
 - `notification-hub-doctor`: `status: ok`
 - `notification-hub status`: compact read-only runtime summary; degrades when recent Slack delivery
   failures are present
+- `notification-hub inbox`: compact recent coordination view grouped by intent
 - `notification-hub logs`: `status: ok` with recent event and daemon log tails, including Slack
   delivery failure counts
 - `notification-hub burn-in`: top-level command status plus nested health counters, repeated-event
   noise candidates, Slack-eligible event volume, and Slack delivery failure counts
 - `notification-hub verify-runtime`: read-only by default; degrades when doctor, policy, runtime
-  wiring, or recent burn-in health is degraded
+  wiring, recent burn-in health, or an explicitly requested delivery check is degraded
+- `notification-hub delivery-check --slack` / `--push`: sends one explicit transport-check
+  notification only when requested
 - `notification-hub-policy-check`: `status: ok` or `warn`, depending on the active policy file,
   plus warning-specific fix suggestions when issues are found
 - `notification-hub-explain`: returns a non-mutating classification/routing/delivery preview
@@ -177,8 +191,8 @@ It is not part of normal day-to-day work.
 
 Start future work from `main`, keep using the frozen verification commands, and treat the repo-owned
 runtime templates as the source of truth for live launcher and hook wiring.
-The next work here should investigate current Slack transport failures, then tune accepted-event
-noise with a live policy config before moving into new coordination features.
+The next work here should decide which external coordination layer gets the first bridge: `bridge-db`
+for durable state, `personal-ops` for operator action, or a small local UI for scanning the inbox.
 
 ## Optional Follow-Up
 

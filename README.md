@@ -47,11 +47,16 @@ uv run notification-hub-doctor --json
 uv run notification-hub smoke
 uv run notification-hub status
 uv run notification-hub-status --json
+uv run notification-hub inbox
+uv run notification-hub-inbox --json
 uv run notification-hub logs
 uv run notification-hub-logs --json
 uv run notification-hub burn-in --minutes 10
 uv run notification-hub-burn-in --json
 uv run notification-hub verify-runtime
+uv run notification-hub verify-runtime --verify-slack
+uv run notification-hub delivery-check --slack
+uv run notification-hub-delivery-check --json --slack
 uv run notification-hub-verify-runtime --json
 uv run notification-hub policy-check
 uv run notification-hub explain --source codex --level info --title "Test" --body "Approval needed"
@@ -64,15 +69,20 @@ Slack Keychain setup, and policy-config load status.
 The smoke command posts a harmless `info` event and verifies it lands in the live JSONL log.
 The status command shows the compact day-to-day runtime view and suggests the next repair action
 when something is degraded, including recent Slack delivery failures found in daemon logs.
+The inbox command groups recent events by coordination intent so attention, blocked/waiting work,
+ready work, completions, and noisy producers are easy to scan.
 The logs command shows recent stored events, daemon stdout/stderr tails, and a summary of accepted
 versus rejected `/events` posts plus Slack delivery failures without changing local runtime state.
 The burn-in command summarizes recent accepted/rejected event posts and repeated event signatures
 so noisy producers are easy to spot. Validation-error counts are scoped to the latest visible daemon
 start so fixed pre-restart errors do not keep appearing as current burn-in failures. Recent Slack
 delivery failures now degrade burn-in health so configured-but-broken delivery does not look clean.
-The verify-runtime command combines doctor, policy-check, `/health/details`, and runtime wiring
-checks with recent burn-in health into one read-only report by default. Pass `--include-smoke` when
-you intentionally want it to post a harmless smoke event too.
+The verify-runtime command combines doctor, policy-check, `/health/details`, runtime wiring checks,
+and recent burn-in health into one read-only report by default. Pass `--include-smoke` when you
+intentionally want it to post a harmless smoke event too. Pass `--verify-slack` or `--verify-push`
+when you intentionally want to send one real delivery-check notification through that channel.
+The delivery-check command runs the same explicit transport checks directly without the rest of
+the runtime report.
 The policy-check command inspects the current policy config for overlapping keywords, shadowed
 routing rules, and no-op rules before they cause confusing behavior, and now also suggests likely
 fixes for each warning it reports.
@@ -90,6 +100,10 @@ Accepted event sources are `codex`, `cc`, `claude_ai`, `bridge_watcher`, `person
 and `notion-os`.
 Accepted levels are `urgent`, `normal`, and `info`; incoming `warn` and `warning` aliases are
 normalized to `normal`.
+Events may optionally include an `intent` value for coordination semantics. Supported intents are
+`needs_attention`, `blocked`, `waiting_on_user`, `ready_to_review`, `ready_to_merge`,
+`handoff_created`, `automation_failed`, `completed`, and `informational`. When omitted, the inbox
+uses deterministic title/body/source-level rules to infer intent.
 Exact repeated producer bursts that match configured noise rules are accepted by the API but
 suppressed before JSONL storage and notification delivery when they repeat inside the configured
 noise window. Without a live policy config, the built-in default keeps suppressing repeated
@@ -226,8 +240,10 @@ curl http://127.0.0.1:9199/health
 curl http://127.0.0.1:9199/health/details
 uv run --frozen notification-hub-doctor
 uv run --frozen notification-hub status
+uv run --frozen notification-hub inbox
 uv run --frozen notification-hub logs
 uv run --frozen notification-hub verify-runtime
+uv run --frozen notification-hub delivery-check --slack
 uv run --frozen notification-hub policy-check
 uv run --frozen notification-hub explain --source codex --level info --title "Test" --body "Approval needed"
 uv run --frozen notification-hub smoke
@@ -241,6 +257,8 @@ Runtime change checklist:
   behavior.
 - Use `notification-hub verify-runtime --include-smoke` only when you intentionally want a real
   POST-to-log smoke event.
+- Use `notification-hub verify-runtime --verify-slack`, `--verify-push`, or
+  `notification-hub delivery-check` only when you intentionally want a real delivery notification.
 - Confirm GitHub Actions passes after pushing to `main`.
 
 ## Runtime Notes

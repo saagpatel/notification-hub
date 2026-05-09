@@ -22,6 +22,7 @@ from notification_hub.models import StoredEvent
 from notification_hub.operations import (
     bootstrap_policy_config,
     run_burn_in,
+    run_inbox,
     run_logs,
     run_policy_check,
     run_retention,
@@ -58,6 +59,85 @@ def test_smoke_check_reports_http_failure() -> None:
     assert report["status"] == "degraded"
     assert report["response_status"] is None
     assert report["event_id"] is None
+
+
+def test_inbox_groups_recent_events_by_coordination_intent() -> None:
+    events = [
+        StoredEvent(
+            source="codex",
+            level="urgent",
+            title="Approval Requested",
+            body="Approval needed before merge",
+            project="notification-hub",
+        ),
+        StoredEvent(
+            source="codex",
+            level="normal",
+            title="Review ready",
+            body="Ready to review implementation",
+            project="notification-hub",
+        ),
+        StoredEvent(
+            source="codex",
+            level="normal",
+            title="Codex finished a turn",
+            body="A Codex turn completed.",
+            project="notification-hub",
+        ),
+    ]
+
+    with (
+        patch("notification_hub.operations.read_jsonl", return_value=events),
+        patch(
+            "notification_hub.operations.run_burn_in",
+            return_value={
+                "status": "ok",
+                "minutes": 1440,
+                "events_seen": 3,
+                "accepted_event_posts": 3,
+                "rejected_event_posts": 0,
+                "validation_error_count": 0,
+                "health": {
+                    "accepted_event_posts": 3,
+                    "rejected_event_posts": 0,
+                    "validation_error_count": 0,
+                    "slack_delivery_failure_count": 0,
+                    "status": "ok",
+                },
+                "noise_candidates": [
+                    {
+                        "count": 2,
+                        "source": "codex",
+                        "project": "notification-hub",
+                        "level": "normal",
+                        "title": "Codex finished a turn",
+                        "body": "A Codex turn completed.",
+                    }
+                ],
+                "repeated_signatures": [],
+                "slack_eligible_events": 2,
+                "slack_volume": [],
+                "daemon_summary": {
+                    "access_status_counts": {},
+                    "accepted_event_posts": 0,
+                    "rejected_event_posts": 0,
+                    "validation_error_count": 0,
+                    "recent_validation_errors": [],
+                    "slack_delivery_failure_count": 0,
+                    "recent_slack_delivery_failures": [],
+                },
+                "error": None,
+            },
+        ),
+    ):
+        report = run_inbox(hours=24, limit=5)
+
+    assert report["status"] == "ok"
+    assert report["events_seen"] == 3
+    assert report["waiting_or_blocked"][0]["intent"] == "waiting_on_user"
+    assert report["ready"][0]["intent"] == "ready_to_review"
+    assert report["completed"][0]["intent"] == "completed"
+    assert report["noise_candidates"][0]["title"] == "Codex finished a turn"
 
 
 def test_logs_report_tails_events_and_daemon_logs(

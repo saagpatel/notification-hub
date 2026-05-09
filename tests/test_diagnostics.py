@@ -12,8 +12,10 @@ from pytest import MonkeyPatch
 from notification_hub.cli import (
     burn_in_main,
     bootstrap_config_main,
+    delivery_check_main,
     doctor_main,
     explain_main,
+    inbox_main,
     logs_main,
     main,
     policy_check_main,
@@ -28,7 +30,7 @@ from notification_hub.diagnostics import (
     collect_runtime_readiness,
     collect_runtime_wiring,
 )
-from notification_hub.operations import run_status, run_verify_runtime
+from notification_hub.operations import run_delivery_check, run_status, run_verify_runtime
 
 
 def _burn_in_report(
@@ -64,6 +66,23 @@ def _burn_in_report(
             "recent_slack_delivery_failures": [],
         },
         "error": None,
+    }
+
+
+def _delivery_check_report(
+    *,
+    status: str = "ok",
+    verify_slack: bool = False,
+    verify_push: bool = False,
+) -> dict[str, object]:
+    return {
+        "status": status,
+        "verify_slack": verify_slack,
+        "verify_push": verify_push,
+        "slack_ok": status == "ok" if verify_slack else None,
+        "push_ok": status == "ok" if verify_push else None,
+        "event_id": "delivery123",
+        "error": None if status == "ok" else "delivery failed",
     }
 
 
@@ -278,6 +297,7 @@ def test_run_status_summarizes_healthy_runtime() -> None:
                 "runtime_wiring_current": True,
                 "recent_runtime_health_ok": True,
                 "smoke_ok": True,
+                "delivery_check_ok": True,
             },
             "runtime_wiring": {"launch_agent_matches_template": True},
             "doctor": {
@@ -309,6 +329,7 @@ def test_run_status_summarizes_healthy_runtime() -> None:
                 "suggestions": [],
             },
             "burn_in": _burn_in_report(),
+            "delivery_check": None,
             "smoke": None,
         },
     ):
@@ -348,6 +369,7 @@ def test_run_status_suggests_runtime_wiring_repair() -> None:
                 "runtime_wiring_current": False,
                 "recent_runtime_health_ok": True,
                 "smoke_ok": True,
+                "delivery_check_ok": True,
             },
             "runtime_wiring": {"launch_agent_matches_template": False},
             "doctor": {
@@ -369,6 +391,7 @@ def test_run_status_suggests_runtime_wiring_repair() -> None:
                 "suggestions": [],
             },
             "burn_in": _burn_in_report(),
+            "delivery_check": None,
             "smoke": None,
         },
     ):
@@ -394,6 +417,7 @@ def test_run_status_suggests_slack_delivery_investigation() -> None:
                 "runtime_wiring_current": True,
                 "recent_runtime_health_ok": False,
                 "smoke_ok": True,
+                "delivery_check_ok": True,
             },
             "runtime_wiring": {"launch_agent_matches_template": True},
             "doctor": {
@@ -530,6 +554,7 @@ def test_run_verify_runtime_is_read_only_by_default() -> None:
             },
         ),
         patch("notification_hub.operations.run_burn_in", return_value=_burn_in_report()),
+        patch("notification_hub.operations.run_delivery_check") as mock_delivery_check,
         patch("notification_hub.operations.run_smoke_check") as mock_smoke,
     ):
         report = run_verify_runtime()
@@ -545,7 +570,10 @@ def test_run_verify_runtime_is_read_only_by_default() -> None:
         "runtime_wiring_current": True,
         "recent_runtime_health_ok": True,
         "smoke_ok": True,
+        "delivery_check_ok": True,
     }
+    assert report["delivery_check"] is None
+    mock_delivery_check.assert_not_called()
     mock_smoke.assert_not_called()
 
 
@@ -575,11 +603,13 @@ def test_run_verify_runtime_reports_degraded_policy() -> None:
             },
         ),
         patch("notification_hub.operations.run_burn_in", return_value=_burn_in_report()),
+        patch("notification_hub.operations.run_delivery_check") as mock_delivery_check,
     ):
         report = run_verify_runtime()
 
     assert report["status"] == "degraded"
     assert report["checks"]["policy_check_ok"] is False
+    mock_delivery_check.assert_not_called()
 
 
 def test_run_verify_runtime_reports_degraded_recent_runtime_health() -> None:
@@ -611,12 +641,14 @@ def test_run_verify_runtime_reports_degraded_recent_runtime_health() -> None:
             "notification_hub.operations.run_burn_in",
             return_value=_burn_in_report(status="degraded", slack_delivery_failure_count=2),
         ),
+        patch("notification_hub.operations.run_delivery_check") as mock_delivery_check,
     ):
         report = run_verify_runtime()
 
     assert report["status"] == "degraded"
     assert report["checks"]["recent_runtime_health_ok"] is False
     assert report["burn_in"]["health"]["slack_delivery_failure_count"] == 2
+    mock_delivery_check.assert_not_called()
 
 
 def test_run_verify_runtime_smoke_is_opt_in() -> None:
@@ -645,6 +677,7 @@ def test_run_verify_runtime_smoke_is_opt_in() -> None:
             },
         ),
         patch("notification_hub.operations.run_burn_in", return_value=_burn_in_report()),
+        patch("notification_hub.operations.run_delivery_check") as mock_delivery_check,
         patch(
             "notification_hub.operations.run_smoke_check",
             return_value={
@@ -664,7 +697,66 @@ def test_run_verify_runtime_smoke_is_opt_in() -> None:
     assert report["read_only"] is False
     assert report["include_smoke"] is True
     assert report["checks"]["smoke_ok"] is False
+    mock_delivery_check.assert_not_called()
     mock_smoke.assert_called_once_with()
+
+
+def test_run_verify_runtime_delivery_check_is_opt_in() -> None:
+    with (
+        patch(
+            "notification_hub.operations.collect_doctor_report",
+            return_value={
+                "status": "ok",
+                "checks": {"runtime_wiring_current": True},
+                "local_api": {"reachable": True, "url": "http://127.0.0.1:9199/health/details"},
+                "runtime_wiring": {"launch_agent_matches_template": True},
+            },
+        ),
+        patch(
+            "notification_hub.operations.run_policy_check",
+            return_value={
+                "status": "ok",
+                "config_path": "/tmp/config.toml",
+                "config_found": True,
+                "example_path": "/tmp/example.toml",
+                "load_error": None,
+                "warning_count": 0,
+                "suggestion_count": 0,
+                "warnings": [],
+                "suggestions": [],
+            },
+        ),
+        patch("notification_hub.operations.run_burn_in", return_value=_burn_in_report()),
+        patch(
+            "notification_hub.operations.run_delivery_check",
+            return_value=_delivery_check_report(status="degraded", verify_slack=True),
+        ) as mock_delivery_check,
+    ):
+        report = run_verify_runtime(verify_slack=True)
+
+    assert report["status"] == "degraded"
+    assert report["read_only"] is False
+    assert report["checks"]["delivery_check_ok"] is False
+    assert report["delivery_check"] is not None
+    mock_delivery_check.assert_called_once_with(verify_slack=True, verify_push=False)
+
+
+def test_run_delivery_check_reports_transport_results() -> None:
+    with (
+        patch("notification_hub.operations.send_slack", return_value=True) as mock_slack,
+        patch("notification_hub.operations.send_push", return_value=False) as mock_push,
+    ):
+        report = run_delivery_check(verify_slack=True, verify_push=True)
+
+    assert report["status"] == "degraded"
+    assert report["verify_slack"] is True
+    assert report["verify_push"] is True
+    assert report["slack_ok"] is True
+    assert report["push_ok"] is False
+    assert report["event_id"] is not None
+    assert report["error"] == "Push delivery check failed"
+    mock_slack.assert_called_once()
+    mock_push.assert_called_once()
 
 
 def test_cli_verify_runtime_json_output(capsys: CaptureFixture[str]) -> None:
@@ -682,6 +774,7 @@ def test_cli_verify_runtime_json_output(capsys: CaptureFixture[str]) -> None:
                 "runtime_wiring_current": True,
                 "recent_runtime_health_ok": True,
                 "smoke_ok": True,
+                "delivery_check_ok": True,
             },
             "runtime_wiring": {"launch_agent_matches_template": True},
             "doctor": {"status": "ok"},
@@ -697,6 +790,7 @@ def test_cli_verify_runtime_json_output(capsys: CaptureFixture[str]) -> None:
                 "suggestions": [],
             },
             "burn_in": _burn_in_report(),
+            "delivery_check": None,
             "smoke": None,
         },
     ) as mock_verify:
@@ -705,7 +799,112 @@ def test_cli_verify_runtime_json_output(capsys: CaptureFixture[str]) -> None:
     captured = capsys.readouterr()
     assert exit_code == 0
     assert '"read_only": true' in captured.out
-    mock_verify.assert_called_once_with(include_smoke=False)
+    mock_verify.assert_called_once_with(include_smoke=False, verify_slack=False, verify_push=False)
+
+
+def test_cli_verify_runtime_forwards_delivery_flags(capsys: CaptureFixture[str]) -> None:
+    with patch(
+        "notification_hub.cli.run_verify_runtime",
+        return_value={
+            "status": "ok",
+            "read_only": False,
+            "include_smoke": False,
+            "health_url": "http://127.0.0.1:9199/health/details",
+            "checks": {
+                "doctor_ok": True,
+                "policy_check_ok": True,
+                "health_details_reachable": True,
+                "runtime_wiring_current": True,
+                "recent_runtime_health_ok": True,
+                "smoke_ok": True,
+                "delivery_check_ok": True,
+            },
+            "runtime_wiring": {"launch_agent_matches_template": True},
+            "doctor": {"status": "ok"},
+            "policy_check": {
+                "status": "ok",
+                "config_path": "/tmp/config.toml",
+                "config_found": True,
+                "example_path": "/tmp/example.toml",
+                "load_error": None,
+                "warning_count": 0,
+                "suggestion_count": 0,
+                "warnings": [],
+                "suggestions": [],
+            },
+            "burn_in": _burn_in_report(),
+            "delivery_check": _delivery_check_report(verify_slack=True, verify_push=True),
+            "smoke": None,
+        },
+    ) as mock_verify:
+        exit_code = main(["verify-runtime", "--json", "--verify-slack", "--verify-push"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert '"delivery_check"' in captured.out
+    mock_verify.assert_called_once_with(include_smoke=False, verify_slack=True, verify_push=True)
+
+
+def test_cli_delivery_check_requires_channel(capsys: CaptureFixture[str]) -> None:
+    with patch("notification_hub.cli.run_delivery_check") as mock_delivery_check:
+        try:
+            main(["delivery-check"])
+        except SystemExit as exc:
+            exit_code = exc.code
+        else:
+            exit_code = 0
+
+    output = capsys.readouterr()
+    assert exit_code == 2
+    assert "requires --slack and/or --push" in output.err
+    mock_delivery_check.assert_not_called()
+
+
+def test_cli_delivery_check_json_output(capsys: CaptureFixture[str]) -> None:
+    with patch(
+        "notification_hub.cli.run_delivery_check",
+        return_value=_delivery_check_report(verify_slack=True),
+    ) as mock_delivery_check:
+        exit_code = main(["delivery-check", "--json", "--slack"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert '"slack_ok": true' in captured.out
+    mock_delivery_check.assert_called_once_with(verify_slack=True, verify_push=False)
+
+
+def test_cli_inbox_json_output(capsys: CaptureFixture[str]) -> None:
+    with patch(
+        "notification_hub.cli.run_inbox",
+        return_value={
+            "status": "ok",
+            "hours": 12,
+            "events_seen": 1,
+            "needs_attention": [],
+            "waiting_or_blocked": [],
+            "ready": [
+                {
+                    "event_id": "abc123",
+                    "timestamp": "2026-05-09T00:00:00+00:00",
+                    "source": "codex",
+                    "project": "notification-hub",
+                    "level": "normal",
+                    "intent": "ready_to_review",
+                    "title": "Review ready",
+                    "body": "Ready to review",
+                }
+            ],
+            "completed": [],
+            "noise_candidates": [],
+            "error": None,
+        },
+    ) as mock_inbox:
+        exit_code = main(["inbox", "--json", "--hours", "12", "--limit", "3"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert '"ready_to_review"' in captured.out
+    mock_inbox.assert_called_once_with(hours=12, limit=3)
 
 
 def test_cli_policy_check_json_output(capsys: CaptureFixture[str]) -> None:
@@ -1046,6 +1245,7 @@ def test_verify_runtime_wrapper_forwards_flags(capsys: CaptureFixture[str]) -> N
                 "runtime_wiring_current": True,
                 "recent_runtime_health_ok": True,
                 "smoke_ok": True,
+                "delivery_check_ok": True,
             },
             "runtime_wiring": {"launch_agent_matches_template": True},
             "doctor": {"status": "ok"},
@@ -1061,6 +1261,7 @@ def test_verify_runtime_wrapper_forwards_flags(capsys: CaptureFixture[str]) -> N
                 "suggestions": [],
             },
             "burn_in": _burn_in_report(),
+            "delivery_check": None,
             "smoke": {
                 "status": "ok",
                 "health_url": "http://127.0.0.1:9199/health/details",
@@ -1077,7 +1278,43 @@ def test_verify_runtime_wrapper_forwards_flags(capsys: CaptureFixture[str]) -> N
     output = capsys.readouterr()
     assert exit_code == 0
     assert '"include_smoke": true' in output.out
-    mock_verify.assert_called_once_with(include_smoke=True)
+    mock_verify.assert_called_once_with(include_smoke=True, verify_slack=False, verify_push=False)
+
+
+def test_delivery_check_wrapper_forwards_flags(capsys: CaptureFixture[str]) -> None:
+    with patch(
+        "notification_hub.cli.run_delivery_check",
+        return_value=_delivery_check_report(verify_slack=True, verify_push=True),
+    ) as mock_delivery_check:
+        exit_code = delivery_check_main(["--json", "--slack", "--push"])
+
+    output = capsys.readouterr()
+    assert exit_code == 0
+    assert '"verify_push": true' in output.out
+    mock_delivery_check.assert_called_once_with(verify_slack=True, verify_push=True)
+
+
+def test_inbox_wrapper_forwards_flags(capsys: CaptureFixture[str]) -> None:
+    with patch(
+        "notification_hub.cli.run_inbox",
+        return_value={
+            "status": "ok",
+            "hours": 6,
+            "events_seen": 0,
+            "needs_attention": [],
+            "waiting_or_blocked": [],
+            "ready": [],
+            "completed": [],
+            "noise_candidates": [],
+            "error": None,
+        },
+    ) as mock_inbox:
+        exit_code = inbox_main(["--json", "--hours", "6", "--limit", "2"])
+
+    output = capsys.readouterr()
+    assert exit_code == 0
+    assert '"events_seen": 0' in output.out
+    mock_inbox.assert_called_once_with(hours=6, limit=2)
 
 
 def test_policy_check_wrapper_forwards_flags(capsys: CaptureFixture[str]) -> None:
