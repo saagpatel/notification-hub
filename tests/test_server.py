@@ -289,6 +289,72 @@ async def test_review_validate_package_endpoint_validates_latest_package(client:
     mock_validate.assert_called_once()
 
 
+async def test_review_packages_endpoint_lists_saved_packages(client: AsyncClient) -> None:
+    with patch(
+        "notification_hub.server.list_action_review_packages",
+        return_value=[
+            {
+                "path": "/tmp/actions.json",
+                "name": "actions.json",
+                "modified_at": "2026-05-09T00:00:00+00:00",
+                "size_bytes": 100,
+                "validation_status": "ok",
+                "action_count": 1,
+                "valid_action_count": 1,
+                "error_count": 0,
+            }
+        ],
+    ) as mock_packages:
+        resp = await client.get("/review/packages?limit=3")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert data["applied"] is False
+    assert data["packages"][0]["validation_status"] == "ok"
+    mock_packages.assert_called_once_with(limit=3)
+
+
+async def test_review_validate_package_uses_newest_saved_package(client: AsyncClient) -> None:
+    server_mod.reset_review_package_state()
+    with patch(
+        "notification_hub.server.list_action_review_packages",
+        return_value=[
+            {
+                "path": "/tmp/newest-actions.json",
+                "name": "newest-actions.json",
+                "modified_at": "2026-05-09T00:00:00+00:00",
+                "size_bytes": 100,
+                "validation_status": "ok",
+                "action_count": 1,
+                "valid_action_count": 1,
+                "error_count": 0,
+            }
+        ],
+    ), patch(
+        "notification_hub.server.validate_action_package",
+        return_value={
+            "status": "ok",
+            "path": "/tmp/newest-actions.json",
+            "schema_version": "notification-hub.personal_ops_action_export.v1",
+            "action_count": 1,
+            "valid_action_count": 1,
+            "warning_count": 0,
+            "error_count": 0,
+            "warnings": [],
+            "errors": [],
+        },
+    ):
+        resp = await client.post("/review/validate-package")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert data["review_package"]["path"] == "/tmp/newest-actions.json"
+    assert data["review_package"]["validation_status"] == "ok"
+    assert server_mod.get_latest_review_package_path() == "/tmp/newest-actions.json"
+
+
 async def test_create_event_valid(client: AsyncClient) -> None:
     payload = {
         "source": "cc",

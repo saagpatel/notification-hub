@@ -147,6 +147,17 @@ class ActionPackageValidationReport(TypedDict):
     errors: list[str]
 
 
+class ActionReviewPackageReport(TypedDict):
+    path: str
+    name: str
+    modified_at: str
+    size_bytes: int
+    validation_status: str
+    action_count: int
+    valid_action_count: int
+    error_count: int
+
+
 class PersonalOpsImportReport(TypedDict):
     status: str
     path: str
@@ -602,6 +613,44 @@ def _write_action_review_package(
         "path": str(target_path),
         "error": None,
     }
+
+
+def list_action_review_packages(
+    *,
+    review_dir: Path | None = None,
+    limit: int = 10,
+) -> list[ActionReviewPackageReport]:
+    """List recent saved action review packages without importing or applying them."""
+    target_dir = review_dir or ACTION_EXPORT_DIR
+    try:
+        candidates = sorted(
+            target_dir.glob("personal-ops-actions-*.json"),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+    except OSError:
+        return []
+
+    reports: list[ActionReviewPackageReport] = []
+    for path in candidates[: max(limit, 1)]:
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        validation = validate_action_package(path)
+        reports.append(
+            {
+                "path": str(path),
+                "name": path.name,
+                "modified_at": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
+                "size_bytes": stat.st_size,
+                "validation_status": validation["status"],
+                "action_count": validation["action_count"],
+                "valid_action_count": validation["valid_action_count"],
+                "error_count": validation["error_count"],
+            }
+        )
+    return reports
 
 
 def _require_str(value: object, field: str, errors: list[str]) -> str | None:

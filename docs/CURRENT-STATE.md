@@ -32,8 +32,8 @@ tuning pass.
   gate for any future apply behavior.
 - A localhost-only review page is available at `/review` on the daemon. It shows runtime health,
   inbox rollups, action proposals, and trust state without applying anything.
-- The review page can stage a local review package and validate the latest staged package while
-  keeping import/apply behavior disabled.
+- The review page can stage a local review package, list recent saved review packages, and validate
+  the latest staged or saved package while keeping import/apply behavior disabled.
 - A local logs command is available for recent event and daemon log inspection, including accepted
   versus rejected `/events` counts from the visible daemon tail.
 - A local burn-in command is available for recent accepted/rejected event counts and repeated
@@ -127,6 +127,8 @@ tuning pass.
 - Added the first local review UI at `GET /review`, backed by read-only `GET /review/data`.
 - Added review UI controls backed by `POST /review/save-package` and
   `POST /review/validate-package`; both preserve `applied: false`.
+- Added `GET /review/packages` and recent package display so saved review packages remain visible
+  across daemon restarts.
 
 ## Verified Baseline
 
@@ -149,6 +151,7 @@ uv run --frozen notification-hub validate-action-package path/to/actions.json
 uv run --frozen notification-hub personal-ops-import path/to/actions.json
 uv run --frozen notification-hub logs
 curl http://127.0.0.1:9199/review
+curl http://127.0.0.1:9199/review/packages
 uv run --frozen notification-hub burn-in --minutes 10
 uv run --frozen notification-hub verify-runtime
 uv run --frozen notification-hub delivery-check --slack
@@ -181,6 +184,8 @@ Expected current outcome:
   state
 - `/review/save-package` and `/review/validate-package`: review UI controls for staging and
   validating packages without importing or applying them
+- `/review/packages`: lists recent saved review packages and validation summaries without importing
+  or applying them
 - `notification-hub logs`: `status: ok` with recent event and daemon log tails, including Slack
   delivery failure counts
 - `notification-hub burn-in`: top-level command status plus nested health counters, repeated-event
@@ -242,8 +247,8 @@ It is not part of normal day-to-day work.
 
 Start future work from `main`, keep using the frozen verification commands, and treat the repo-owned
 runtime templates as the source of truth for live launcher and hook wiring.
-The next work here should decide whether the first real apply target should be a personal-ops inbox
-item or whether the review UI should remain the only consumption surface for another burn-in pass.
+The next work here should run a short burn-in on the review-only package history, then decide whether
+the first real apply target should be a personal-ops inbox item.
 
 ## Optional Follow-Up
 

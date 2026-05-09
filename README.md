@@ -139,8 +139,9 @@ approval, or send path is touched.
 The local review surface is available at `http://127.0.0.1:9199/review` while the daemon is running.
 It shows runtime state, inbox rollups, action proposals, and the current trust boundary without
 mutating local state.
-The review page can also stage a review package and validate the latest staged package. These
-controls still do not import, apply, approve, send, or mutate personal-ops.
+The review page can also stage a review package, show recent saved review packages, and validate the
+latest staged or saved package. These controls still do not import, apply, approve, send, or mutate
+personal-ops.
 Coordination snapshots target bridge-db's `codex` snapshot shape: the emitted
 `bridge_snapshot` object can be passed as snapshot data after operator review, or saved directly
 with the explicit `--save-bridge-db` flag.
@@ -289,6 +290,7 @@ uv run --frozen notification-hub validate-action-package path/to/actions.json
 uv run --frozen notification-hub personal-ops-import path/to/actions.json
 uv run --frozen notification-hub logs
 curl http://127.0.0.1:9199/review
+curl http://127.0.0.1:9199/review/packages
 uv run --frozen notification-hub verify-runtime
 uv run --frozen notification-hub delivery-check --slack
 uv run --frozen notification-hub policy-check

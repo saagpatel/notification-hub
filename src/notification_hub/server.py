@@ -18,6 +18,7 @@ from notification_hub.config import BRIDGE_FILE, get_policy_config
 from notification_hub.diagnostics import collect_runtime_readiness
 from notification_hub.models import Event, EventResponse
 from notification_hub.operations import (
+    list_action_review_packages,
     run_inbox,
     run_personal_ops_action_export,
     run_retention,
@@ -314,6 +315,10 @@ REVIEW_HTML = """<!doctype html>
         <h2>Review Package</h2>
         <ul id="package"></ul>
       </section>
+      <section>
+        <h2>Recent Packages</h2>
+        <ul id="packages"></ul>
+      </section>
     </div>
   </main>
   <script>
@@ -323,6 +328,7 @@ REVIEW_HTML = """<!doctype html>
     const attention = document.getElementById("attention");
     const trust = document.getElementById("trust");
     const packageState = document.getElementById("package");
+    const packages = document.getElementById("packages");
 
     function item(html) {
       const li = document.createElement("li");
@@ -377,6 +383,7 @@ REVIEW_HTML = """<!doctype html>
         item(`<div class="next">${esc(data.trust.next_action)}</div>`)
       );
       renderPackage(data.review_package);
+      await loadPackages();
     }
     function renderPackage(state) {
       packageState.replaceChildren(
@@ -390,6 +397,14 @@ REVIEW_HTML = """<!doctype html>
       const data = await res.json();
       await load();
       return data;
+    }
+    async function loadPackages() {
+      const res = await fetch("/review/packages?limit=6");
+      const data = await res.json();
+      renderList(packages, data.packages, p => item(`
+        <div class="line"><span class="title">${esc(p.name)}</span><span class="meta">${esc(p.validation_status)} / ${esc(p.valid_action_count)} valid</span></div>
+        <div class="next">${esc(p.path)}</div>
+      `), "No saved review packages.");
     }
     document.getElementById("refresh").addEventListener("click", load);
     document.getElementById("savePackage").addEventListener("click", () => post("/review/save-package"));
@@ -545,11 +560,27 @@ async def review_save_package(hours: int = 2, limit: int = 6) -> dict[str, objec
     }
 
 
+@app.get("/review/packages")
+async def review_packages(limit: int = 10) -> dict[str, object]:
+    """List recent saved review packages without importing or applying them."""
+    return {
+        "status": "ok",
+        "packages": list_action_review_packages(limit=max(limit, 1)),
+        "applied": False,
+    }
+
+
 @app.post("/review/validate-package")
 async def review_validate_package() -> dict[str, object]:
     """Validate the latest staged review package without importing or applying it."""
     global _latest_review_package_validation_status
     package_path = get_latest_review_package_path()
+    if package_path is None:
+        packages = list_action_review_packages(limit=1)
+        if packages:
+            package_path = packages[0]["path"]
+            global _latest_review_package_path
+            _latest_review_package_path = package_path
     if package_path is None:
         _latest_review_package_validation_status = "not_found"
         return {

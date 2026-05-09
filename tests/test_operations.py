@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -22,6 +23,7 @@ from notification_hub.config import (
 from notification_hub.models import StoredEvent
 from notification_hub.operations import (
     bootstrap_policy_config,
+    list_action_review_packages,
     run_burn_in,
     run_coordination_snapshot,
     run_inbox,
@@ -370,6 +372,43 @@ def test_validate_action_package_accepts_saved_review_package(tmp_path: Path) ->
     assert report["action_count"] == 1
     assert report["valid_action_count"] == 1
     assert report["error_count"] == 0
+
+
+def test_list_action_review_packages_reports_recent_valid_packages(tmp_path: Path) -> None:
+    older_package = tmp_path / "personal-ops-actions-20260509-100000.json"
+    newer_package = tmp_path / "personal-ops-actions-20260509-100100.json"
+    payload = {
+        "schema_version": "notification-hub.personal_ops_action_export.v1",
+        "actions": [
+            {
+                "action_id": "notification-hub:personal-ops:mail:waiting_on_user:approval-requested",
+                "source": "personal-ops",
+                "project": "mail",
+                "intent": "waiting_on_user",
+                "priority": "high",
+                "state": "waiting",
+                "title": "Approval Requested",
+                "summary": "2 repeated personal-ops events",
+                "suggested_next_action": "Review the waiting item.",
+                "evidence_event_id": "abc123",
+                "evidence_timestamp": "2026-05-09T00:00:00+00:00",
+                "count": 2,
+            }
+        ],
+    }
+    older_package.write_text(json.dumps(payload), encoding="utf-8")
+    newer_package.write_text(json.dumps(payload), encoding="utf-8")
+    older_time = 1_700_000_000
+    newer_time = 1_700_000_100
+    os.utime(older_package, (older_time, older_time))
+    os.utime(newer_package, (newer_time, newer_time))
+
+    packages = list_action_review_packages(review_dir=tmp_path, limit=1)
+
+    assert len(packages) == 1
+    assert packages[0]["name"] == newer_package.name
+    assert packages[0]["validation_status"] == "ok"
+    assert packages[0]["valid_action_count"] == 1
 
 
 def test_validate_action_package_rejects_invalid_action(tmp_path: Path) -> None:
