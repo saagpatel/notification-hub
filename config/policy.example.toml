@@ -40,6 +40,13 @@ window_minutes = 10
 
 [[noise.rules]]
 source = "personal-ops"
+project = "personal-ops"
+title_contains = "system needs attention"
+body_contains = "run personal-ops doctor"
+window_minutes = 30
+
+[[noise.rules]]
+source = "personal-ops"
 project = "mail"
 title_contains = "approval requested"
 body_contains = "test draft"

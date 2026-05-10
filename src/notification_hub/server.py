@@ -457,6 +457,7 @@ REVIEW_HTML = """<!doctype html>
             <option value="pending">Pending outcome</option>
             <option value="stale">Stale outcome</option>
             <option value="queued">Queued</option>
+            <option value="reviewed">Reviewed only</option>
             <option value="all">All</option>
             <option value="promoted">Promoted</option>
             <option value="resolved">Resolved</option>
@@ -669,6 +670,9 @@ REVIEW_HTML = """<!doctype html>
           ${warnBadge(`new ${review.new_count ?? 0}`, (review.new_count ?? 0) > 0)}
           ${warnBadge(`queued ${review.queued_count ?? 0}`, (review.queued_count ?? 0) > 0)}
           ${warnBadge(`promoted ${review.promoted_count ?? 0}`, (review.promoted_count ?? 0) > 0)}
+          ${badge(`reviewed-only ${review.reviewed_only_count ?? 0}`)}
+          ${badge(`resolved ${review.resolved_count ?? 0}`)}
+          ${badge(`closed ${review.ignored_count ?? 0}`)}
           ${badge(`handled ${review.handled_count ?? 0}`)}
         </div>
         <div class="next">${esc(review.summary || "")}</div>
@@ -1176,6 +1180,9 @@ REVIEW_HTML = """<!doctype html>
         if (filter === "queued") {
           return q.status === "queued" || q.status === "snoozed";
         }
+        if (filter === "reviewed") {
+          return q.status === "reviewed";
+        }
         if (filter === "resolved") {
           return q.status === "rejected" || q.status === "reviewed" || q.status === "superseded" || (q.status === "promoted" && !isPending(q));
         }
@@ -1192,7 +1199,7 @@ REVIEW_HTML = """<!doctype html>
         <div class="next">${esc(q.source_package_name)}${q.promotion_target_id ? " / " + esc(q.promotion_target_id) : ""}</div>
         <div class="next">Evidence: ${esc(q.evidence_event_id)}</div>
         <div class="button-row">
-          <button type="button" data-queue-id="${esc(q.queue_id)}" data-queue-status="reviewed">Reviewed</button>
+          <button type="button" data-queue-id="${esc(q.queue_id)}" data-queue-status="reviewed">Reviewed only</button>
           <button type="button" data-queue-id="${esc(q.queue_id)}" data-queue-status="promoted">Promote</button>
           <button type="button" data-queue-id="${esc(q.queue_id)}" data-queue-status="snoozed">Snooze</button>
           <button type="button" data-queue-id="${esc(q.queue_id)}" data-queue-status="rejected">Reject</button>
