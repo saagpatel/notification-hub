@@ -36,6 +36,7 @@ from notification_hub.operations import (
     run_operator_daily_state,
     run_operator_handoff_drill,
     run_operator_review_session,
+    run_policy_check,
     run_personal_ops_action_export,
     run_personal_ops_import_queue_health_check,
     run_personal_ops_import_stub,
@@ -392,6 +393,10 @@ REVIEW_HTML = """<!doctype html>
       <h2>Next Signal</h2>
       <ul id="nextSignal"></ul>
     </section>
+    <section class="focus">
+      <h2>Policy Drift</h2>
+      <ul id="policyDrift"></ul>
+    </section>
     <div class="grid">
       <section>
         <h2>Action Proposals</h2>
@@ -416,6 +421,10 @@ REVIEW_HTML = """<!doctype html>
       <section>
         <h2>Operator State</h2>
         <ul id="operatorState"></ul>
+      </section>
+      <section>
+        <h2>Latest Review Session</h2>
+        <ul id="latestReviewSession"></ul>
       </section>
       <section>
         <h2>Review Sessions</h2>
@@ -603,6 +612,7 @@ REVIEW_HTML = """<!doctype html>
       await loadBurnInReports();
       await loadImportQueue();
       await loadCoordinationConsole();
+      await loadPolicyDrift();
       await loadDismissals();
       await loadOperatorDailyState();
       await loadReviewSessionReports();
@@ -817,6 +827,23 @@ REVIEW_HTML = """<!doctype html>
       );
       await load();
     }
+    async function loadPolicyDrift() {
+      const res = await fetch("/review/policy-check");
+      const data = await res.json();
+      const drift = data.policy_drift || {};
+      const missing = drift.missing_sample_noise_rules || [];
+      policyDrift.replaceChildren(item(`
+        <div class="line"><span class="title">${esc(drift.status || "unknown")}</span><span class="meta">${esc(data.status || "unknown")}</span></div>
+        <div class="badge-row">
+          ${badge(`live ${drift.live_noise_rule_count ?? 0}`)}
+          ${badge(`sample ${drift.sample_noise_rule_count ?? 0}`)}
+          ${warnBadge(`missing ${drift.missing_sample_noise_rule_count ?? 0}`, (drift.missing_sample_noise_rule_count ?? 0) > 0)}
+          ${badge(`extra ${drift.extra_live_noise_rule_count ?? 0}`)}
+        </div>
+        <div class="next">${esc(drift.next_action || "")}</div>
+        ${missing.slice(0, 3).map(rule => `<div class="next"><strong>Missing</strong>: ${esc(JSON.stringify(rule))}</div>`).join("")}
+      `));
+    }
     async function loadDismissals() {
       const res = await fetch("/review/action-proposal-dismissals?limit=10");
       const data = await res.json();
@@ -895,6 +922,23 @@ REVIEW_HTML = """<!doctype html>
     async function loadReviewSessionReports() {
       const res = await fetch("/review/operator-review-session-reports?limit=6");
       const data = await res.json();
+      const latest = data.reports && data.reports.length > 0 ? data.reports[0] : null;
+      if (latest) {
+        latestReviewSession.replaceChildren(item(`
+          <div class="line"><span class="title">${esc(latest.name)}</span><span class="meta">${esc(latest.status || "unknown")}</span></div>
+          <div class="badge-row">
+            ${badge(`groups ${latest.group_history_count ?? 0}`)}
+            ${badge(`queue ${latest.queue_item_count ?? 0}`)}
+            ${badge(`saved ${latest.saved_count ?? 0}`)}
+            ${warnBadge(`queued ${latest.queued_count ?? 0}`, (latest.queued_count ?? 0) > 0)}
+            ${badge(`reviewed ${latest.reviewed_count ?? 0}`)}
+            ${warnBadge(`active ${latest.active_queue_count ?? 0}`, (latest.active_queue_count ?? 0) > 0)}
+          </div>
+          <div class="next">${esc(latest.next_action || "")}</div>
+        `));
+      } else {
+        empty(latestReviewSession, "No saved review-session reports.");
+      }
       renderList(reviewSessions, data.reports, r => item(`
         <div class="line"><span class="title">${esc(r.name)}</span><span class="meta">${esc(r.status)} / ${esc(r.hours || "unknown")}h</span></div>
         <div class="badge-row">
@@ -1499,6 +1543,13 @@ async def review_coordination_console(hours: int = 2, limit: int = 5) -> dict[st
         hours=max(hours, 1),
         limit=max(limit, 1),
     )
+    return dict(report)
+
+
+@app.get("/review/policy-check")
+async def review_policy_check() -> dict[str, object]:
+    """Return live policy diagnostics for the local review surface."""
+    report = await asyncio.to_thread(run_policy_check)
     return dict(report)
 
 

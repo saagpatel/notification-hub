@@ -3266,6 +3266,7 @@ def test_policy_check_reports_warnings(
     assert report["warnings"] == ["warning one", "warning two"]
     assert len(report["suggestions"]) == 2
     assert all(isinstance(suggestion, str) and suggestion for suggestion in report["suggestions"])
+    assert "policy_drift" in report
 
 
 def test_policy_check_reports_degraded_on_load_error(
@@ -3292,6 +3293,115 @@ def test_policy_check_reports_degraded_on_load_error(
     assert report["load_error"] == "bad toml"
     assert report["suggestion_count"] == 0
     assert report["suggestions"] == []
+    assert "policy_drift" in report
+
+
+def test_policy_check_reports_missing_sample_noise_rules(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    example_path = tmp_path / "policy.example.toml"
+    example_path.write_text(
+        """
+[[noise.rules]]
+source = "codex"
+text_contains = "session complete"
+level = "info"
+window_minutes = 10
+
+[[noise.rules]]
+source = "personal-ops"
+project = "personal-ops"
+title_contains = "system needs attention"
+body_contains = "run personal-ops doctor"
+window_minutes = 30
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    policy = PolicyConfig(
+        config_found=True,
+        noise=NoisePolicy(
+            rules=(
+                NoiseRule(
+                    source="codex",
+                    text_contains="session complete",
+                    level="info",
+                    window_minutes=10,
+                ),
+            )
+        ),
+    )
+
+    monkeypatch.setattr(ops_mod, "EXAMPLE_POLICY_CONFIG", example_path)
+    monkeypatch.setattr(ops_mod, "get_policy_config", lambda: policy)
+
+    def _no_warnings(_policy: PolicyConfig) -> tuple[str, ...]:
+        return ()
+
+    monkeypatch.setattr(ops_mod, "analyze_policy_config", _no_warnings)
+
+    report = run_policy_check()
+
+    assert report["status"] == "warn"
+    assert report["policy_drift"]["status"] == "warn"
+    assert report["policy_drift"]["missing_sample_noise_rule_count"] == 1
+    assert report["policy_drift"]["missing_sample_noise_rules"] == [
+        {
+            "source": "personal-ops",
+            "project": "personal-ops",
+            "title_contains": "system needs attention",
+            "body_contains": "run personal-ops doctor",
+            "window_minutes": 30,
+        }
+    ]
+
+
+def test_policy_check_passes_when_live_noise_rules_include_sample(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    example_path = tmp_path / "policy.example.toml"
+    example_path.write_text(
+        """
+[[noise.rules]]
+source = "codex"
+text_contains = "session complete"
+level = "info"
+window_minutes = 10
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    policy = PolicyConfig(
+        config_found=True,
+        noise=NoisePolicy(
+            rules=(
+                NoiseRule(
+                    source="codex",
+                    text_contains="session complete",
+                    level="info",
+                    window_minutes=10,
+                ),
+                NoiseRule(source="personal-ops", window_minutes=5),
+            )
+        ),
+    )
+
+    monkeypatch.setattr(ops_mod, "EXAMPLE_POLICY_CONFIG", example_path)
+    monkeypatch.setattr(ops_mod, "get_policy_config", lambda: policy)
+
+    def _no_warnings(_policy: PolicyConfig) -> tuple[str, ...]:
+        return ()
+
+    monkeypatch.setattr(ops_mod, "analyze_policy_config", _no_warnings)
+
+    report = run_policy_check()
+
+    assert report["status"] == "ok"
+    assert report["policy_drift"]["status"] == "ok"
+    assert report["policy_drift"]["missing_sample_noise_rule_count"] == 0
+    assert report["policy_drift"]["extra_live_noise_rule_count"] == 1
 
 
 def test_policy_check_maps_shadowed_rule_to_fix_suggestion(
