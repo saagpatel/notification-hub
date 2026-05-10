@@ -58,6 +58,10 @@ uv run notification-hub coordination-console
 uv run notification-hub-coordination-console --json
 uv run notification-hub personal-ops-actions
 uv run notification-hub-personal-ops-actions --json
+uv run notification-hub action-proposal-dismissals
+uv run notification-hub action-proposal-undismiss DISMISSAL_KEY --reason "signal is useful again"
+uv run notification-hub operator-daily-state
+uv run notification-hub operator-handoff-drill
 uv run notification-hub personal-ops-actions --save-review-package
 uv run notification-hub validate-action-package path/to/actions.json
 uv run notification-hub personal-ops-import path/to/actions.json
@@ -104,16 +108,24 @@ The coordination-readiness command combines runtime status, queue state, and sav
 report history into one compact expansion gate. It returns `fix_noise_first`, `keep_burning_in`, or
 `ready_to_expand` without applying work.
 The coordination-console command is the first compact expansion after that gate. It brings
-readiness, action proposals, queue state, promoted-outcome reminders, burn-in report history, and
-the next safe action into one read-only summary. It also classifies proposal lineage as new, queued,
-promoted, resolved, or ignored so already-handled proposals stay visible as history without being
-treated as fresh work. Its operator guide names the current stage and exact safe commands for saving,
-validating, queueing, promoting, or outcome-syncing handoffs while keeping apply behavior outside
-notification-hub.
+readiness, action proposals, queue state, promoted-outcome reminders, burn-in report history, next
+real signal state, and the next safe action into one read-only summary. It also classifies proposal
+lineage as new, queued, promoted, resolved, or ignored so already-handled proposals stay visible as
+history without being treated as fresh work. Its operator guide names the current stage and exact
+safe commands for saving, validating, queueing, promoting, or outcome-syncing handoffs while keeping
+apply behavior outside notification-hub.
 The personal-ops-actions command turns inbox rollups into action proposals for review. It does not
 write to personal-ops; pass `--output path/to/actions.json` when you want a handoff file.
 Each proposal now includes a stable dismissal key, and `action-proposal-dismiss` can hide a known
 repeated proposal from future console/action exports without deleting the underlying event log.
+`action-proposal-dismissals` lists active or inactive dismissal records, while
+`action-proposal-undismiss` reactivates a proposal by appending a tombstone rather than rewriting
+history.
+The operator-daily-state command builds a resume-ready local snapshot across runtime health, queue
+health, Coordination Console next signal, burn-in, and dismissals. Pass `--save-report` when you want
+a timestamped JSON report under `~/.local/share/notification-hub/operator-state-reports/`.
+The operator-handoff-drill command runs the temporary queue lifecycle plus queue burn-in as a
+non-applying rehearsal before using the same review flow for a real handoff.
 Pass `--save-review-package` when you want notification-hub to stage a local review package under
 `~/.local/share/notification-hub/action-exports/`; this still does not import or apply actions.
 The validate-action-package command checks a saved review package before any future import/apply
@@ -198,9 +210,11 @@ mutating local state.
 The review page can also stage a review package, show recent saved review packages, inspect package
 actions/evidence, show queue lineage for already queued packages, queue import handoff items, filter
 queued/promoted/pending/stale/resolved handoffs, mark queued items reviewed/rejected/snoozed/promoted,
-show pending outcome-sync reminders, list and inspect saved burn-in reports, delete saved review
-packages, validate the latest staged or saved package, and show the Coordination Console operator
-guide. These controls still do not apply, approve, send, or mutate personal-ops.
+show pending outcome-sync reminders, list and inspect saved burn-in reports, list/undismiss action
+proposal dismissals, show the Coordination Console next signal, run the temporary operator handoff
+drill, delete saved review packages, validate the latest staged or saved package, and show the
+Coordination Console operator guide. These controls still do not apply, approve, send, or mutate
+personal-ops.
 Coordination snapshots target bridge-db's `codex` snapshot shape: the emitted
 `bridge_snapshot` object can be passed as snapshot data after operator review, or saved directly
 with the explicit `--save-bridge-db` flag.
@@ -362,6 +376,8 @@ uv run --frozen notification-hub coordination-readiness
 uv run --frozen notification-hub coordination-console
 uv run --frozen notification-hub personal-ops-actions
 uv run --frozen notification-hub action-proposal-dismiss DISMISSAL_KEY --reason "known repeated test signal"
+uv run --frozen notification-hub action-proposal-dismissals
+uv run --frozen notification-hub action-proposal-undismiss DISMISSAL_KEY --reason "signal is useful again"
 uv run --frozen notification-hub personal-ops-actions --save-review-package
 uv run --frozen notification-hub validate-action-package path/to/actions.json
 uv run --frozen notification-hub personal-ops-import path/to/actions.json
@@ -376,6 +392,8 @@ uv run --frozen notification-hub personal-ops-queue-burn-in
 uv run --frozen notification-hub-personal-ops-queue-burn-in --json
 uv run --frozen notification-hub personal-ops-queue-burn-in --save-report
 uv run --frozen notification-hub personal-ops-queue-scenario
+uv run --frozen notification-hub operator-daily-state
+uv run --frozen notification-hub operator-handoff-drill
 uv run --frozen notification-hub logs
 curl http://127.0.0.1:9199/review
 curl http://127.0.0.1:9199/review/packages
@@ -385,9 +403,15 @@ curl http://127.0.0.1:9199/review/import-queue
 curl http://127.0.0.1:9199/review/coordination-readiness
 curl http://127.0.0.1:9199/review/coordination-console
 curl http://127.0.0.1:9199/review/outcome-sync-reminder
+curl http://127.0.0.1:9199/review/action-proposal-dismissals
 curl -X POST http://127.0.0.1:9199/review/action-proposal/DISMISSAL_KEY/dismiss \
   -H 'Content-Type: application/json' \
   -d '{"reason":"known repeated test signal"}'
+curl -X POST http://127.0.0.1:9199/review/action-proposal/DISMISSAL_KEY/undismiss \
+  -H 'Content-Type: application/json' \
+  -d '{"reason":"signal is useful again"}'
+curl http://127.0.0.1:9199/review/operator-daily-state
+curl -X POST http://127.0.0.1:9199/review/operator-handoff-drill
 curl -X PATCH http://127.0.0.1:9199/review/import-queue/QUEUE_ID \
   -H 'Content-Type: application/json' \
   -d '{"status":"reviewed","reason":"evidence checked"}'

@@ -1125,13 +1125,12 @@ def _proposal_dismissal_key(rollup: InboxRollupReport) -> str:
         "title": rollup["title"],
         "body": rollup["body"],
     }
-    digest = hashlib.sha256(
-        json.dumps(stable_parts, sort_keys=True).encode("utf-8")
-    ).hexdigest()[:16]
+    digest = hashlib.sha256(json.dumps(stable_parts, sort_keys=True).encode("utf-8")).hexdigest()[
+        :16
+    ]
     source_part = re.sub(r"[^a-z0-9]+", "-", rollup["source"].lower()).strip("-") or "source"
     project_part = (
-        re.sub(r"[^a-z0-9]+", "-", (rollup["project"] or "general").lower()).strip("-")
-        or "general"
+        re.sub(r"[^a-z0-9]+", "-", (rollup["project"] or "general").lower()).strip("-") or "general"
     )
     intent_part = re.sub(r"[^a-z0-9]+", "-", rollup["intent"].lower()).strip("-") or "intent"
     return f"proposal:{source_part}:{project_part}:{intent_part}:{digest}"
@@ -3224,9 +3223,7 @@ def run_coordination_readiness(*, limit: int = 5) -> CoordinationReadinessReport
     queued_count = queue["queued_count"]
     pending_count = queue["promoted_pending_count"]
     stale_count = queue["promoted_pending_stale_count"]
-    latest_ready = (
-        latest_report["ready_for_live_promotion"] if latest_report is not None else None
-    )
+    latest_ready = latest_report["ready_for_live_promotion"] if latest_report is not None else None
     latest_noise = latest_report["noise_candidate_count"] if latest_report is not None else None
 
     evidence = [
@@ -3341,7 +3338,9 @@ def _build_next_signal_report(
         title = "Active proposal waiting"
         summary = "The next real signal is already visible as an action proposal."
         status = "ready"
-        next_action = "Save and validate a review package, then queue one handoff for operator review."
+        next_action = (
+            "Save and validate a review package, then queue one handoff for operator review."
+        )
     elif queue_health["queued_count"] > 0 or queue_health["promoted_pending_count"] > 0:
         title = "Queue lifecycle in progress"
         summary = "The next real signal is already in the queue lifecycle."
@@ -3359,7 +3358,9 @@ def _build_next_signal_report(
             "and are not already dismissed or covered by policy noise rules."
         )
         status = "monitor"
-        next_action = "Monitor /review; use dismissal management if a hidden proposal should return."
+        next_action = (
+            "Monitor /review; use dismissal management if a hidden proposal should return."
+        )
     return {
         "status": status,
         "title": title,
@@ -3444,7 +3445,9 @@ def _console_guide_step(
 def _queue_outcome_commands(item: PersonalOpsImportQueueItemReport | None) -> list[str]:
     queue_id = item["queue_id"] if item is not None else "QUEUE_ID"
     target_id = (
-        item["promotion_target_id"] if item is not None and item["promotion_target_id"] else "SUGGESTION_ID"
+        item["promotion_target_id"]
+        if item is not None and item["promotion_target_id"]
+        else "SUGGESTION_ID"
     )
     return [
         f'personal-ops suggestion accept|reject {target_id} --note "..."',
@@ -3517,7 +3520,7 @@ def _build_coordination_console_guide(
                         f'personal-ops notification-hub promote {queue_id} --note "..."',
                         "uv run notification-hub personal-ops-queue "
                         f"--queue-id {queue_id} --status promoted "
-                        '--promotion-target-id SUGGESTION_ID --promotion-outcome pending',
+                        "--promotion-target-id SUGGESTION_ID --promotion-outcome pending",
                     ],
                     queue_id=first_queued["queue_id"] if first_queued is not None else None,
                 ),
@@ -3567,8 +3570,7 @@ def _build_coordination_console_guide(
                     status="pending",
                     summary="Queue only after the evidence looks right; this still does not apply work.",
                     commands=[
-                        "uv run notification-hub personal-ops-import "
-                        "path/to/actions.json --enqueue"
+                        "uv run notification-hub personal-ops-import path/to/actions.json --enqueue"
                     ],
                     action_id=action["action_id"],
                 ),
@@ -3626,7 +3628,9 @@ def run_coordination_console(*, hours: int = 2, limit: int = 5) -> CoordinationC
     proposal_lineage = _build_proposal_lineage(actions["actions"])
     action_dismissals = actions.get("dismissals", [])
     active_actions = [
-        action for action in proposal_lineage if action["lineage_status"] in {"new", "queued", "promoted"}
+        action
+        for action in proposal_lineage
+        if action["lineage_status"] in {"new", "queued", "promoted"}
     ]
     handled_actions = [
         action for action in proposal_lineage if action["lineage_status"] in {"resolved", "ignored"}
@@ -3659,7 +3663,9 @@ def run_coordination_console(*, hours: int = 2, limit: int = 5) -> CoordinationC
     elif queue_health["queued_count"] > 0 or queue_health["promoted_pending_count"] > 0:
         next_action = queue_health["next_action"]
     elif any(action["lineage_status"] == "new" for action in active_actions):
-        next_action = "Save and validate a review package, then queue one handoff for operator review."
+        next_action = (
+            "Save and validate a review package, then queue one handoff for operator review."
+        )
     elif active_actions:
         next_action = "Continue the queued or promoted handoff lifecycle before adding new work."
     else:

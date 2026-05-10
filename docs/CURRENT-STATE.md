@@ -56,20 +56,31 @@ tuning pass.
 - A compact `coordination-console` command and `/review/coordination-console` endpoint now summarize
   readiness, action proposals, queue state, promoted-outcome reminders, burn-in report history, and
   the next safe action in one read-only view. The console separates active proposal lineage from
-  handled history so resolved or ignored handoffs stop reappearing as fresh work, and it includes a
-  guided operator stage with exact safe commands for the current handoff state.
+  handled history so resolved or ignored handoffs stop reappearing as fresh work, includes the next
+  real signal lane, and includes a guided operator stage with exact safe commands for the current
+  handoff state.
+- Action proposal dismissals can now be listed, inspected, and undismissed through CLI and `/review`
+  without deleting dismissal history.
+- An `operator-daily-state` command and `/review/operator-daily-state` endpoint now build a
+  resume-ready local state snapshot across runtime health, queue health, Coordination Console next
+  signal, burn-in, and dismissals. The command can save timestamped JSON reports under local
+  notification-hub runtime state.
+- An `operator-handoff-drill` command and `/review/operator-handoff-drill` endpoint now run the
+  temporary handoff lifecycle plus queue burn-in as a non-applying rehearsal.
 - The sample policy now includes the repeated `personal-ops` daemon-start and `notion-os`
   control-tower sync signals seen during live burn-in, keeping evidence-based noise tuning in the
   repo without changing machine-local config.
 - A localhost-only review page is available at `/review` on the daemon. It shows runtime health,
   inbox rollups, action proposals, and trust state without applying anything.
 - The review page now includes Operator Focus, Coordination Readiness, and Coordination Console
-  summaries that put the current action state, expansion gate, and next safe action first.
+  summaries that put the current action state, expansion gate, next real signal, and next safe action
+  first.
 - The review page can stage a local review package, list recent saved review packages, inspect
   package actions/evidence plus queue lineage, queue import handoff items, filter
   queued/promoted/pending/stale/resolved handoffs, mark queued items reviewed/rejected/snoozed/promoted,
-  show pending outcome-sync reminders, delete saved review packages, and validate the latest staged
-  or saved package while keeping apply behavior disabled.
+  show pending outcome-sync reminders, list and undismiss action proposal dismissals, show the daily
+  operator state, run the temporary handoff drill, delete saved review packages, and validate the
+  latest staged or saved package while keeping apply behavior disabled.
 - A local logs command is available for recent event and daemon log inspection, including accepted
   versus rejected `/events` counts from the visible daemon tail.
 - A local burn-in command is available for recent accepted/rejected event counts and repeated
@@ -203,6 +214,10 @@ tuning pass.
   history are visible separately in CLI, JSON, and `/review`.
 - Added a read-only Coordination Console operator guide so package review, queue review, promotion,
   outcome sync, and monitor states expose the current stage and safe next commands.
+- Added action proposal dismissal listing/undismiss commands and `/review` controls so temporarily
+  hidden proposals can be audited or reactivated without deleting dismissal history.
+- Added operator daily-state and handoff-drill commands plus `/review` endpoints so local operators
+  can see the next real signal and run the temporary handoff lifecycle from the review surface.
 - Added `personal-ops-queue-scenario` as a temporary end-to-end lifecycle proof that does not touch
   the real operator queue.
 - Added `docs/PRODUCT-BOUNDARY.md` to keep notification-hub, personal-ops, and bridge-db ownership
@@ -301,6 +316,14 @@ Expected current outcome:
   `--save-report` writes a timestamped local JSON report when durable burn-in evidence is useful, and
   policy-covered repeated signatures no longer count as active noise candidates
 - `notification-hub-personal-ops-queue-burn-in`: script shortcut for the same burn-in report
+- `notification-hub action-proposal-dismissals`: lists active or historical local proposal
+  dismissals without changing proposal state
+- `notification-hub action-proposal-undismiss`: reactivates one dismissed proposal while preserving
+  dismissal history
+- `notification-hub operator-daily-state`: builds a read-only, resume-ready operator state payload;
+  `--save-report` writes a local JSON report when durable evidence is useful
+- `notification-hub operator-handoff-drill`: runs the temporary queue lifecycle and queue burn-in
+  together without touching the live operator queue
 - `/review/burn-in-reports` and `/review/burn-in-report/{name}`: list and inspect saved queue
   burn-in reports without applying work
 - `/review/coordination-readiness`: reports whether to fix noise, keep burning in, or start a
@@ -310,8 +333,9 @@ Expected current outcome:
 - `notification-hub personal-ops-queue-scenario`: runs a temporary queue lifecycle and records a
   final accepted promotion outcome without touching runtime queue state
 - `/review`: localhost-only review UI for runtime state, Operator Focus, Coordination Readiness,
-  Coordination Console operator guide, inbox rollups, action proposals, import queue health, saved
-  burn-in report history, proposal dismissal, and trust state
+  Coordination Console next signal and operator guide, inbox rollups, action proposals, import queue
+  health, saved burn-in report history, proposal dismissal/undismissal, daily operator state,
+  handoff drill, and trust state
 - `/review/save-package` and `/review/validate-package`: review UI controls for staging and
   validating packages without importing or applying them
 - `/review/packages`: lists recent saved review packages and validation summaries without importing
@@ -323,6 +347,13 @@ Expected current outcome:
   personal-ops handoff items without applying them
 - `/review/outcome-sync-reminder`: reports promoted handoffs that still need downstream outcome sync
   without applying them
+- `/review/action-proposal-dismissals`: lists active or historical local proposal dismissals without
+  applying downstream work
+- `POST /review/action-proposal/{dismissal_key}/undismiss`: reactivates one dismissed proposal while
+  preserving dismissal history
+- `/review/operator-daily-state`: returns a read-only operator state payload for the review surface
+- `POST /review/operator-handoff-drill`: runs the temporary handoff lifecycle from the review surface
+  without touching the live queue
 - `PATCH /review/import-queue/{queue_id}`: marks a queued handoff reviewed, rejected, snoozed,
   superseded, or promoted without creating personal-ops work
 - `notification-hub logs`: `status: ok` with recent event and daemon log tails, including Slack
