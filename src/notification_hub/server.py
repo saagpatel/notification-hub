@@ -586,7 +586,7 @@ REVIEW_HTML = """<!doctype html>
       await loadOperatorDailyState();
     }
     async function loadCoordinationConsole() {
-      const res = await fetch("/review/coordination-console?hours=2&limit=5");
+      const res = await fetch("/review/coordination-console?hours=2&limit=25");
       const data = await res.json();
       const readiness = data.readiness || {};
       const queue = data.queue_health || {};
