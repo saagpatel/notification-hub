@@ -338,6 +338,22 @@ body_contains = "run personal-ops doctor"
 window_minutes = 30
 
 [[noise.rules]]
+source = "personal-ops"
+project = "mail"
+title_contains = "approval requested"
+body_contains = "phase 34 secondary approval"
+level = "urgent"
+window_minutes = 30
+
+[[noise.rules]]
+source = "personal-ops"
+project = "mail"
+title_contains = "draft ready"
+body_contains = "phase 34 secondary approval"
+level = "info"
+window_minutes = 30
+
+[[noise.rules]]
 source = "notion-os"
 title_contains = "external-signal-sync complete"
 level = "info"

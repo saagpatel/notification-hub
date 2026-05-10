@@ -102,6 +102,8 @@ tuning pass.
 - The sample and live policy now also cover repeated personal-ops mail `Send Succeeded` events for
   `Console reply needed`, after a real-use route-aware review pass showed them as success chatter
   rather than operator work.
+- The sample and live policy now also cover repeated personal-ops mail `Draft Ready` and
+  `Approval Requested` echoes for `Phase 34 secondary approval`.
 - The sample policy now also covers the repeated personal-ops `System needs attention: run
   personal-ops doctor` diagnostic echo, keeping already-satisfied doctor prompts from resurfacing as
   fresh proposal work when the active policy includes the sample rule.
@@ -261,6 +263,8 @@ tuning pass.
   informational producer.
 - Added a narrow `personal-ops` mail success noise rule for repeated `Console reply needed`
   `Send Succeeded` events after route-aware review confirmed they should not block readiness.
+- Added narrow `personal-ops` mail noise rules for repeated `Phase 34 secondary approval` approval
+  and draft-ready echoes so those repeated test signals stay out of active operator proposals.
 - Added review UI Operator Focus so the top of `/review` names the current next action before the
   operator scans packages, rollups, or queue detail.
 - Added review UI queue-health summary and filters for pending outcome, stale outcome, queued,

@@ -1271,6 +1271,83 @@ def test_personal_ops_action_export_scans_past_dismissed_candidates(tmp_path: Pa
     mock_inbox.assert_called_once_with(hours=2, limit=25)
 
 
+def test_personal_ops_action_export_filters_phase_34_mail_echoes() -> None:
+    policy = PolicyConfig(
+        noise=NoisePolicy(
+            rules=(
+                NoiseRule(
+                    source="personal-ops",
+                    project="mail",
+                    title_contains="approval requested",
+                    body_contains="phase 34 secondary approval",
+                    level="urgent",
+                ),
+                NoiseRule(
+                    source="personal-ops",
+                    project="mail",
+                    title_contains="draft ready",
+                    body_contains="phase 34 secondary approval",
+                    level="info",
+                ),
+            )
+        )
+    )
+    urgent_echo_rollup = {
+        "count": 5,
+        "source": "personal-ops",
+        "project": "mail",
+        "intent": "waiting_on_user",
+        "level": "urgent",
+        "title": "Approval Requested",
+        "body": "Phase 34 secondary approval",
+        "latest_timestamp": "2026-05-10T15:00:00+00:00",
+        "latest_event_id": "phase34urgent",
+    }
+    info_echo_rollup = {
+        "count": 5,
+        "source": "personal-ops",
+        "project": "mail",
+        "intent": "ready_to_review",
+        "level": "info",
+        "title": "Draft Ready",
+        "body": "Phase 34 secondary approval",
+        "latest_timestamp": "2026-05-10T15:01:00+00:00",
+        "latest_event_id": "phase34info",
+    }
+    active_rollup = {
+        "count": 2,
+        "source": "personal-ops",
+        "project": "mail",
+        "intent": "waiting_on_user",
+        "level": "urgent",
+        "title": "Approval Requested",
+        "body": "Real reply needed",
+        "latest_timestamp": "2026-05-10T15:02:00+00:00",
+        "latest_event_id": "active123",
+    }
+    inbox_report: dict[str, object] = {
+        "status": "ok",
+        "hours": 2,
+        "events_seen": 12,
+        "needs_attention": [],
+        "waiting_or_blocked": [],
+        "ready": [],
+        "completed": [],
+        "rollups": [urgent_echo_rollup, info_echo_rollup, active_rollup],
+        "noise_candidates": [],
+        "error": None,
+    }
+
+    with (
+        patch("notification_hub.operations.get_policy_config", return_value=policy),
+        patch("notification_hub.operations.run_inbox", return_value=inbox_report),
+    ):
+        report = run_personal_ops_action_export(hours=2, limit=5)
+
+    assert [action["signal_body"] for action in report["actions"]] == ["Real reply needed"]
+    assert report["dismissed_action_count"] == 2
+
+
 def test_personal_ops_action_export_scans_past_policy_covered_candidates() -> None:
     policy = PolicyConfig(
         noise=NoisePolicy(
@@ -3553,6 +3630,89 @@ def test_burn_in_filters_policy_covered_noise_candidates(
     assert report["noise_candidates"] == []
     assert report["noise_rule_suggestions"] == []
     assert report["repeated_signatures"][0]["title"] == "Codex finished a turn"
+
+
+def test_burn_in_filters_phase_34_mail_echo_noise_candidates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    events_log = tmp_path / "events.jsonl"
+    events = [
+        StoredEvent(
+            source="personal-ops",
+            level="urgent",
+            classified_level="urgent",
+            title="Approval Requested",
+            body="Phase 34 secondary approval",
+            project="mail",
+        ),
+        StoredEvent(
+            source="personal-ops",
+            level="urgent",
+            classified_level="urgent",
+            title="Approval Requested",
+            body="Phase 34 secondary approval",
+            project="mail",
+        ),
+        StoredEvent(
+            source="personal-ops",
+            level="info",
+            classified_level="info",
+            title="Draft Ready",
+            body="Phase 34 secondary approval",
+            project="mail",
+        ),
+        StoredEvent(
+            source="personal-ops",
+            level="info",
+            classified_level="info",
+            title="Draft Ready",
+            body="Phase 34 secondary approval",
+            project="mail",
+        ),
+    ]
+    events_log.write_text(
+        "\n".join(event.model_dump_json() for event in events) + "\n", encoding="utf-8"
+    )
+    stdout_log = tmp_path / "stdout.log"
+    stderr_log = tmp_path / "stderr.log"
+    stdout_log.write_text("", encoding="utf-8")
+    stderr_log.write_text("", encoding="utf-8")
+    monkeypatch.setattr(ops_mod, "EVENTS_LOG", events_log)
+    monkeypatch.setattr(ops_mod, "DAEMON_STDOUT_LOG", stdout_log)
+    monkeypatch.setattr(ops_mod, "DAEMON_STDERR_LOG", stderr_log)
+    monkeypatch.setattr(
+        ops_mod,
+        "get_policy_config",
+        lambda: PolicyConfig(
+            noise=NoisePolicy(
+                rules=(
+                    NoiseRule(
+                        source="personal-ops",
+                        project="mail",
+                        title_contains="approval requested",
+                        body_contains="phase 34 secondary approval",
+                        level="urgent",
+                    ),
+                    NoiseRule(
+                        source="personal-ops",
+                        project="mail",
+                        title_contains="draft ready",
+                        body_contains="phase 34 secondary approval",
+                        level="info",
+                    ),
+                )
+            )
+        ),
+    )
+
+    report = run_burn_in(minutes=10, lines=10)
+
+    assert report["noise_candidates"] == []
+    assert report["noise_rule_suggestions"] == []
+    assert {item["title"] for item in report["repeated_signatures"]} == {
+        "Approval Requested",
+        "Draft Ready",
+    }
 
 
 def test_burn_in_degrades_on_slack_delivery_failures(
