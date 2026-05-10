@@ -289,6 +289,7 @@ def test_coordination_console_summarizes_ready_expansion(tmp_path: Path) -> None
                         "state": "waiting",
                         "title": "Approval Requested",
                         "summary": "Repeated mail approval.",
+                        "signal_body": "Initial reply needed",
                         "suggested_next_action": "Review the waiting item.",
                         "evidence_event_id": "event-1",
                         "evidence_timestamp": "2026-05-10T04:40:00+00:00",
@@ -303,6 +304,7 @@ def test_coordination_console_summarizes_ready_expansion(tmp_path: Path) -> None
                         "state": "waiting",
                         "title": "Approval Requested",
                         "summary": "Second repeated mail approval.",
+                        "signal_body": "Phase 32 review and approval flow",
                         "suggested_next_action": "Review the waiting item.",
                         "evidence_event_id": "event-2",
                         "evidence_timestamp": "2026-05-10T04:42:00+00:00",
@@ -364,6 +366,11 @@ def test_coordination_console_summarizes_ready_expansion(tmp_path: Path) -> None
     assert report["proposal_review"]["groups"][0]["latest_history"] is not None
     assert report["proposal_review"]["groups"][0]["latest_history"]["event_type"] == "saved"
     assert report["proposal_review"]["groups"][0]["latest_outcome"] == "needs_follow_up"
+    routing = report["proposal_review"]["groups"][0]["routing_recommendation"]
+    assert routing is not None
+    assert routing["decision"] == "split_mail_batch"
+    assert routing["promote_candidate_count"] == 1
+    assert routing["suppress_candidate_count"] == 1
     assert report["proposal_review"]["group_history"][0]["group_key"] == (
         "personal-ops:mail:waiting_on_user:high:waiting"
     )

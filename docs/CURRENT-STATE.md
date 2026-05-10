@@ -86,6 +86,9 @@ tuning pass.
   first. A Proposal Review section shows grouped active proposals before a package is queued and can
   save, queue, mark as needing follow-up, or dismiss one proposal group at a time. It also shows
   recent group-history entries so a refresh does not hide the last grouped action.
+- Proposal Review now adds advisory mail routing recommendations for personal-ops mail approval
+  groups, with promote, suppress, and follow-up counts. This helps split concrete reply candidates
+  from repeated phase/workflow chatter without auto-promoting or auto-suppressing anything.
 - The review page can stage a local review package, list recent saved review packages, inspect
   package actions/evidence plus queue lineage, queue import handoff items, filter
   queued/promoted/pending/stale/resolved handoffs, mark queued items reviewed/rejected/snoozed/promoted,
@@ -234,6 +237,8 @@ tuning pass.
   evidence and appear in CLI, JSON, and `/review` lifecycle summaries.
 - Added local Proposal Review group outcomes so grouped work can be marked `accepted`, `rejected`,
   `snoozed`, `superseded`, or `needs_follow_up` without applying downstream work.
+- Added advisory mail route recommendations to Proposal Review so mixed mail approval batches show
+  whether they contain promote candidates, suppression candidates, or follow-up-only items.
 - Added action proposal dismissal listing/undismiss commands and `/review` controls so temporarily
   hidden proposals can be audited or reactivated without deleting dismissal history.
 - Added operator daily-state and handoff-drill commands plus `/review` endpoints so local operators

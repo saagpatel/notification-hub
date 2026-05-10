@@ -592,6 +592,15 @@ class CoordinationConsoleActionReport(TypedDict):
     promotion_target_id: str | None
 
 
+class CoordinationProposalRouteRecommendation(TypedDict):
+    decision: str
+    reason: str
+    suggested_next_action: str
+    promote_candidate_count: int
+    suppress_candidate_count: int
+    follow_up_candidate_count: int
+
+
 class CoordinationProposalReviewGroup(TypedDict):
     group_key: str
     source: str
@@ -607,6 +616,7 @@ class CoordinationProposalReviewGroup(TypedDict):
     history_count: int
     latest_history: ActionProposalGroupHistoryReport | None
     latest_outcome: str | None
+    routing_recommendation: CoordinationProposalRouteRecommendation | None
     next_action: str
 
 
@@ -3926,6 +3936,97 @@ def _action_group_label(key: tuple[str, str | None, str, str, str]) -> str:
     return f"{source}:{project or 'none'}:{intent}:{priority}:{state}"
 
 
+MAIL_PROMOTION_CUES = (
+    "initial reply needed",
+    "send this reply",
+    "outbound workflow reply",
+)
+MAIL_SUPPRESSION_CUES = (
+    "phase ",
+    "prepared handoff",
+    "review and approval flow",
+    "secondary approval",
+    "test draft",
+)
+
+
+def _action_signal_body(action: PersonalOpsActionReport) -> str:
+    raw = cast(dict[str, object], action).get("signal_body")
+    return raw if isinstance(raw, str) else ""
+
+
+def _mail_route_recommendation(
+    actions: list[CoordinationConsoleActionReport],
+) -> CoordinationProposalRouteRecommendation:
+    promote_count = 0
+    suppress_count = 0
+    for item in actions:
+        body = _action_signal_body(item["action"]).lower()
+        if any(cue in body for cue in MAIL_PROMOTION_CUES):
+            promote_count += 1
+        elif any(cue in body for cue in MAIL_SUPPRESSION_CUES):
+            suppress_count += 1
+
+    follow_up_count = max(len(actions) - promote_count - suppress_count, 0)
+    if promote_count and suppress_count:
+        return {
+            "decision": "split_mail_batch",
+            "reason": "This group mixes concrete reply approvals with phase or workflow chatter.",
+            "suggested_next_action": (
+                "Save one review package, promote only the concrete reply candidate after inspection, "
+                "and dismiss the phase/workflow repeats if they are already covered."
+            ),
+            "promote_candidate_count": promote_count,
+            "suppress_candidate_count": suppress_count,
+            "follow_up_candidate_count": follow_up_count,
+        }
+    if promote_count:
+        return {
+            "decision": "promote_candidate",
+            "reason": "This mail group looks like concrete reply approval work.",
+            "suggested_next_action": (
+                "Save and inspect the package, then promote one reviewed handoff through personal-ops "
+                "only if it maps to a real outbound decision."
+            ),
+            "promote_candidate_count": promote_count,
+            "suppress_candidate_count": suppress_count,
+            "follow_up_candidate_count": follow_up_count,
+        }
+    if suppress_count == len(actions):
+        return {
+            "decision": "dismiss_or_suppress",
+            "reason": "This mail group looks like repeated phase or workflow chatter.",
+            "suggested_next_action": (
+                "Dismiss the group locally if it is already handled, or add a policy rule in a separate "
+                "policy pass if this pattern should stay hidden."
+            ),
+            "promote_candidate_count": promote_count,
+            "suppress_candidate_count": suppress_count,
+            "follow_up_candidate_count": follow_up_count,
+        }
+    return {
+        "decision": "review_mail_batch",
+        "reason": "This mail group needs operator inspection before choosing a route.",
+        "suggested_next_action": (
+            "Save the group package, inspect evidence, then choose follow-up, dismissal, or promotion."
+        ),
+        "promote_candidate_count": promote_count,
+        "suppress_candidate_count": suppress_count,
+        "follow_up_candidate_count": follow_up_count,
+    }
+
+
+def _group_route_recommendation(
+    *,
+    key: tuple[str, str | None, str, str, str],
+    actions: list[CoordinationConsoleActionReport],
+) -> CoordinationProposalRouteRecommendation | None:
+    source, project, intent, _, _ = key
+    if source == "personal-ops" and project == "mail" and intent == "waiting_on_user":
+        return _mail_route_recommendation(actions)
+    return None
+
+
 def _build_proposal_review_group(
     *,
     key: tuple[str, str | None, str, str, str],
@@ -3948,7 +4049,7 @@ def _build_proposal_review_group(
         if len(actions) > 1
         else "Review this proposal on its own before queueing or dismissing it."
     )
-    return {
+    group: CoordinationProposalReviewGroup = {
         "group_key": group_label,
         "source": source,
         "project": project,
@@ -3963,8 +4064,14 @@ def _build_proposal_review_group(
         "history_count": len(group_history),
         "latest_history": group_history[0] if group_history else None,
         "latest_outcome": latest_outcome,
+        "routing_recommendation": None,
         "next_action": next_action,
     }
+    routing_recommendation = _group_route_recommendation(key=key, actions=actions)
+    if routing_recommendation is not None:
+        group["routing_recommendation"] = routing_recommendation
+        group["next_action"] = routing_recommendation["suggested_next_action"]
+    return group
 
 
 def _build_proposal_review(

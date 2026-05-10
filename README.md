@@ -121,6 +121,9 @@ staging a small batch package for inspection. The `/review` surface can save, qu
 dismiss one proposal group, and it can record a local group outcome such as `needs_follow_up`,
 `accepted`, or `rejected`. Queueing still only creates notification-hub handoff records and does not
 create personal-ops tasks.
+For personal-ops mail approval groups, Proposal Review adds a local route recommendation that
+separates concrete reply candidates from repeated phase or workflow chatter. The recommendation is
+advisory only; it never promotes, suppresses, or sends by itself.
 The personal-ops-actions command turns inbox rollups into action proposals for review. It does not
 write to personal-ops; pass `--output path/to/actions.json` when you want a handoff file.
 It scans a deeper candidate set than the display limit, so dismissed or policy-covered rollups do not
@@ -229,6 +232,8 @@ save a group package, queue a group package for operator review, or dismiss a gr
 each group action is recorded in local group-history JSONL so later console refreshes still show
 what happened. A group outcome can also be recorded locally after review. These controls still do
 not apply, approve, send, or mutate personal-ops.
+Mail proposal groups include a route recommendation with promote, suppress, and follow-up counts so
+the operator can split mixed batches before queueing or dismissing them.
 Coordination snapshots target bridge-db's `codex` snapshot shape: the emitted
 `bridge_snapshot` object can be passed as snapshot data after operator review, or saved directly
 with the explicit `--save-bridge-db` flag.
