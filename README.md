@@ -166,7 +166,9 @@ The operator-review-session-retention command prunes old saved review-session re
 a dry run and only deletes files when `--apply` is passed. The `/review` page also shows the same
 retention pressure as a read-only summary, so cleanup stays explicit.
 The operator-handoff-drill command runs the temporary queue lifecycle plus queue burn-in as a
-non-applying rehearsal before using the same review flow for a real handoff.
+non-applying rehearsal before using the same review flow for a real handoff. The `/review` drill
+button saves the burn-in proof by default and shows rich-evidence readiness, live-promotion
+readiness, and the saved report status.
 Pass `--save-review-package` when you want notification-hub to stage a local review package under
 `~/.local/share/notification-hub/action-exports/`; this still does not import or apply actions.
 The validate-action-package command checks a saved review package before any future import/apply

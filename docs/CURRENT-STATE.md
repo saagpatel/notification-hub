@@ -100,7 +100,9 @@ tuning pass.
   `--apply`. `/review/operator-review-session-retention` exposes the same cleanup pressure as a
   read-only dry-run summary.
 - An `operator-handoff-drill` command and `/review/operator-handoff-drill` endpoint now run the
-  temporary handoff lifecycle plus queue burn-in as a non-applying rehearsal.
+  temporary handoff lifecycle plus queue burn-in as a non-applying rehearsal. The `/review` drill
+  control saves burn-in proof by default and displays rich-evidence readiness, live-promotion
+  readiness, and saved report status.
 - The sample policy now includes the repeated `personal-ops` daemon-start and `notion-os`
   control-tower sync signals seen during live burn-in, keeping evidence-based noise tuning in the
   repo without changing machine-local config.

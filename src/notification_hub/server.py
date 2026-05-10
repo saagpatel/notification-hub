@@ -370,7 +370,7 @@ REVIEW_HTML = """<!doctype html>
         <button id="savePackage" type="button">Save package</button>
         <button id="saveSession" type="button">Save session</button>
         <button id="validatePackage" type="button">Validate package</button>
-        <button id="runDrill" type="button">Run drill</button>
+        <button id="runDrill" type="button">Run drill + save proof</button>
         <button id="refresh" type="button">Refresh</button>
       </div>
     </header>
@@ -1117,12 +1117,18 @@ REVIEW_HTML = """<!doctype html>
       );
     }
     async function runHandoffDrill() {
-      const res = await fetch("/review/operator-handoff-drill", { method: "POST" });
+      const res = await fetch("/review/operator-handoff-drill?save_burn_in_report=true", { method: "POST" });
       const data = await res.json();
+      const scenario = data.scenario || {};
+      const burnIn = data.queue_burn_in || {};
+      const reportFile = burnIn.report_file || {};
       operatorState.replaceChildren(
         item(`<div class="line"><span class="title">Handoff drill</span><span class="meta">${esc(data.status)}</span></div>`),
-        item(`<div class="next">Scenario: ${esc((data.scenario || {}).status || "unknown")}</div>`),
-        item(`<div class="next">Burn-in: ${esc((data.queue_burn_in || {}).status || "unknown")}</div>`),
+        item(`<div class="next">Scenario: ${esc(scenario.status || "unknown")}</div>`),
+        item(`<div class="next">Rich evidence ready: ${esc(String(Boolean(scenario.rich_evidence_ready)))} (${esc(scenario.evidence_quality || "unknown")})</div>`),
+        item(`<div class="next">Burn-in: ${esc(burnIn.status || "unknown")}</div>`),
+        item(`<div class="next">Ready for live promotion: ${esc(String(Boolean(burnIn.ready_for_live_promotion)))}</div>`),
+        item(`<div class="next">Saved proof: ${esc(reportFile.status || "not_requested")}${reportFile.path ? ` - ${esc(reportFile.path)}` : ""}</div>`),
         item(`<div class="next">${esc(data.next_action || "")}</div>`)
       );
       await loadCoordinationConsole();

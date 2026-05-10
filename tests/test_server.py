@@ -155,6 +155,10 @@ async def test_review_page_endpoint(client: AsyncClient) -> None:
     assert "Latest Review Session" in resp.text
     assert "Review Sessions" in resp.text
     assert "Review Session Retention" in resp.text
+    assert "Run drill + save proof" in resp.text
+    assert "save_burn_in_report=true" in resp.text
+    assert "Rich evidence ready" in resp.text
+    assert "Saved proof" in resp.text
     assert "function metric" in resp.text
 
 
@@ -1617,8 +1621,22 @@ async def test_review_operator_handoff_drill_endpoint_is_temporary(client: Async
         return_value={
             "status": "ok",
             "generated_at": "2026-05-10T04:55:00+00:00",
-            "scenario": {"status": "ok", "queue_id": "queue123"},
-            "queue_burn_in": {"status": "ok", "ready_for_live_promotion": True},
+            "scenario": {
+                "status": "ok",
+                "queue_id": "queue123",
+                "rich_evidence_ready": True,
+                "evidence_quality": "rich",
+            },
+            "queue_burn_in": {
+                "status": "ok",
+                "ready_for_live_promotion": True,
+                "report_file": {
+                    "requested": True,
+                    "status": "ok",
+                    "path": "/tmp/burn-in.json",
+                    "error": None,
+                },
+            },
             "review_steps": ["Open /review and inspect an action proposal."],
             "next_action": "Use the same operator-mediated lifecycle for the next real handoff.",
             "applied": False,
