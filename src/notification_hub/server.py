@@ -507,6 +507,12 @@ REVIEW_HTML = """<!doctype html>
       li.innerHTML = html;
       return li;
     }
+    function metric(label, value) {
+      const div = document.createElement("div");
+      div.className = "metric";
+      div.innerHTML = `<span>${esc(label)}</span><strong>${esc(value)}</strong>`;
+      return div;
+    }
     function esc(value) {
       return String(value ?? "").replace(/[&<>"']/g, ch => ({
         "&": "&amp;",
@@ -551,11 +557,11 @@ REVIEW_HTML = """<!doctype html>
       const res = await fetch("/review/data?hours=2&limit=6");
       const data = await res.json();
       summary.replaceChildren(
-        item(`<span>Runtime</span><strong>${esc(data.runtime.status)}</strong>`),
-        item(`<span>Events</span><strong>${esc(data.inbox.events_seen)}</strong>`),
-        item(`<span>Actions</span><strong>${esc(data.actions.actions.length)}</strong>`),
-        item(`<span>Rollups</span><strong>${esc(data.inbox.rollups.length)}</strong>`),
-        item(`<span>Applied</span><strong>${data.trust.applied ? "yes" : "no"}</strong>`)
+        metric("Runtime", data.runtime.status),
+        metric("Events", data.inbox.events_seen),
+        metric("Actions", data.actions.actions.length),
+        metric("Rollups", data.inbox.rollups.length),
+        metric("Applied", data.trust.applied ? "yes" : "no")
       );
       const focus = data.operator_focus || {};
       operatorFocus.replaceChildren(item(`
