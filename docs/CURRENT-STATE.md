@@ -60,7 +60,8 @@ tuning pass.
   real signal lane, and includes a guided operator stage with exact safe commands for the current
   handoff state. It now also includes a proposal-review summary that groups active proposals by
   source, project, intent, priority, and state so the operator can distinguish single-proposal review
-  from a small batch package.
+  from a small batch package. Group controls can save a scoped review package, queue that group into
+  the local handoff queue, or locally dismiss the group without applying personal-ops work.
 - Action proposal export now scans a deeper candidate set than the display limit, so dismissed or
   policy-covered rollups cannot crowd out real lower-ranked operator signals from the default view.
 - Action proposal dismissals can now be listed, inspected, and undismissed through CLI and `/review`
@@ -78,7 +79,8 @@ tuning pass.
   inbox rollups, action proposals, and trust state without applying anything.
 - The review page now includes Operator Focus, Coordination Readiness, and Coordination Console
   summaries that put the current action state, expansion gate, next real signal, and next safe action
-  first. A Proposal Review section shows grouped active proposals before a package is queued.
+  first. A Proposal Review section shows grouped active proposals before a package is queued and can
+  save, queue, or dismiss one proposal group at a time.
 - The review page can stage a local review package, list recent saved review packages, inspect
   package actions/evidence plus queue lineage, queue import handoff items, filter
   queued/promoted/pending/stale/resolved handoffs, mark queued items reviewed/rejected/snoozed/promoted,
@@ -220,6 +222,9 @@ tuning pass.
   outcome sync, and monitor states expose the current stage and safe next commands.
 - Added Coordination Console proposal-review grouping in CLI, JSON, and `/review` so multiple active
   proposals can be reviewed as one operator batch without applying personal-ops work.
+- Added Proposal Review group controls in `/review` so an operator can save a scoped group package,
+  queue it into the local handoff queue, or dismiss the group locally while keeping personal-ops
+  mutations outside notification-hub.
 - Added action proposal dismissal listing/undismiss commands and `/review` controls so temporarily
   hidden proposals can be audited or reactivated without deleting dismissal history.
 - Added operator daily-state and handoff-drill commands plus `/review` endpoints so local operators

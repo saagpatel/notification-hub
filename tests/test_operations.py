@@ -50,8 +50,10 @@ from notification_hub.operations import (
     run_personal_ops_queue_scenario,
     run_policy_check,
     run_retention,
+    save_action_proposal_group_package,
     run_smoke_check,
     summarize_personal_ops_import_queue,
+    dismiss_action_proposal_group,
     undismiss_action_proposal,
     update_personal_ops_import_queue_item,
     validate_action_package,
@@ -987,6 +989,166 @@ def test_personal_ops_action_export_keeps_repeated_titles_unique() -> None:
         "notification-hub:personal-ops:mail:waiting_on_user:approval-requested:abc123",
         "notification-hub:personal-ops:mail:waiting_on_user:approval-requested:def456",
     ]
+
+
+def test_action_proposal_group_package_can_save_selected_group(tmp_path: Path) -> None:
+    inbox_report: dict[str, object] = {
+        "status": "ok",
+        "hours": 2,
+        "events_seen": 4,
+        "needs_attention": [],
+        "waiting_or_blocked": [],
+        "ready": [],
+        "completed": [],
+        "rollups": [
+            {
+                "count": 2,
+                "source": "personal-ops",
+                "project": "mail",
+                "intent": "waiting_on_user",
+                "level": "urgent",
+                "title": "Approval Requested",
+                "body": "Outbound workflow reply",
+                "latest_timestamp": "2026-05-09T00:00:00+00:00",
+                "latest_event_id": "abc123",
+            },
+            {
+                "count": 2,
+                "source": "personal-ops",
+                "project": "mail",
+                "intent": "waiting_on_user",
+                "level": "urgent",
+                "title": "Approval Requested",
+                "body": "Send this reply",
+                "latest_timestamp": "2026-05-09T00:01:00+00:00",
+                "latest_event_id": "def456",
+            },
+            {
+                "count": 2,
+                "source": "codex",
+                "project": "personal-ops",
+                "intent": "ready_to_review",
+                "level": "normal",
+                "title": "Codex needs attention",
+                "body": "A verification or runtime issue needs review.",
+                "latest_timestamp": "2026-05-09T00:02:00+00:00",
+                "latest_event_id": "ghi789",
+            },
+        ],
+        "noise_candidates": [],
+        "error": None,
+    }
+
+    with patch("notification_hub.operations.run_inbox", return_value=inbox_report):
+        report = save_action_proposal_group_package(
+            group_key="personal-ops:mail:waiting_on_user:high:waiting",
+            hours=2,
+            limit=5,
+            review_dir=tmp_path,
+        )
+
+    assert report["status"] == "ok"
+    assert report["action_count"] == 2
+    package_path = Path(str(report["review_package"]["path"]))
+    payload = json.loads(package_path.read_text(encoding="utf-8"))
+    assert payload["selected_group"]["group_key"] == "personal-ops:mail:waiting_on_user:high:waiting"
+    assert [action["evidence_event_id"] for action in payload["actions"]] == ["abc123", "def456"]
+
+
+def test_action_proposal_group_package_can_enqueue_selected_group(tmp_path: Path) -> None:
+    inbox_report: dict[str, object] = {
+        "status": "ok",
+        "hours": 2,
+        "events_seen": 2,
+        "needs_attention": [],
+        "waiting_or_blocked": [],
+        "ready": [],
+        "completed": [],
+        "rollups": [
+            {
+                "count": 2,
+                "source": "personal-ops",
+                "project": "mail",
+                "intent": "waiting_on_user",
+                "level": "urgent",
+                "title": "Approval Requested",
+                "body": "Outbound workflow reply",
+                "latest_timestamp": "2026-05-09T00:00:00+00:00",
+                "latest_event_id": "abc123",
+            }
+        ],
+        "noise_candidates": [],
+        "error": None,
+    }
+
+    with patch("notification_hub.operations.run_inbox", return_value=inbox_report):
+        report = save_action_proposal_group_package(
+            group_key="personal-ops:mail:waiting_on_user:high:waiting",
+            hours=2,
+            limit=5,
+            enqueue=True,
+            review_dir=tmp_path,
+            queue_path=tmp_path / "queue.jsonl",
+        )
+
+    assert report["status"] == "ok"
+    assert report["import_result"] is not None
+    assert report["import_result"]["queued_count"] == 1
+    assert (tmp_path / "queue.jsonl").exists()
+
+
+def test_action_proposal_group_dismisses_each_current_match(tmp_path: Path) -> None:
+    inbox_report: dict[str, object] = {
+        "status": "ok",
+        "hours": 2,
+        "events_seen": 2,
+        "needs_attention": [],
+        "waiting_or_blocked": [],
+        "ready": [],
+        "completed": [],
+        "rollups": [
+            {
+                "count": 2,
+                "source": "personal-ops",
+                "project": "mail",
+                "intent": "waiting_on_user",
+                "level": "urgent",
+                "title": "Approval Requested",
+                "body": "Outbound workflow reply",
+                "latest_timestamp": "2026-05-09T00:00:00+00:00",
+                "latest_event_id": "abc123",
+            },
+            {
+                "count": 2,
+                "source": "personal-ops",
+                "project": "mail",
+                "intent": "waiting_on_user",
+                "level": "urgent",
+                "title": "Approval Requested",
+                "body": "Send this reply",
+                "latest_timestamp": "2026-05-09T00:01:00+00:00",
+                "latest_event_id": "def456",
+            },
+        ],
+        "noise_candidates": [],
+        "error": None,
+    }
+
+    with patch("notification_hub.operations.run_inbox", return_value=inbox_report):
+        report = dismiss_action_proposal_group(
+            group_key="personal-ops:mail:waiting_on_user:high:waiting",
+            reason="known grouped signal",
+            hours=2,
+            limit=5,
+            dismissals_path=tmp_path / "dismissals.jsonl",
+        )
+
+    assert report["status"] == "ok"
+    assert report["dismissed_count"] == 2
+    assert {dismissal["body"] for dismissal in report["dismissals"]} == {
+        "Outbound workflow reply",
+        "Send this reply",
+    }
 
 
 def test_personal_ops_action_export_can_save_review_package(tmp_path: Path) -> None:

@@ -169,6 +169,27 @@ class ActionProposalUndismissReport(TypedDict):
     error: str | None
 
 
+class ActionProposalGroupPackageReport(TypedDict):
+    status: str
+    group_key: str
+    action_count: int
+    review_package: dict[str, object]
+    import_result: dict[str, object] | None
+    next_action: str
+    applied: bool
+    error: str | None
+
+
+class ActionProposalGroupDismissReport(TypedDict):
+    status: str
+    group_key: str
+    dismissed_count: int
+    dismissals: list[ActionProposalDismissalReport]
+    next_action: str
+    applied: bool
+    error: str | None
+
+
 class PersonalOpsActionExportReport(TypedDict):
     status: str
     schema_version: str
@@ -2872,6 +2893,183 @@ def run_personal_ops_import_stub(
     }
 
 
+def _actions_for_group_key(
+    *,
+    group_key: str,
+    hours: int,
+    limit: int,
+) -> tuple[PersonalOpsActionExportReport, list[PersonalOpsActionReport]]:
+    export = run_personal_ops_action_export(hours=hours, limit=max(limit, 1))
+    actions = [
+        action
+        for action in export["actions"]
+        if _action_group_label(_action_group_key(action)) == group_key
+    ]
+    return export, actions
+
+
+def save_action_proposal_group_package(
+    *,
+    group_key: str,
+    hours: int = 2,
+    limit: int = 25,
+    enqueue: bool = False,
+    review_dir: Path | None = None,
+    queue_path: Path | None = None,
+) -> ActionProposalGroupPackageReport:
+    """Stage one active proposal group as a review package without applying personal-ops work."""
+    safe_group_key = group_key.strip()
+    if not safe_group_key:
+        return {
+            "status": "degraded",
+            "group_key": group_key,
+            "action_count": 0,
+            "review_package": {
+                "requested": True,
+                "status": "degraded",
+                "path": str(review_dir) if review_dir is not None else None,
+                "error": "group_key is required",
+            },
+            "import_result": None,
+            "next_action": "Choose a valid proposal group before saving a package.",
+            "applied": False,
+            "error": "group_key is required",
+        }
+    export, actions = _actions_for_group_key(
+        group_key=safe_group_key,
+        hours=max(hours, 1),
+        limit=max(limit, 1),
+    )
+    if not actions:
+        return {
+            "status": "degraded",
+            "group_key": safe_group_key,
+            "action_count": 0,
+            "review_package": {
+                "requested": True,
+                "status": "degraded",
+                "path": str(review_dir) if review_dir is not None else None,
+                "error": "no active proposals matched this group",
+            },
+            "import_result": None,
+            "next_action": "Refresh Proposal Review; this group is no longer active.",
+            "applied": False,
+            "error": "no active proposals matched this group",
+        }
+    payload = dict(export)
+    payload["actions"] = actions
+    payload["selected_group"] = {
+        "group_key": safe_group_key,
+        "action_count": len(actions),
+        "enqueue_requested": enqueue,
+    }
+    payload["review_package"] = {
+        "requested": True,
+        "status": "pending_write",
+        "path": str(review_dir) if review_dir is not None else None,
+        "error": None,
+    }
+    review_package = _write_action_review_package(payload, output_dir=review_dir)
+    status = "ok" if review_package["status"] == "ok" else "degraded"
+    error = str(review_package["error"]) if review_package["error"] is not None else None
+    import_result: dict[str, object] | None = None
+    next_action = "Inspect the saved group package before queueing it."
+    if status == "ok" and enqueue:
+        path_value = review_package["path"]
+        if isinstance(path_value, str):
+            import_result = dict(
+                run_personal_ops_import_stub(
+                    path=Path(path_value),
+                    enqueue=True,
+                    queue_path=queue_path,
+                )
+            )
+            status_value = import_result.get("status")
+            if isinstance(status_value, str):
+                status = status_value
+            error_value = import_result.get("error")
+            error = error_value if isinstance(error_value, str) else error
+            next_action = str(import_result.get("next_action") or "Review the queued group handoff.")
+        else:
+            status = "degraded"
+            error = "review package path missing"
+            next_action = "Save the group package again before queueing it."
+    return {
+        "status": status,
+        "group_key": safe_group_key,
+        "action_count": len(actions),
+        "review_package": review_package,
+        "import_result": import_result,
+        "next_action": next_action,
+        "applied": False,
+        "error": error,
+    }
+
+
+def dismiss_action_proposal_group(
+    *,
+    group_key: str,
+    reason: str,
+    hours: int = 2,
+    limit: int = 25,
+    dismissals_path: Path | None = None,
+) -> ActionProposalGroupDismissReport:
+    """Dismiss every currently active proposal in one proposal-review group."""
+    safe_group_key = group_key.strip()
+    if not safe_group_key:
+        return {
+            "status": "degraded",
+            "group_key": group_key,
+            "dismissed_count": 0,
+            "dismissals": [],
+            "next_action": "Choose a valid proposal group before dismissing it.",
+            "applied": False,
+            "error": "group_key is required",
+        }
+    _, actions = _actions_for_group_key(
+        group_key=safe_group_key,
+        hours=max(hours, 1),
+        limit=max(limit, 1),
+    )
+    if not actions:
+        return {
+            "status": "degraded",
+            "group_key": safe_group_key,
+            "dismissed_count": 0,
+            "dismissals": [],
+            "next_action": "Refresh Proposal Review; this group is no longer active.",
+            "applied": False,
+            "error": "no active proposals matched this group",
+        }
+    dismissals: list[ActionProposalDismissalReport] = []
+    error: str | None = None
+    for action in actions:
+        report = dismiss_action_proposal(
+            dismissal_key=action["dismissal_key"],
+            reason=reason,
+            source=action["source"],
+            project=action["project"],
+            intent=action["intent"],
+            title=action["title"],
+            body=action["signal_body"],
+            evidence_event_id=action["evidence_event_id"],
+            dismissals_path=dismissals_path,
+        )
+        if report["dismissal"] is not None:
+            dismissals.append(report["dismissal"])
+        if report["error"] is not None:
+            error = report["error"]
+    return {
+        "status": "ok" if error is None else "degraded",
+        "group_key": safe_group_key,
+        "dismissed_count": len(dismissals),
+        "dismissals": dismissals,
+        "next_action": "Group dismissed from the local console. Undismiss individual proposals if they should return.",
+        "applied": False,
+        "error": error,
+    }
+
+
 def run_personal_ops_queue_scenario() -> PersonalOpsQueueScenarioReport:
     """Exercise the local queue lifecycle without touching the operator queue."""
     with tempfile.TemporaryDirectory(prefix="notification-hub-queue-scenario-") as tmp:
@@ -3474,6 +3672,11 @@ def _action_group_key(action: PersonalOpsActionReport) -> tuple[str, str | None,
     )
 
 
+def _action_group_label(key: tuple[str, str | None, str, str, str]) -> str:
+    source, project, intent, priority, state = key
+    return f"{source}:{project or 'none'}:{intent}:{priority}:{state}"
+
+
 def _build_proposal_review_group(
     *,
     key: tuple[str, str | None, str, str, str],
@@ -3487,7 +3690,7 @@ def _build_proposal_review_group(
             titles.append(title)
     newest = max((item["action"]["evidence_timestamp"] for item in actions), default=None)
     total_count = sum(item["action"]["count"] for item in actions)
-    group_label = f"{source}:{project or 'none'}:{intent}:{priority}:{state}"
+    group_label = _action_group_label(key)
     next_action = (
         "Review this group as one package when the evidence points to the same operator decision."
         if len(actions) > 1

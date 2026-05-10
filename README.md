@@ -116,7 +116,9 @@ safe commands for saving, validating, queueing, promoting, or outcome-syncing ha
 apply behavior outside notification-hub.
 The console also includes a proposal-review summary that groups active proposals by source, project,
 intent, priority, and state, so the operator can tell when to review one proposal alone versus
-staging a small batch package for inspection.
+staging a small batch package for inspection. The `/review` surface can save, queue, or locally
+dismiss one proposal group, but queueing still only creates notification-hub handoff records and does
+not create personal-ops tasks.
 The personal-ops-actions command turns inbox rollups into action proposals for review. It does not
 write to personal-ops; pass `--output path/to/actions.json` when you want a handoff file.
 It scans a deeper candidate set than the display limit, so dismissed or policy-covered rollups do not
@@ -218,8 +220,9 @@ queued/promoted/pending/stale/resolved handoffs, mark queued items reviewed/reje
 show pending outcome-sync reminders, list and inspect saved burn-in reports, list/undismiss action
 proposal dismissals, show the Coordination Console next signal, run the temporary operator handoff
 drill, delete saved review packages, validate the latest staged or saved package, and show the
-Coordination Console operator guide plus proposal-review grouping. These controls still do not apply,
-approve, send, or mutate personal-ops.
+Coordination Console operator guide plus proposal-review grouping. The Proposal Review controls can
+save a group package, queue a group package for operator review, or dismiss a group locally. These
+controls still do not apply, approve, send, or mutate personal-ops.
 Coordination snapshots target bridge-db's `codex` snapshot shape: the emitted
 `bridge_snapshot` object can be passed as snapshot data after operator review, or saved directly
 with the explicit `--save-bridge-db` flag.

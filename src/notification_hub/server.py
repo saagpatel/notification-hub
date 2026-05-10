@@ -20,6 +20,7 @@ from notification_hub.models import Event, EventResponse
 from notification_hub.operations import (
     delete_action_review_package,
     dismiss_action_proposal,
+    dismiss_action_proposal_group,
     list_action_review_packages,
     list_personal_ops_import_queue,
     list_personal_ops_queue_burn_in_reports,
@@ -36,6 +37,7 @@ from notification_hub.operations import (
     run_personal_ops_import_stub,
     run_personal_ops_outcome_sync_reminder,
     run_retention,
+    save_action_proposal_group_package,
     undismiss_action_proposal,
     update_personal_ops_import_queue_item,
     validate_action_package,
@@ -623,6 +625,11 @@ REVIEW_HTML = """<!doctype html>
         </div>
         <div class="next">${esc((group.titles || []).join(", "))}</div>
         <div class="next">${esc(group.next_action || "")}</div>
+        <div class="button-row">
+          <button type="button" data-save-group="${esc(group.group_key)}">Save group</button>
+          <button type="button" data-queue-group="${esc(group.group_key)}">Queue group</button>
+          <button type="button" data-dismiss-group="${esc(group.group_key)}">Dismiss group</button>
+        </div>
       `));
       proposalReview.replaceChildren(item(`
         <div class="line"><span class="title">${esc(review.mode || "unknown")}</span><span class="meta">${esc(review.group_count ?? 0)} group(s)</span></div>
@@ -635,6 +642,15 @@ REVIEW_HTML = """<!doctype html>
         <div class="next">${esc(review.summary || "")}</div>
         <div class="next">${esc(review.next_action || "")}</div>
       `), ...(groupRows.length ? groupRows : [item(`<div class="next">No active proposal groups.</div>`)]));
+      proposalReview.querySelectorAll("button[data-save-group]").forEach(button => {
+        button.addEventListener("click", () => saveProposalGroup(button.dataset.saveGroup));
+      });
+      proposalReview.querySelectorAll("button[data-queue-group]").forEach(button => {
+        button.addEventListener("click", () => queueProposalGroup(button.dataset.queueGroup));
+      });
+      proposalReview.querySelectorAll("button[data-dismiss-group]").forEach(button => {
+        button.addEventListener("click", () => dismissProposalGroup(button.dataset.dismissGroup));
+      });
       nextSignal.replaceChildren(item(`
         <div class="line"><span class="title">${esc(signal.title || "Next signal")}</span><span class="meta">${esc(signal.status || "unknown")}</span></div>
         <div class="badge-row">
@@ -645,6 +661,68 @@ REVIEW_HTML = """<!doctype html>
         <div class="next">${esc(signal.summary || "")}</div>
         <div class="next">${esc(signal.next_action || "")}</div>
       `));
+    }
+    async function postProposalGroup(path, groupKey, reason) {
+      if (!groupKey) {
+        return null;
+      }
+      const res = await fetch(path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ group_key: groupKey, hours: 2, limit: 25, reason })
+      });
+      return res.json();
+    }
+    async function saveProposalGroup(groupKey) {
+      const data = await postProposalGroup("/review/action-proposal-group/package", groupKey);
+      if (!data) {
+        return;
+      }
+      packageDetail.replaceChildren(
+        item(`<div class="line"><span class="title">Save group</span><span class="meta">${esc(data.status)}</span></div>`),
+        item(`<div class="next">Actions: ${esc(data.action_count ?? 0)}</div>`),
+        item(`<div class="next">${esc(data.next_action || data.error || "")}</div>`)
+      );
+      await loadPackages();
+      await loadCoordinationConsole();
+    }
+    async function queueProposalGroup(groupKey) {
+      if (!window.confirm("Queue this proposal group for operator review?")) {
+        return;
+      }
+      const data = await postProposalGroup("/review/action-proposal-group/queue", groupKey);
+      if (!data) {
+        return;
+      }
+      const importResult = data.import_result || {};
+      packageDetail.replaceChildren(
+        item(`<div class="line"><span class="title">Queue group</span><span class="meta">${esc(data.status)}</span></div>`),
+        item(`<div class="next">Actions: ${esc(data.action_count ?? 0)} / queued: ${esc(importResult.queued_count ?? 0)}</div>`),
+        item(`<div class="next">${esc(data.next_action || data.error || "")}</div>`)
+      );
+      await loadPackages();
+      await loadImportQueue();
+      await loadCoordinationConsole();
+    }
+    async function dismissProposalGroup(groupKey) {
+      if (!window.confirm("Dismiss this proposal group from the local console?")) {
+        return;
+      }
+      const data = await postProposalGroup(
+        "/review/action-proposal-group/dismiss",
+        groupKey,
+        "Review UI dismissed this grouped proposal as known noise."
+      );
+      if (!data) {
+        return;
+      }
+      packageDetail.replaceChildren(
+        item(`<div class="line"><span class="title">Dismiss group</span><span class="meta">${esc(data.status)}</span></div>`),
+        item(`<div class="next">Dismissed: ${esc(data.dismissed_count ?? 0)}</div>`),
+        item(`<div class="next">${esc(data.next_action || data.error || "")}</div>`)
+      );
+      await loadDismissals();
+      await loadCoordinationConsole();
     }
     async function dismissActionProposal(dismissalKey) {
       if (!dismissalKey) {
@@ -1228,6 +1306,68 @@ async def review_coordination_console(hours: int = 2, limit: int = 5) -> dict[st
         run_coordination_console,
         hours=max(hours, 1),
         limit=max(limit, 1),
+    )
+    return dict(report)
+
+
+async def _action_proposal_group_body(request: Request) -> dict[str, object]:
+    try:
+        raw_body = await request.json()
+    except ValueError:
+        raw_body = {}
+    return cast(dict[str, object], raw_body) if isinstance(raw_body, dict) else {}
+
+
+@app.post("/review/action-proposal-group/package")
+async def review_save_action_proposal_group(request: Request) -> dict[str, object]:
+    """Stage one proposal-review group as a saved package without applying work."""
+    body = await _action_proposal_group_body(request)
+    group_key = body.get("group_key")
+    hours = body.get("hours", 2)
+    limit = body.get("limit", 25)
+    report = await asyncio.to_thread(
+        save_action_proposal_group_package,
+        group_key=group_key if isinstance(group_key, str) else "",
+        hours=int(hours) if isinstance(hours, int) else 2,
+        limit=int(limit) if isinstance(limit, int) else 25,
+        enqueue=False,
+    )
+    return dict(report)
+
+
+@app.post("/review/action-proposal-group/queue")
+async def review_queue_action_proposal_group(request: Request) -> dict[str, object]:
+    """Save and queue one proposal-review group without applying personal-ops work."""
+    body = await _action_proposal_group_body(request)
+    group_key = body.get("group_key")
+    hours = body.get("hours", 2)
+    limit = body.get("limit", 25)
+    report = await asyncio.to_thread(
+        save_action_proposal_group_package,
+        group_key=group_key if isinstance(group_key, str) else "",
+        hours=int(hours) if isinstance(hours, int) else 2,
+        limit=int(limit) if isinstance(limit, int) else 25,
+        enqueue=True,
+    )
+    return dict(report)
+
+
+@app.post("/review/action-proposal-group/dismiss")
+async def review_dismiss_action_proposal_group(request: Request) -> dict[str, object]:
+    """Dismiss every active proposal in one proposal-review group locally."""
+    body = await _action_proposal_group_body(request)
+    group_key = body.get("group_key")
+    reason = body.get("reason")
+    hours = body.get("hours", 2)
+    limit = body.get("limit", 25)
+    report = await asyncio.to_thread(
+        dismiss_action_proposal_group,
+        group_key=group_key if isinstance(group_key, str) else "",
+        reason=reason
+        if isinstance(reason, str) and reason.strip()
+        else "Review UI dismissed a grouped proposal as known noise.",
+        hours=int(hours) if isinstance(hours, int) else 2,
+        limit=int(limit) if isinstance(limit, int) else 25,
     )
     return dict(report)
 
