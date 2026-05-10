@@ -75,6 +75,7 @@ uv run notification-hub personal-ops-queue
 uv run notification-hub personal-ops-queue --queue-id QUEUE_ID --status reviewed --reason "evidence checked"
 uv run notification-hub personal-ops-queue --queue-id QUEUE_ID --status promoted --promotion-target-id SUGGESTION_ID --promotion-outcome accepted
 uv run notification-hub personal-ops-queue-health
+uv run notification-hub personal-ops-queue-review
 uv run notification-hub-personal-ops-queue-health --json
 uv run notification-hub personal-ops-outcome-sync-reminder
 uv run notification-hub-personal-ops-outcome-sync-reminder --json
@@ -183,6 +184,9 @@ reviewed-only, resolved, closed, and snoozed counts so reviewed-but-not-promoted
 The personal-ops-queue-health command is the normal maintenance check for this queue. It reports
 queued item age, promoted handoffs still waiting on downstream outcome sync, stale pending
 promotions, and the next safe operator commands without applying work.
+The personal-ops-queue-review command groups queued handoffs into review batches, highlights
+operator-decision approval counts, and shows the next local review command without approving,
+sending, or changing downstream systems.
 The personal-ops-outcome-sync-reminder command is a narrower read-only reminder for promoted
 handoffs that still need downstream personal-ops outcome sync. It returns `status: warn` when a
 reminder should be shown, but still leaves syncing to the operator.
@@ -463,6 +467,7 @@ curl http://127.0.0.1:9199/review/package/personal-ops-actions-YYYYMMDD-HHMMSS.j
 curl http://127.0.0.1:9199/review/operator-review-session-retention
 curl -X POST http://127.0.0.1:9199/review/package/personal-ops-actions-YYYYMMDD-HHMMSS.json/queue
 curl http://127.0.0.1:9199/review/import-queue
+curl http://127.0.0.1:9199/review/import-queue-review
 curl http://127.0.0.1:9199/review/coordination-readiness
 curl http://127.0.0.1:9199/review/coordination-console
 curl http://127.0.0.1:9199/review/noise-candidates

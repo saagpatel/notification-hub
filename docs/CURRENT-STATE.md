@@ -44,9 +44,9 @@ tuning pass.
   unfinished promotion work.
 - The first real operator-mediated promotion proof has completed, and the current live queue has no
   queued, pending, or stale promoted handoff outcomes.
-- Queue maintenance now has a dedicated `personal-ops-queue-health` command that reports queued
-  item age, promoted handoffs still waiting on outcome sync, stale pending outcomes, and the next
-  safe operator commands without applying work.
+- Queue maintenance now has dedicated `personal-ops-queue-health` and `personal-ops-queue-review`
+  commands. Health reports queued age, pending/stale outcomes, and next safe commands; review groups
+  queued handoffs into operator batches without approving, sending, or changing downstream systems.
 - A dedicated `personal-ops-outcome-sync-reminder` command now reports pending or stale promoted
   handoff outcomes as a read-only reminder without syncing personal-ops itself.
 - A queue burn-in command now combines queue health, the temporary queue lifecycle scenario, and
@@ -313,6 +313,7 @@ uv run --frozen notification-hub personal-ops-import path/to/actions.json --enqu
 uv run --frozen notification-hub personal-ops-queue
 uv run --frozen notification-hub personal-ops-queue --queue-id QUEUE_ID --status reviewed --reason "evidence checked"
 uv run --frozen notification-hub personal-ops-queue-health
+uv run --frozen notification-hub personal-ops-queue-review
 uv run --frozen notification-hub-personal-ops-queue-health --json
 uv run --frozen notification-hub personal-ops-outcome-sync-reminder
 uv run --frozen notification-hub-personal-ops-outcome-sync-reminder --json
@@ -381,6 +382,8 @@ Expected current outcome:
   evidence-checked items that do not need downstream personal-ops promotion
 - `notification-hub personal-ops-queue-health`: reports routine import queue maintenance state,
   stale pending promoted outcomes, and next safe commands without applying work
+- `notification-hub personal-ops-queue-review`: groups queued handoff items into operator review
+  batches, including approval decision counts and the first safe local review command
 - `notification-hub-personal-ops-queue-health`: script shortcut for the same queue-health report
 - `notification-hub personal-ops-outcome-sync-reminder`: reports pending and stale promoted handoff
   outcomes as read-only reminders without applying personal-ops work
@@ -431,6 +434,8 @@ Expected current outcome:
 - `DELETE /review/package/{name}`: deletes one saved review package without importing or applying it
 - `POST /review/package/{name}/queue` and `/review/import-queue`: enqueue and display local
   personal-ops handoff items without applying them
+- `/review/import-queue-review`: summarizes queued handoffs as read-only review batches for the
+  review surface
 - `/review/outcome-sync-reminder`: reports promoted handoffs that still need downstream outcome sync
   without applying them
 - `/review/action-proposal-dismissals`: lists active or historical local proposal dismissals without
