@@ -28,6 +28,7 @@ from notification_hub.config import (
     PORT,
     analyze_policy_config,
     get_policy_config,
+    load_policy_config_file,
 )
 from notification_hub.coordination import infer_intent
 from notification_hub.diagnostics import collect_doctor_report
@@ -612,6 +613,19 @@ class PolicyCheckReport(TypedDict):
     suggestion_count: int
     warnings: list[str]
     suggestions: list[str]
+    policy_drift: "PolicyDriftReport"
+
+
+class PolicyDriftReport(TypedDict):
+    status: str
+    live_noise_rule_count: int
+    sample_noise_rule_count: int
+    missing_sample_noise_rule_count: int
+    extra_live_noise_rule_count: int
+    missing_sample_noise_rules: list[dict[str, object]]
+    extra_live_noise_rules: list[dict[str, object]]
+    next_action: str
+    error: str | None
 
 
 class VerifyRuntimeReport(TypedDict):
@@ -4086,16 +4100,101 @@ def bootstrap_policy_config(*, force: bool = False) -> BootstrapConfigReport:
     }
 
 
+NOISE_RULE_DRIFT_FIELDS = (
+    "source",
+    "project",
+    "project_prefix",
+    "title_contains",
+    "body_contains",
+    "text_contains",
+    "level",
+    "window_minutes",
+)
+
+
+def _noise_rule_signature(rule: NoiseRule) -> tuple[object, ...]:
+    return tuple(getattr(rule, field_name) for field_name in NOISE_RULE_DRIFT_FIELDS)
+
+
+def _noise_rule_summary(rule: NoiseRule) -> dict[str, object]:
+    summary: dict[str, object] = {}
+    for field_name in NOISE_RULE_DRIFT_FIELDS:
+        value = getattr(rule, field_name)
+        if value is not None:
+            summary[field_name] = value
+    return summary
+
+
+def _build_policy_drift_report(policy: object) -> PolicyDriftReport:
+    if not isinstance(policy, type(get_policy_config())):
+        policy = get_policy_config()
+    live_policy = cast(type(get_policy_config()), policy)
+    sample_policy = load_policy_config_file(EXAMPLE_POLICY_CONFIG)
+    if not sample_policy.config_found:
+        return {
+            "status": "degraded",
+            "live_noise_rule_count": len(live_policy.noise.rules),
+            "sample_noise_rule_count": 0,
+            "missing_sample_noise_rule_count": 0,
+            "extra_live_noise_rule_count": 0,
+            "missing_sample_noise_rules": [],
+            "extra_live_noise_rules": [],
+            "next_action": "Restore the repo sample policy config before checking live policy drift.",
+            "error": "sample policy config not found",
+        }
+    if sample_policy.load_error is not None:
+        return {
+            "status": "degraded",
+            "live_noise_rule_count": len(live_policy.noise.rules),
+            "sample_noise_rule_count": 0,
+            "missing_sample_noise_rule_count": 0,
+            "extra_live_noise_rule_count": 0,
+            "missing_sample_noise_rules": [],
+            "extra_live_noise_rules": [],
+            "next_action": "Fix the repo sample policy config before checking live policy drift.",
+            "error": sample_policy.load_error,
+        }
+
+    live_signatures = {_noise_rule_signature(rule) for rule in live_policy.noise.rules}
+    sample_signatures = {_noise_rule_signature(rule) for rule in sample_policy.noise.rules}
+    missing_sample_rules = [
+        rule for rule in sample_policy.noise.rules if _noise_rule_signature(rule) not in live_signatures
+    ]
+    extra_live_rules = [
+        rule for rule in live_policy.noise.rules if _noise_rule_signature(rule) not in sample_signatures
+    ]
+
+    missing_count = len(missing_sample_rules)
+    status = "warn" if missing_count else "ok"
+    next_action = (
+        "Add the missing sample noise rules to the live policy config or update the sample deliberately."
+        if missing_count
+        else "Live policy includes every sample noise rule."
+    )
+    return {
+        "status": status,
+        "live_noise_rule_count": len(live_policy.noise.rules),
+        "sample_noise_rule_count": len(sample_policy.noise.rules),
+        "missing_sample_noise_rule_count": missing_count,
+        "extra_live_noise_rule_count": len(extra_live_rules),
+        "missing_sample_noise_rules": [_noise_rule_summary(rule) for rule in missing_sample_rules],
+        "extra_live_noise_rules": [_noise_rule_summary(rule) for rule in extra_live_rules],
+        "next_action": next_action,
+        "error": None,
+    }
+
+
 def run_policy_check() -> PolicyCheckReport:
     """Analyze the current policy config for overlapping or ineffective rules."""
     policy = get_policy_config()
     warnings = list(analyze_policy_config(policy))
     suggestions = [_suggest_fix_for_warning(warning) for warning in warnings]
     load_error = policy.load_error
+    policy_drift = _build_policy_drift_report(policy)
 
-    if load_error is not None or not EXAMPLE_POLICY_CONFIG.exists():
+    if load_error is not None or policy_drift["status"] == "degraded":
         status = "degraded"
-    elif warnings:
+    elif warnings or policy_drift["status"] == "warn":
         status = "warn"
     else:
         status = "ok"
@@ -4110,6 +4209,7 @@ def run_policy_check() -> PolicyCheckReport:
         "suggestion_count": len(suggestions),
         "warnings": warnings,
         "suggestions": suggestions,
+        "policy_drift": policy_drift,
     }
 
 

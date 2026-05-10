@@ -118,7 +118,9 @@ real signal state, and the next safe action into one read-only summary. It also 
 lineage as new, queued, promoted, resolved, or ignored so already-handled proposals stay visible as
 history without being treated as fresh work. Its operator guide names the current stage and exact
 safe commands for saving, validating, queueing, promoting, or outcome-syncing handoffs while keeping
-apply behavior outside notification-hub.
+apply behavior outside notification-hub. If a handoff is already queued or waiting on a promoted
+outcome, the console keeps that queue lifecycle as the next action before returning to readiness
+cleanup or new package review.
 The console also includes a proposal-review summary that groups active proposals by source, project,
 intent, priority, and state, so the operator can tell when to review one proposal alone versus
 staging a small batch package for inspection. The `/review` surface can save, queue, or locally
