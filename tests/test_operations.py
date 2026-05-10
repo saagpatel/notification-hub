@@ -300,6 +300,12 @@ def test_coordination_console_summarizes_ready_expansion(tmp_path: Path) -> None
                         "suggested_next_action": "Review the waiting item.",
                         "evidence_event_id": "event-1",
                         "evidence_timestamp": "2026-05-10T04:40:00+00:00",
+                        "evidence_context": {
+                            "thread_id": "thread-1",
+                            "draft_id": "draft-1",
+                            "approval_id": "approval-1",
+                        },
+                        "evidence_quality": "rich",
                         "count": 3,
                     },
                     {
@@ -315,6 +321,8 @@ def test_coordination_console_summarizes_ready_expansion(tmp_path: Path) -> None
                         "suggested_next_action": "Review the waiting item.",
                         "evidence_event_id": "event-2",
                         "evidence_timestamp": "2026-05-10T04:42:00+00:00",
+                        "evidence_context": {},
+                        "evidence_quality": "thin",
                         "count": 2,
                     }
                 ],
@@ -366,6 +374,8 @@ def test_coordination_console_summarizes_ready_expansion(tmp_path: Path) -> None
     assert report["proposal_review"]["group_count"] == 1
     assert report["proposal_review"]["groups"][0]["action_count"] == 2
     assert report["proposal_review"]["groups"][0]["total_event_count"] == 5
+    assert report["proposal_review"]["groups"][0]["rich_evidence_count"] == 1
+    assert report["proposal_review"]["groups"][0]["thin_evidence_count"] == 1
     assert report["proposal_review"]["groups"][0]["newest_evidence_timestamp"] == (
         "2026-05-10T04:42:00+00:00"
     )
@@ -1450,6 +1460,7 @@ def test_personal_ops_action_export_preserves_mail_evidence_context() -> None:
         "draft_id": "draft-456",
         "approval_id": "approval-789",
     }
+    assert report["actions"][0]["evidence_quality"] == "rich"
 
 
 def test_personal_ops_action_export_scans_past_policy_covered_candidates() -> None:

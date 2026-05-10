@@ -245,6 +245,9 @@ uses deterministic title/body/source-level rules to infer intent.
 Events may also include optional scalar `context` values for operator evidence, such as mail
 `thread_id`, `draft_id`, `message_id`, or `approval_id`. The hub stores and displays this context in
 rollups and review packages, but does not use it to send, approve, or mutate external systems.
+Action proposals also include an `evidence_quality` value. `rich` means the latest event has both a
+mail/thread anchor and a concrete work-item ID; `thin` means the proposal still needs more operator
+inspection before promotion.
 The inbox report also includes `rollups` for repeated source/project/title/body patterns, so repeated
 approval drafts and completion pings can be reviewed as one grouped signal.
 Personal-ops action exports are proposal-only: they include priority, state, suggested next action,

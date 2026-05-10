@@ -131,6 +131,7 @@ class PersonalOpsActionReport(TypedDict):
     evidence_event_id: str
     evidence_timestamp: str
     evidence_context: NotRequired[dict[str, object]]
+    evidence_quality: str
     count: int
 
 
@@ -750,6 +751,8 @@ class CoordinationProposalReviewGroup(TypedDict):
     newest_evidence_timestamp: str | None
     titles: list[str]
     action_ids: list[str]
+    rich_evidence_count: int
+    thin_evidence_count: int
     history_count: int
     latest_history: ActionProposalGroupHistoryReport | None
     latest_outcome: str | None
@@ -1523,6 +1526,7 @@ def _action_from_rollup(rollup: InboxRollupReport) -> PersonalOpsActionReport:
         f"notification-hub:{rollup['source']}:{project_part}:"
         f"{rollup['intent']}:{normalized_title}:{evidence_part}"
     )
+    evidence_context = dict(rollup.get("latest_context", {}))
     return {
         "action_id": action_id,
         "dismissal_key": _proposal_dismissal_key(rollup),
@@ -1538,7 +1542,8 @@ def _action_from_rollup(rollup: InboxRollupReport) -> PersonalOpsActionReport:
         "suggested_next_action": _suggested_action(rollup["intent"], rollup["title"]),
         "evidence_event_id": rollup["latest_event_id"],
         "evidence_timestamp": rollup["latest_timestamp"],
-        "evidence_context": dict(rollup.get("latest_context", {})),
+        "evidence_context": evidence_context,
+        "evidence_quality": _evidence_quality(evidence_context),
         "count": rollup["count"],
     }
 
@@ -4906,6 +4911,17 @@ def _action_group_key(action: PersonalOpsActionReport) -> tuple[str, str | None,
     )
 
 
+def _evidence_quality(context: dict[str, object] | None) -> str:
+    if not context:
+        return "thin"
+    keys = {key for key, value in context.items() if value not in ("", None)}
+    has_anchor = bool(keys & {"thread_id", "message_id"})
+    has_work_item = bool(
+        keys & {"draft_id", "approval_id", "provider_draft_id", "review_id", "queue_id"}
+    )
+    return "rich" if has_anchor and has_work_item else "thin"
+
+
 def _action_group_label(key: tuple[str, str | None, str, str, str]) -> str:
     source, project, intent, priority, state = key
     return f"{source}:{project or 'none'}:{intent}:{priority}:{state}"
@@ -5077,6 +5093,10 @@ def _build_proposal_review_group(
             titles.append(title)
     newest = max((item["action"]["evidence_timestamp"] for item in actions), default=None)
     total_count = sum(item["action"]["count"] for item in actions)
+    rich_evidence_count = sum(
+        1 for item in actions if item["action"].get("evidence_quality") == "rich"
+    )
+    thin_evidence_count = len(actions) - rich_evidence_count
     group_label = _action_group_label(key)
     group_history = history_by_group.get(group_label, [])
     latest_outcome = next((item["outcome"] for item in group_history if item["outcome"]), None)
@@ -5097,6 +5117,8 @@ def _build_proposal_review_group(
         "newest_evidence_timestamp": newest,
         "titles": titles[:5],
         "action_ids": [item["action"]["action_id"] for item in actions],
+        "rich_evidence_count": rich_evidence_count,
+        "thin_evidence_count": thin_evidence_count,
         "history_count": len(group_history),
         "latest_history": group_history[0] if group_history else None,
         "latest_outcome": latest_outcome,

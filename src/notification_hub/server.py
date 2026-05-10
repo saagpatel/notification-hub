@@ -1163,6 +1163,7 @@ REVIEW_HTML = """<!doctype html>
         <div class="line"><span class="title">${esc(a.title)}</span><span class="meta">${esc(a.priority)}/${esc(a.state)} x${esc(a.count)}</span></div>
         <div class="next">${esc(a.source)}${a.project ? " / " + esc(a.project) : ""} / ${esc(a.intent)}</div>
         <div class="next">${esc(a.suggested_next_action)}</div>
+        <div class="next">Evidence quality: ${esc(a.evidence_quality || "thin")}</div>
         <div class="next">Action ID: ${esc(a.action_id)}</div>
         <div class="next">Evidence: ${esc(a.evidence_event_id)} / ${esc(a.evidence_timestamp)}</div>
         ${Object.keys(a.evidence_context || {}).length ? `<div class="next">Context: ${esc(Object.entries(a.evidence_context).map(([key, value]) => `${key}=${value}`).join(" / "))}</div>` : ""}

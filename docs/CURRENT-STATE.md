@@ -133,6 +133,8 @@ tuning pass.
   context into personal-ops action proposals as `evidence_context`. Mail producers can use this for
   source-side identifiers such as thread, draft, message, or approval IDs without giving the hub any
   send or approval authority.
+- Action proposals now include deterministic `evidence_quality` so review surfaces can distinguish
+  context-rich mail handoffs from thin repeated signals before queueing or promotion.
 - The review page can stage a local review package, list recent saved review packages, inspect
   package actions/evidence plus queue lineage, queue import handoff items, filter
   queued/promoted/pending/stale/resolved handoffs, mark queued items reviewed/rejected/snoozed/promoted,
