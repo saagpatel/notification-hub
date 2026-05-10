@@ -152,6 +152,9 @@ async def test_review_page_endpoint(client: AsyncClient) -> None:
     assert "No resolved rich-evidence handoff outcomes yet" in resp.text
     assert "Latest proof" in resp.text
     assert "rich resolved" in resp.text
+    assert "First rich handoff checklist" in resp.text
+    assert "Proof trend" in resp.text
+    assert "readiness improved" in resp.text
     assert "Policy Drift" in resp.text
     assert "Operator Decision Required" in resp.text
     assert "Noise Candidate Review" in resp.text

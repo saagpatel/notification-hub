@@ -125,6 +125,8 @@ tuning pass.
 - The review page now also includes a Real Signal Readiness lane that combines active proposals,
   handled follow-ups, queue state, latest saved proof, the next safe command, and a rich-outcome
   guardrail so coordination expansion waits for a real resolved rich-evidence handoff.
+  It also shows a first-rich-handoff checklist and compares the latest saved burn-in proof against
+  the previous proof for readiness and noise drift.
 - Codex now has an active `notification-hub-signal-watch` heartbeat that should stay report-only and
   use the read-only Coordination Console, queue health, and runtime verification surfaces to decide
   whether there is an active operator handoff or only the narrowed monitor posture.

@@ -582,6 +582,44 @@ REVIEW_HTML = """<!doctype html>
       }
       return outcomeQuality.next_action || "Rich-evidence outcomes are now represented in the trend.";
     }
+    function firstRichHandoffChecklist(outcomeQuality) {
+      const rich = outcomeQuality.rich || {};
+      if ((rich.resolved ?? 0) > 0) {
+        return [
+          "Continue comparing rich and thin outcomes before widening automation.",
+          "Keep recording promotion outcome ids and final operator decisions."
+        ];
+      }
+      return [
+        "Save one rich-evidence review package from a real active proposal.",
+        "Queue exactly one handoff and inspect its evidence context.",
+        "Promote externally through personal-ops, then record the suggestion id.",
+        "Record the final accepted, rejected, or ignored outcome.",
+        "Rerun queue health and burn-in before expanding authority."
+      ];
+    }
+    function proofTrendLabel(reports) {
+      if (!reports || reports.length === 0) {
+        return "No saved proof yet.";
+      }
+      const latest = reports[0] || {};
+      const previous = reports[1] || {};
+      if (!previous.name) {
+        return `Latest proof is ${latest.ready_for_live_promotion ? "ready" : "not ready"} with ${latest.noise_candidate_count ?? 0} noise candidate(s).`;
+      }
+      const noiseDelta = (latest.noise_candidate_count ?? 0) - (previous.noise_candidate_count ?? 0);
+      const readyTrend = latest.ready_for_live_promotion === previous.ready_for_live_promotion
+        ? "readiness unchanged"
+        : latest.ready_for_live_promotion
+          ? "readiness improved"
+          : "readiness regressed";
+      const noiseTrend = noiseDelta === 0
+        ? "noise unchanged"
+        : noiseDelta < 0
+          ? `noise down ${Math.abs(noiseDelta)}`
+          : `noise up ${noiseDelta}`;
+      return `${readyTrend}; ${noiseTrend} versus previous proof.`;
+    }
     function renderRealSignalReadiness(data) {
       const readiness = data.readiness || {};
       const queue = data.queue_health || {};
@@ -616,6 +654,7 @@ REVIEW_HTML = """<!doctype html>
         <div class="next"><strong>Latest proof</strong>: ${esc(latestProof.name || "No saved proof")} (${esc(latestProof.ready_for_live_promotion ? "ready" : "not ready")}, noise ${esc(latestProof.noise_candidate_count ?? 0)})</div>
         <div class="next"><strong>Handled follow-ups</strong>: ${esc(review.handled_history_summary || "No handled follow-up history.")}</div>
         <div class="next"><strong>Guardrail</strong>: ${esc(outcomeGuardrail(outcomeQuality))}</div>
+        <div class="next"><strong>First rich handoff checklist</strong>: ${esc(firstRichHandoffChecklist(outcomeQuality).join(" -> "))}</div>
         <div class="next"><strong>Next command</strong>: ${esc(nextCommand)}</div>
         <div class="next">${esc(data.next_action || signal.next_action || "")}</div>
       `));
@@ -1288,14 +1327,19 @@ REVIEW_HTML = """<!doctype html>
     async function loadBurnInReports() {
       const res = await fetch("/review/burn-in-reports?limit=6");
       const data = await res.json();
+      const reports = data.reports || [];
+      const latest = reports[0] || {};
       renderList(burnInReports, data.reports, r => item(`
         <div class="line"><span class="title">${esc(r.name)}</span><span class="meta">${esc(r.status)} / ${r.ready_for_live_promotion ? "ready" : "not ready"}</span></div>
         <div class="badge-row">
+          ${badge(ageLabel(r.generated_at || r.modified_at))}
+          ${badge(`runtime ${r.runtime_status || "unknown"}`)}
           ${warnBadge(`queued ${r.queued_count ?? 0}`, (r.queued_count ?? 0) > 0)}
           ${warnBadge(`pending ${r.pending_count ?? 0}`, (r.pending_count ?? 0) > 0)}
           ${warnBadge(`stale ${r.stale_count ?? 0}`, (r.stale_count ?? 0) > 0)}
           ${warnBadge(`noise ${r.noise_candidate_count ?? 0}`, (r.noise_candidate_count ?? 0) > 0)}
         </div>
+        ${r.name === latest.name ? `<div class="next"><strong>Proof trend</strong>: ${esc(proofTrendLabel(reports))}</div>` : ""}
         <div class="next">${esc(r.next_action || "")}</div>
         <div class="button-row">
           <button type="button" data-burn-in-report="${esc(r.name)}">Inspect</button>

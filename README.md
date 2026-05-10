@@ -172,6 +172,8 @@ readiness, and the saved report status.
 The `/review` page also includes a Real Signal Readiness lane that combines active proposals,
 handled follow-ups, queue state, latest saved proof, the next safe command, and a rich-outcome
 guardrail so expansion stays operator-mediated until a real rich-evidence handoff resolves.
+It also shows a first-rich-handoff checklist and compares the latest saved burn-in proof against the
+previous proof for readiness and noise drift.
 Pass `--save-review-package` when you want notification-hub to stage a local review package under
 `~/.local/share/notification-hub/action-exports/`; this still does not import or apply actions.
 The validate-action-package command checks a saved review package before any future import/apply
