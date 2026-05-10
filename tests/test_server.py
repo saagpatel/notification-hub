@@ -153,6 +153,7 @@ async def test_review_page_endpoint(client: AsyncClient) -> None:
     assert "Latest Review Session" in resp.text
     assert "Review Sessions" in resp.text
     assert "Review Session Retention" in resp.text
+    assert "function metric" in resp.text
 
 
 async def test_review_data_endpoint_is_read_only(client: AsyncClient) -> None:

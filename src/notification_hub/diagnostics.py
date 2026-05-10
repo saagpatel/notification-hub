@@ -143,7 +143,7 @@ def collect_doctor_report() -> dict[str, object]:
 
     local_api: dict[str, object]
     try:
-        response = httpx.get(health_url, timeout=2.0)
+        response = httpx.get(health_url, timeout=2.0, verify=False)
         payload: dict[str, Any] | None = None
         if response.headers.get("content-type", "").startswith("application/json"):
             payload = response.json()
@@ -153,7 +153,7 @@ def collect_doctor_report() -> dict[str, object]:
             "url": health_url,
             "payload": payload,
         }
-    except httpx.HTTPError as exc:
+    except (httpx.HTTPError, OSError) as exc:
         local_api = {
             "reachable": False,
             "status_code": None,

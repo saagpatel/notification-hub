@@ -561,6 +561,61 @@ def test_collect_doctor_report_handles_local_api_failure() -> None:
     assert checks["local_api_healthy"] is False
 
 
+def test_collect_doctor_report_handles_local_api_os_failure() -> None:
+    with (
+        patch(
+            "notification_hub.diagnostics.collect_runtime_readiness",
+            return_value={
+                "delivery": {
+                    "push_notifier_available": True,
+                    "slack_webhook_configured": True,
+                },
+                "paths": {
+                    "bridge_file_exists": True,
+                    "events_dir_exists": True,
+                    "events_log_exists": True,
+                    "launch_agent_exists": True,
+                },
+                "config": {
+                    "path": "/tmp/config.toml",
+                    "exists": True,
+                    "load_error": None,
+                    "routing_rule_count": 0,
+                    "warning_count": 0,
+                },
+                "retention": {
+                    "enabled": True,
+                    "interval_minutes": 60,
+                    "max_events": 2000,
+                    "keep_archives": 10,
+                },
+                "runtime_wiring": {
+                    "launch_agent_matches_template": True,
+                    "claude_hook_matches_template": True,
+                    "codex_hook_matches_template": True,
+                    "launch_agent_uses_frozen": True,
+                    "claude_hook_uses_safe_json": True,
+                    "hook_timeout_configured": True,
+                    "codex_hook_executable": True,
+                },
+            },
+        ),
+        patch(
+            "notification_hub.diagnostics.httpx.get",
+            side_effect=OSError("missing cert file"),
+        ),
+    ):
+        report = collect_doctor_report()
+
+    local_api = report["local_api"]
+    checks = report["checks"]
+    assert isinstance(local_api, dict)
+    assert isinstance(checks, dict)
+    assert report["status"] == "degraded"
+    assert local_api["reachable"] is False
+    assert checks["local_api_healthy"] is False
+
+
 def test_cli_json_output(capsys: CaptureFixture[str]) -> None:
     with patch(
         "notification_hub.cli.collect_doctor_report",

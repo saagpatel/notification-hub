@@ -14,6 +14,8 @@ tuning pass.
   zero scoped Slack delivery failures.
 - Policy-based runtime overrides are now supported through an optional config file.
 - A local doctor command is available for operator checks.
+- The doctor command reports localhost health failures cleanly, including local SSL/certificate
+  setup errors from the HTTP client, instead of crashing during verification.
 - The repo now also includes a sample policy config, a smoke command, and a log-retention command.
 - Policy config now also supports ordered routing rules, and a bootstrap command can copy the sample
   config into the live config path.
