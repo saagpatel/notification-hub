@@ -30,6 +30,7 @@ from notification_hub.operations import (
     dismiss_action_proposal,
     list_action_review_packages,
     list_action_proposal_dismissals,
+    list_action_proposal_group_history,
     list_personal_ops_queue_burn_in_reports,
     list_personal_ops_import_queue,
     load_action_review_package_detail,
@@ -211,7 +212,27 @@ def test_coordination_readiness_prioritizes_noise_before_expansion() -> None:
     assert "noise candidates" in report["summary"]
 
 
-def test_coordination_console_summarizes_ready_expansion() -> None:
+def test_coordination_console_summarizes_ready_expansion(tmp_path: Path) -> None:
+    group_history_path = tmp_path / "group-history.jsonl"
+    group_history_path.write_text(
+        json.dumps(
+            {
+                "group_key": "personal-ops:mail:waiting_on_user:high:waiting",
+                "event_type": "saved",
+                "recorded_at": "2026-05-10T04:39:00+00:00",
+                "status": "ok",
+                "action_count": 2,
+                "action_ids": ["action-1", "action-2"],
+                "package_path": "/tmp/package.json",
+                "queued_count": None,
+                "dismissed_count": None,
+                "reason": None,
+                "error": None,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     with (
         patch(
             "notification_hub.operations.run_coordination_readiness",
@@ -305,7 +326,7 @@ def test_coordination_console_summarizes_ready_expansion() -> None:
         ) as mock_reports,
         patch("notification_hub.operations._read_import_queue_items", return_value=[]),
     ):
-        report = run_coordination_console(hours=2, limit=3)
+        report = run_coordination_console(hours=2, limit=3, group_history_path=group_history_path)
 
     assert report["status"] == "ok"
     assert report["readiness"]["decision"] == "ready_to_expand"
@@ -320,6 +341,12 @@ def test_coordination_console_summarizes_ready_expansion() -> None:
     assert report["proposal_review"]["groups"][0]["total_event_count"] == 5
     assert report["proposal_review"]["groups"][0]["newest_evidence_timestamp"] == (
         "2026-05-10T04:42:00+00:00"
+    )
+    assert report["proposal_review"]["groups"][0]["history_count"] == 1
+    assert report["proposal_review"]["groups"][0]["latest_history"] is not None
+    assert report["proposal_review"]["groups"][0]["latest_history"]["event_type"] == "saved"
+    assert report["proposal_review"]["group_history"][0]["group_key"] == (
+        "personal-ops:mail:waiting_on_user:high:waiting"
     )
     assert report["next_signal"]["status"] == "ready"
     assert report["next_signal"]["title"] == "Active proposal waiting"
@@ -1045,6 +1072,7 @@ def test_action_proposal_group_package_can_save_selected_group(tmp_path: Path) -
             hours=2,
             limit=5,
             review_dir=tmp_path,
+            group_history_path=tmp_path / "group-history.jsonl",
         )
 
     assert report["status"] == "ok"
@@ -1053,6 +1081,9 @@ def test_action_proposal_group_package_can_save_selected_group(tmp_path: Path) -
     payload = json.loads(package_path.read_text(encoding="utf-8"))
     assert payload["selected_group"]["group_key"] == "personal-ops:mail:waiting_on_user:high:waiting"
     assert [action["evidence_event_id"] for action in payload["actions"]] == ["abc123", "def456"]
+    assert report["group_history"] is not None
+    assert report["group_history"]["event_type"] == "saved"
+    assert report["group_history"]["action_count"] == 2
 
 
 def test_action_proposal_group_package_can_enqueue_selected_group(tmp_path: Path) -> None:
@@ -1089,12 +1120,18 @@ def test_action_proposal_group_package_can_enqueue_selected_group(tmp_path: Path
             enqueue=True,
             review_dir=tmp_path,
             queue_path=tmp_path / "queue.jsonl",
+            group_history_path=tmp_path / "group-history.jsonl",
         )
 
     assert report["status"] == "ok"
     assert report["import_result"] is not None
     assert report["import_result"]["queued_count"] == 1
     assert (tmp_path / "queue.jsonl").exists()
+    history = list_action_proposal_group_history(
+        history_path=tmp_path / "group-history.jsonl",
+    )
+    assert history[0]["event_type"] == "queued"
+    assert history[0]["queued_count"] == 1
 
 
 def test_action_proposal_group_dismisses_each_current_match(tmp_path: Path) -> None:
@@ -1141,6 +1178,7 @@ def test_action_proposal_group_dismisses_each_current_match(tmp_path: Path) -> N
             hours=2,
             limit=5,
             dismissals_path=tmp_path / "dismissals.jsonl",
+            group_history_path=tmp_path / "group-history.jsonl",
         )
 
     assert report["status"] == "ok"
@@ -1149,6 +1187,9 @@ def test_action_proposal_group_dismisses_each_current_match(tmp_path: Path) -> N
         "Outbound workflow reply",
         "Send this reply",
     }
+    assert report["group_history"] is not None
+    assert report["group_history"]["event_type"] == "dismissed"
+    assert report["group_history"]["dismissed_count"] == 2
 
 
 def test_personal_ops_action_export_can_save_review_package(tmp_path: Path) -> None:

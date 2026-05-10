@@ -61,7 +61,9 @@ tuning pass.
   handoff state. It now also includes a proposal-review summary that groups active proposals by
   source, project, intent, priority, and state so the operator can distinguish single-proposal review
   from a small batch package. Group controls can save a scoped review package, queue that group into
-  the local handoff queue, or locally dismiss the group without applying personal-ops work.
+  the local handoff queue, or locally dismiss the group without applying personal-ops work. Each
+  group action now appends local group-history JSONL so the console can show recent group lifecycle
+  state after a save, queue, or dismiss.
 - Action proposal export now scans a deeper candidate set than the display limit, so dismissed or
   policy-covered rollups cannot crowd out real lower-ranked operator signals from the default view.
 - Action proposal dismissals can now be listed, inspected, and undismissed through CLI and `/review`
@@ -80,7 +82,8 @@ tuning pass.
 - The review page now includes Operator Focus, Coordination Readiness, and Coordination Console
   summaries that put the current action state, expansion gate, next real signal, and next safe action
   first. A Proposal Review section shows grouped active proposals before a package is queued and can
-  save, queue, or dismiss one proposal group at a time.
+  save, queue, or dismiss one proposal group at a time. It also shows recent group-history entries
+  so a refresh does not hide the last grouped action.
 - The review page can stage a local review package, list recent saved review packages, inspect
   package actions/evidence plus queue lineage, queue import handoff items, filter
   queued/promoted/pending/stale/resolved handoffs, mark queued items reviewed/rejected/snoozed/promoted,
@@ -225,6 +228,8 @@ tuning pass.
 - Added Proposal Review group controls in `/review` so an operator can save a scoped group package,
   queue it into the local handoff queue, or dismiss the group locally while keeping personal-ops
   mutations outside notification-hub.
+- Added durable Proposal Review group history so save, queue, and dismiss actions append local JSONL
+  evidence and appear in CLI, JSON, and `/review` lifecycle summaries.
 - Added action proposal dismissal listing/undismiss commands and `/review` controls so temporarily
   hidden proposals can be audited or reactivated without deleting dismissal history.
 - Added operator daily-state and handoff-drill commands plus `/review` endpoints so local operators
@@ -430,9 +435,9 @@ It is not part of normal day-to-day work.
 Start future work from `main`, keep using the frozen verification commands, and treat the repo-owned
 runtime templates as the source of truth for live launcher and hook wiring.
 The next work here should keep `coordination-console` as the first expansion surface, use proposal
-groups during real handoff review, and watch whether dismissals plus policy noise rules keep repeated
-mail/test signals quiet enough for broader coordination work. Keep apply behavior operator-mediated
-until the compact console proves it should own a broader workflow.
+groups during real handoff review, and use the new group history to confirm saved, queued, and
+dismissed groups do not reappear as confusing fresh work. Keep apply behavior operator-mediated until
+the compact console proves it should own a broader workflow.
 
 ## Optional Follow-Up
 

@@ -175,6 +175,7 @@ class ActionProposalGroupPackageReport(TypedDict):
     action_count: int
     review_package: dict[str, object]
     import_result: dict[str, object] | None
+    group_history: ActionProposalGroupHistoryReport | None
     next_action: str
     applied: bool
     error: str | None
@@ -185,8 +186,23 @@ class ActionProposalGroupDismissReport(TypedDict):
     group_key: str
     dismissed_count: int
     dismissals: list[ActionProposalDismissalReport]
+    group_history: "ActionProposalGroupHistoryReport | None"
     next_action: str
     applied: bool
+    error: str | None
+
+
+class ActionProposalGroupHistoryReport(TypedDict):
+    group_key: str
+    event_type: str
+    recorded_at: str
+    status: str
+    action_count: int
+    action_ids: list[str]
+    package_path: str | None
+    queued_count: int | None
+    dismissed_count: int | None
+    reason: str | None
     error: str | None
 
 
@@ -577,6 +593,8 @@ class CoordinationProposalReviewGroup(TypedDict):
     newest_evidence_timestamp: str | None
     titles: list[str]
     action_ids: list[str]
+    history_count: int
+    latest_history: ActionProposalGroupHistoryReport | None
     next_action: str
 
 
@@ -591,6 +609,7 @@ class CoordinationProposalReviewReport(TypedDict):
     group_count: int
     primary_action_id: str | None
     groups: list[CoordinationProposalReviewGroup]
+    group_history: list[ActionProposalGroupHistoryReport]
     next_action: str
 
 
@@ -672,6 +691,7 @@ BURN_IN_REPORT_DIR = EVENTS_DIR / "burn-in-reports"
 OPERATOR_STATE_REPORT_DIR = EVENTS_DIR / "operator-state-reports"
 PERSONAL_OPS_IMPORT_QUEUE = EVENTS_DIR / "personal-ops-import-queue.jsonl"
 ACTION_PROPOSAL_DISMISSALS = EVENTS_DIR / "action-proposal-dismissals.jsonl"
+ACTION_PROPOSAL_GROUP_HISTORY = EVENTS_DIR / "action-proposal-group-history.jsonl"
 ACTION_EXPORT_SCHEMA_VERSION = "notification-hub.personal_ops_action_export.v1"
 PERSONAL_OPS_IMPORT_QUEUE_SCHEMA_VERSION = "notification-hub.personal_ops_import_queue.v1"
 ACTION_PROPOSAL_MIN_CANDIDATES = 25
@@ -744,6 +764,84 @@ def _jsonl_append(path: Path, record: dict[str, object]) -> None:
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(record, sort_keys=True) + "\n")
     os.chmod(path, 0o600)
+
+
+def _group_history_report(raw: dict[str, object]) -> ActionProposalGroupHistoryReport | None:
+    group_key = _as_str(raw.get("group_key"))
+    event_type = _as_str(raw.get("event_type"))
+    recorded_at = _as_str(raw.get("recorded_at"))
+    status = _as_str(raw.get("status"))
+    if group_key is None or event_type is None or recorded_at is None or status is None:
+        return None
+    raw_action_ids = raw.get("action_ids")
+    action_ids = (
+        [item for item in cast(list[object], raw_action_ids) if isinstance(item, str)]
+        if isinstance(raw_action_ids, list)
+        else []
+    )
+    return {
+        "group_key": group_key,
+        "event_type": event_type,
+        "recorded_at": recorded_at,
+        "status": status,
+        "action_count": _as_int(raw.get("action_count")) or len(action_ids),
+        "action_ids": action_ids,
+        "package_path": _as_str(raw.get("package_path")),
+        "queued_count": _as_int(raw.get("queued_count")),
+        "dismissed_count": _as_int(raw.get("dismissed_count")),
+        "reason": _as_str(raw.get("reason")),
+        "error": _as_str(raw.get("error")),
+    }
+
+
+def list_action_proposal_group_history(
+    *,
+    limit: int = 25,
+    group_key: str | None = None,
+    history_path: Path | None = None,
+) -> list[ActionProposalGroupHistoryReport]:
+    """Return recent proposal-group lifecycle records without applying work."""
+    records: list[ActionProposalGroupHistoryReport] = []
+    for raw in reversed(_jsonl_dicts(history_path or ACTION_PROPOSAL_GROUP_HISTORY)):
+        report = _group_history_report(raw)
+        if report is None:
+            continue
+        if group_key is not None and report["group_key"] != group_key:
+            continue
+        records.append(report)
+        if len(records) >= max(limit, 1):
+            break
+    return records
+
+
+def _record_action_proposal_group_history(
+    *,
+    group_key: str,
+    event_type: str,
+    status: str,
+    actions: list[PersonalOpsActionReport],
+    package_path: str | None = None,
+    queued_count: int | None = None,
+    dismissed_count: int | None = None,
+    reason: str | None = None,
+    error: str | None = None,
+    history_path: Path | None = None,
+) -> ActionProposalGroupHistoryReport:
+    record: ActionProposalGroupHistoryReport = {
+        "group_key": group_key,
+        "event_type": event_type,
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
+        "status": status,
+        "action_count": len(actions),
+        "action_ids": [action["action_id"] for action in actions],
+        "package_path": package_path,
+        "queued_count": queued_count,
+        "dismissed_count": dismissed_count,
+        "reason": reason,
+        "error": error,
+    }
+    _jsonl_append(history_path or ACTION_PROPOSAL_GROUP_HISTORY, dict(record))
+    return record
 
 
 def _dismissal_report(raw: dict[str, object]) -> ActionProposalDismissalReport | None:
@@ -2916,6 +3014,7 @@ def save_action_proposal_group_package(
     enqueue: bool = False,
     review_dir: Path | None = None,
     queue_path: Path | None = None,
+    group_history_path: Path | None = None,
 ) -> ActionProposalGroupPackageReport:
     """Stage one active proposal group as a review package without applying personal-ops work."""
     safe_group_key = group_key.strip()
@@ -2931,6 +3030,7 @@ def save_action_proposal_group_package(
                 "error": "group_key is required",
             },
             "import_result": None,
+            "group_history": None,
             "next_action": "Choose a valid proposal group before saving a package.",
             "applied": False,
             "error": "group_key is required",
@@ -2952,6 +3052,7 @@ def save_action_proposal_group_package(
                 "error": "no active proposals matched this group",
             },
             "import_result": None,
+            "group_history": None,
             "next_action": "Refresh Proposal Review; this group is no longer active.",
             "applied": False,
             "error": "no active proposals matched this group",
@@ -2974,6 +3075,8 @@ def save_action_proposal_group_package(
     error = str(review_package["error"]) if review_package["error"] is not None else None
     import_result: dict[str, object] | None = None
     next_action = "Inspect the saved group package before queueing it."
+    event_type = "saved"
+    queued_count: int | None = None
     if status == "ok" and enqueue:
         path_value = review_package["path"]
         if isinstance(path_value, str):
@@ -2990,16 +3093,36 @@ def save_action_proposal_group_package(
             error_value = import_result.get("error")
             error = error_value if isinstance(error_value, str) else error
             next_action = str(import_result.get("next_action") or "Review the queued group handoff.")
+            queued_count = _as_int(import_result.get("queued_count"))
+            event_type = "queued"
         else:
             status = "degraded"
             error = "review package path missing"
             next_action = "Save the group package again before queueing it."
+            event_type = "queue_failed"
+    group_history: ActionProposalGroupHistoryReport | None = None
+    try:
+        group_history = _record_action_proposal_group_history(
+            group_key=safe_group_key,
+            event_type=event_type if status == "ok" else f"{event_type}_failed",
+            status=status,
+            actions=actions,
+            package_path=review_package["path"] if isinstance(review_package["path"], str) else None,
+            queued_count=queued_count,
+            error=error,
+            history_path=group_history_path,
+        )
+    except OSError as exc:
+        status = "degraded"
+        error = str(exc)
+        next_action = "Fix group history write errors before using group lifecycle controls."
     return {
         "status": status,
         "group_key": safe_group_key,
         "action_count": len(actions),
         "review_package": review_package,
         "import_result": import_result,
+        "group_history": group_history,
         "next_action": next_action,
         "applied": False,
         "error": error,
@@ -3013,6 +3136,7 @@ def dismiss_action_proposal_group(
     hours: int = 2,
     limit: int = 25,
     dismissals_path: Path | None = None,
+    group_history_path: Path | None = None,
 ) -> ActionProposalGroupDismissReport:
     """Dismiss every currently active proposal in one proposal-review group."""
     safe_group_key = group_key.strip()
@@ -3022,6 +3146,7 @@ def dismiss_action_proposal_group(
             "group_key": group_key,
             "dismissed_count": 0,
             "dismissals": [],
+            "group_history": None,
             "next_action": "Choose a valid proposal group before dismissing it.",
             "applied": False,
             "error": "group_key is required",
@@ -3037,6 +3162,7 @@ def dismiss_action_proposal_group(
             "group_key": safe_group_key,
             "dismissed_count": 0,
             "dismissals": [],
+            "group_history": None,
             "next_action": "Refresh Proposal Review; this group is no longer active.",
             "applied": False,
             "error": "no active proposals matched this group",
@@ -3059,11 +3185,28 @@ def dismiss_action_proposal_group(
             dismissals.append(report["dismissal"])
         if report["error"] is not None:
             error = report["error"]
+    status = "ok" if error is None else "degraded"
+    group_history: ActionProposalGroupHistoryReport | None = None
+    try:
+        group_history = _record_action_proposal_group_history(
+            group_key=safe_group_key,
+            event_type="dismissed" if status == "ok" else "dismiss_failed",
+            status=status,
+            actions=actions,
+            dismissed_count=len(dismissals),
+            reason=reason,
+            error=error,
+            history_path=group_history_path,
+        )
+    except OSError as exc:
+        status = "degraded"
+        error = str(exc)
     return {
-        "status": "ok" if error is None else "degraded",
+        "status": status,
         "group_key": safe_group_key,
         "dismissed_count": len(dismissals),
         "dismissals": dismissals,
+        "group_history": group_history,
         "next_action": "Group dismissed from the local console. Undismiss individual proposals if they should return.",
         "applied": False,
         "error": error,
@@ -3681,6 +3824,7 @@ def _build_proposal_review_group(
     *,
     key: tuple[str, str | None, str, str, str],
     actions: list[CoordinationConsoleActionReport],
+    history_by_group: dict[str, list[ActionProposalGroupHistoryReport]],
 ) -> CoordinationProposalReviewGroup:
     source, project, intent, priority, state = key
     titles: list[str] = []
@@ -3691,6 +3835,7 @@ def _build_proposal_review_group(
     newest = max((item["action"]["evidence_timestamp"] for item in actions), default=None)
     total_count = sum(item["action"]["count"] for item in actions)
     group_label = _action_group_label(key)
+    group_history = history_by_group.get(group_label, [])
     next_action = (
         "Review this group as one package when the evidence points to the same operator decision."
         if len(actions) > 1
@@ -3708,6 +3853,8 @@ def _build_proposal_review_group(
         "newest_evidence_timestamp": newest,
         "titles": titles[:5],
         "action_ids": [item["action"]["action_id"] for item in actions],
+        "history_count": len(group_history),
+        "latest_history": group_history[0] if group_history else None,
         "next_action": next_action,
     }
 
@@ -3716,6 +3863,7 @@ def _build_proposal_review(
     *,
     active_actions: list[CoordinationConsoleActionReport],
     handled_actions: list[CoordinationConsoleActionReport],
+    group_history: list[ActionProposalGroupHistoryReport],
 ) -> CoordinationProposalReviewReport:
     new_count = sum(1 for item in active_actions if item["lineage_status"] == "new")
     queued_count = sum(1 for item in active_actions if item["lineage_status"] == "queued")
@@ -3723,8 +3871,15 @@ def _build_proposal_review(
     grouped: dict[tuple[str, str | None, str, str, str], list[CoordinationConsoleActionReport]] = {}
     for item in active_actions:
         grouped.setdefault(_action_group_key(item["action"]), []).append(item)
+    history_by_group: dict[str, list[ActionProposalGroupHistoryReport]] = {}
+    for item in group_history:
+        history_by_group.setdefault(item["group_key"], []).append(item)
     groups = [
-        _build_proposal_review_group(key=key, actions=items)
+        _build_proposal_review_group(
+            key=key,
+            actions=items,
+            history_by_group=history_by_group,
+        )
         for key, items in sorted(
             grouped.items(),
             key=lambda pair: (
@@ -3769,6 +3924,7 @@ def _build_proposal_review(
         "group_count": len(groups),
         "primary_action_id": primary_action_id,
         "groups": groups[:5],
+        "group_history": group_history[:5],
         "next_action": next_action,
     }
 
@@ -3968,7 +4124,12 @@ def _build_coordination_console_guide(
     )
 
 
-def run_coordination_console(*, hours: int = 2, limit: int = 5) -> CoordinationConsoleReport:
+def run_coordination_console(
+    *,
+    hours: int = 2,
+    limit: int = 5,
+    group_history_path: Path | None = None,
+) -> CoordinationConsoleReport:
     """Build one read-only coordination view after readiness has cleared expansion."""
     safe_hours = max(hours, 1)
     safe_limit = max(limit, 1)
@@ -3977,6 +4138,10 @@ def run_coordination_console(*, hours: int = 2, limit: int = 5) -> CoordinationC
     queue = run_personal_ops_import_queue_health_check(limit=safe_limit)
     outcome_sync_reminder = run_personal_ops_outcome_sync_reminder(limit=safe_limit)
     burn_in_reports = list_personal_ops_queue_burn_in_reports(limit=safe_limit)
+    group_history = list_action_proposal_group_history(
+        limit=safe_limit,
+        history_path=group_history_path,
+    )
     proposal_lineage = _build_proposal_lineage(actions["actions"])
     action_dismissals = actions.get("dismissals", [])
     active_actions = [
@@ -3990,6 +4155,7 @@ def run_coordination_console(*, hours: int = 2, limit: int = 5) -> CoordinationC
     proposal_review = _build_proposal_review(
         active_actions=active_actions,
         handled_actions=handled_actions,
+        group_history=group_history,
     )
 
     queue_health = queue["health"]

@@ -622,8 +622,10 @@ REVIEW_HTML = """<!doctype html>
           ${badge(group.state)}
           ${badge(`events ${group.total_event_count ?? 0}`)}
           ${badge(`titles ${(group.titles || []).length}`)}
+          ${badge(`history ${group.history_count ?? 0}`)}
         </div>
         <div class="next">${esc((group.titles || []).join(", "))}</div>
+        ${group.latest_history ? `<div class="next"><strong>Last group action</strong>: ${esc(group.latest_history.event_type)} (${esc(group.latest_history.status)})</div>` : ""}
         <div class="next">${esc(group.next_action || "")}</div>
         <div class="button-row">
           <button type="button" data-save-group="${esc(group.group_key)}">Save group</button>
@@ -641,6 +643,7 @@ REVIEW_HTML = """<!doctype html>
         </div>
         <div class="next">${esc(review.summary || "")}</div>
         <div class="next">${esc(review.next_action || "")}</div>
+        ${(review.group_history || []).slice(0, 3).map(entry => `<div class="next"><strong>Recent group action</strong>: ${esc(entry.event_type)} ${esc(entry.group_key)} (${esc(entry.status)})</div>`).join("")}
       `), ...(groupRows.length ? groupRows : [item(`<div class="next">No active proposal groups.</div>`)]));
       proposalReview.querySelectorAll("button[data-save-group]").forEach(button => {
         button.addEventListener("click", () => saveProposalGroup(button.dataset.saveGroup));
@@ -681,6 +684,7 @@ REVIEW_HTML = """<!doctype html>
       packageDetail.replaceChildren(
         item(`<div class="line"><span class="title">Save group</span><span class="meta">${esc(data.status)}</span></div>`),
         item(`<div class="next">Actions: ${esc(data.action_count ?? 0)}</div>`),
+        item(`<div class="next">History: ${esc((data.group_history || {}).event_type || "not recorded")}</div>`),
         item(`<div class="next">${esc(data.next_action || data.error || "")}</div>`)
       );
       await loadPackages();
@@ -698,6 +702,7 @@ REVIEW_HTML = """<!doctype html>
       packageDetail.replaceChildren(
         item(`<div class="line"><span class="title">Queue group</span><span class="meta">${esc(data.status)}</span></div>`),
         item(`<div class="next">Actions: ${esc(data.action_count ?? 0)} / queued: ${esc(importResult.queued_count ?? 0)}</div>`),
+        item(`<div class="next">History: ${esc((data.group_history || {}).event_type || "not recorded")}</div>`),
         item(`<div class="next">${esc(data.next_action || data.error || "")}</div>`)
       );
       await loadPackages();
@@ -719,6 +724,7 @@ REVIEW_HTML = """<!doctype html>
       packageDetail.replaceChildren(
         item(`<div class="line"><span class="title">Dismiss group</span><span class="meta">${esc(data.status)}</span></div>`),
         item(`<div class="next">Dismissed: ${esc(data.dismissed_count ?? 0)}</div>`),
+        item(`<div class="next">History: ${esc((data.group_history || {}).event_type || "not recorded")}</div>`),
         item(`<div class="next">${esc(data.next_action || data.error || "")}</div>`)
       );
       await loadDismissals();

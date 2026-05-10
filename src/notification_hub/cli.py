@@ -876,6 +876,17 @@ def _print_coordination_console_report(report: CoordinationConsoleReport) -> Non
                 f"{group['intent']} / {group['priority']}: "
                 f"{', '.join(group['titles'])}"
             )
+            latest_history = group.get("latest_history")
+            if isinstance(latest_history, dict):
+                print(
+                    "    history: "
+                    f"{latest_history.get('event_type')} "
+                    f"({latest_history.get('status')})"
+                )
+    if proposal_review["group_history"]:
+        print("- recent group history:")
+        for item in proposal_review["group_history"][:3]:
+            print(f"  - {item['event_type']} {item['group_key']} ({item['status']})")
     if report["next_commands"]:
         print("- next commands:")
         for command in report["next_commands"]:

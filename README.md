@@ -221,8 +221,9 @@ show pending outcome-sync reminders, list and inspect saved burn-in reports, lis
 proposal dismissals, show the Coordination Console next signal, run the temporary operator handoff
 drill, delete saved review packages, validate the latest staged or saved package, and show the
 Coordination Console operator guide plus proposal-review grouping. The Proposal Review controls can
-save a group package, queue a group package for operator review, or dismiss a group locally. These
-controls still do not apply, approve, send, or mutate personal-ops.
+save a group package, queue a group package for operator review, or dismiss a group locally, and
+each group action is recorded in local group-history JSONL so later console refreshes still show
+what happened. These controls still do not apply, approve, send, or mutate personal-ops.
 Coordination snapshots target bridge-db's `codex` snapshot shape: the emitted
 `bridge_snapshot` object can be passed as snapshot data after operator review, or saved directly
 with the explicit `--save-bridge-db` flag.
