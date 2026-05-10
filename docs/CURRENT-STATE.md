@@ -1,6 +1,6 @@
 # Current State
 
-Last updated: 2026-05-09
+Last updated: 2026-05-10
 
 ## Snapshot
 
@@ -35,6 +35,8 @@ tuning pass.
   applied changes.
 - Queued personal-ops handoffs now have explicit lifecycle states: queued, reviewed, rejected,
   snoozed, superseded, and promoted. Queue health is visible in status and runtime verification.
+- The first real operator-mediated promotion proof has completed, and the current live queue has no
+  queued, pending, or stale promoted handoff outcomes.
 - Queue maintenance now has a dedicated `personal-ops-queue-health` command that reports queued
   item age, promoted handoffs still waiting on outcome sync, stale pending outcomes, and the next
   safe operator commands without applying work.
@@ -44,8 +46,12 @@ tuning pass.
   recent runtime burn-in into one non-applying readiness report for live operator handoffs. It now
   states that outcome sync remains operator-mediated and that notification-hub reports pending or
   stale outcomes without syncing personal-ops itself.
+- Queue burn-in can now save a timestamped local report under notification-hub runtime state with
+  `--save-report`, giving real-use promotion checks a durable artifact without applying work.
 - A localhost-only review page is available at `/review` on the daemon. It shows runtime health,
   inbox rollups, action proposals, and trust state without applying anything.
+- The review page now includes an Operator Focus summary that puts the current action state first:
+  runtime issue, queued handoffs, pending promoted outcomes, available proposals, or no action needed.
 - The review page can stage a local review package, list recent saved review packages, inspect
   package actions/evidence plus queue lineage, queue import handoff items, filter
   queued/promoted/pending/stale/resolved handoffs, mark queued items reviewed/rejected/snoozed/promoted,
@@ -165,6 +171,10 @@ tuning pass.
   runtime noise can be checked together before or after real operator promotion.
 - Added explicit queue burn-in outcome-sync posture so reports make clear that notification-hub
   tracks pending/stale promoted outcomes but does not create or sync personal-ops work.
+- Added `personal-ops-queue-burn-in --save-report` so operator burn-in checks can be kept as
+  timestamped JSON evidence under local notification-hub runtime state.
+- Added review UI Operator Focus so the top of `/review` names the current next action before the
+  operator scans packages, rollups, or queue detail.
 - Added review UI queue-health summary and filters for pending outcome, stale outcome, queued,
   promoted, resolved, and open handoffs.
 - Added `personal-ops-queue-scenario` as a temporary end-to-end lifecycle proof that does not touch
@@ -200,6 +210,7 @@ uv run --frozen notification-hub personal-ops-outcome-sync-reminder
 uv run --frozen notification-hub-personal-ops-outcome-sync-reminder --json
 uv run --frozen notification-hub personal-ops-queue-burn-in
 uv run --frozen notification-hub-personal-ops-queue-burn-in --json
+uv run --frozen notification-hub personal-ops-queue-burn-in --save-report
 uv run --frozen notification-hub personal-ops-queue-scenario
 uv run --frozen notification-hub logs
 curl http://127.0.0.1:9199/review
@@ -221,7 +232,7 @@ uv run --frozen notification-hub retention --max-events 2000
 
 Expected current outcome:
 
-- `pytest`: 286 passed
+- `pytest`: 291 passed
 - `ruff`: clean
 - `pyright`: 0 errors
 - `/health/details`: `status: ok`, watcher active, push available, Slack configured
@@ -248,12 +259,13 @@ Expected current outcome:
   outcomes as read-only reminders without applying personal-ops work
 - `notification-hub-personal-ops-outcome-sync-reminder`: script shortcut for the same reminder report
 - `notification-hub personal-ops-queue-burn-in`: checks queue health, temporary lifecycle scenario,
-  runtime burn-in, outcome-sync posture, and live operator steps without applying personal-ops work
+  runtime burn-in, outcome-sync posture, and live operator steps without applying personal-ops work;
+  `--save-report` writes a timestamped local JSON report when durable burn-in evidence is useful
 - `notification-hub-personal-ops-queue-burn-in`: script shortcut for the same burn-in report
 - `notification-hub personal-ops-queue-scenario`: runs a temporary queue lifecycle and records a
   final accepted promotion outcome without touching runtime queue state
-- `/review`: localhost-only review UI for runtime state, inbox rollups, action proposals, and trust
-  state
+- `/review`: localhost-only review UI for runtime state, Operator Focus, inbox rollups, action
+  proposals, import queue health, and trust state
 - `/review/save-package` and `/review/validate-package`: review UI controls for staging and
   validating packages without importing or applying them
 - `/review/packages`: lists recent saved review packages and validation summaries without importing
@@ -330,8 +342,8 @@ It is not part of normal day-to-day work.
 Start future work from `main`, keep using the frozen verification commands, and treat the repo-owned
 runtime templates as the source of truth for live launcher and hook wiring.
 The next work here should use `personal-ops-queue-burn-in` around the first real operator promotion,
-then decide whether real promoted-outcome reminders are frequent enough to justify a higher-level
-coordination console.
+save a burn-in report when the loop is exercised, and decide from real queue volume whether
+promoted-outcome reminders justify a higher-level coordination console.
 
 ## Optional Follow-Up
 

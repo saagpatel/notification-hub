@@ -1443,6 +1443,12 @@ def test_cli_personal_ops_queue_burn_in_json_output(capsys: CaptureFixture[str])
             "outcome_sync_posture": "operator-mediated",
             "operator_steps": ["Queue loop is ready."],
             "next_action": "Queue loop is ready; use the operator steps when the next real handoff appears.",
+            "report_file": {
+                "requested": True,
+                "status": "ok",
+                "path": "/tmp/reports/personal-ops-queue-burn-in.json",
+                "error": None,
+            },
             "applied": False,
         },
     ) as mock_burn_in:
@@ -1456,13 +1462,22 @@ def test_cli_personal_ops_queue_burn_in_json_output(capsys: CaptureFixture[str])
                 "20",
                 "--limit",
                 "3",
+                "--save-report",
+                "--report-dir",
+                "/tmp/reports",
             ]
         )
 
     captured = capsys.readouterr()
     assert exit_code == 0
     assert '"ready_for_live_promotion": true' in captured.out
-    mock_burn_in.assert_called_once_with(minutes=5, lines=20, limit=3)
+    mock_burn_in.assert_called_once_with(
+        minutes=5,
+        lines=20,
+        limit=3,
+        save_report=True,
+        report_dir=Path("/tmp/reports"),
+    )
 
 
 def test_cli_policy_check_json_output(capsys: CaptureFixture[str]) -> None:
@@ -2010,6 +2025,12 @@ def test_personal_ops_queue_burn_in_wrapper_forwards_flags(capsys: CaptureFixtur
             "outcome_sync_posture": "operator-mediated",
             "operator_steps": ["Queue loop is ready."],
             "next_action": "Queue loop is ready; use the operator steps when the next real handoff appears.",
+            "report_file": {
+                "requested": False,
+                "status": "not_requested",
+                "path": None,
+                "error": None,
+            },
             "applied": False,
         },
     ) as mock_burn_in:
@@ -2020,6 +2041,7 @@ def test_personal_ops_queue_burn_in_wrapper_forwards_flags(capsys: CaptureFixtur
     assert '"operator_steps"' in output.out
     mock_burn_in.assert_called_once()
     assert mock_burn_in.call_args.kwargs["minutes"] == 5
+    assert mock_burn_in.call_args.kwargs["save_report"] is False
 
 
 def test_policy_check_wrapper_forwards_flags(capsys: CaptureFixture[str]) -> None:

@@ -155,6 +155,48 @@ def _review_package_state(validation_status: str | None = None) -> dict[str, obj
     }
 
 
+def _review_operator_focus(
+    *,
+    runtime: dict[str, object],
+    action_count: int,
+    queue_health: dict[str, object],
+    outcome_sync_reminder: dict[str, object],
+) -> dict[str, object]:
+    if runtime.get("status") != "ok":
+        return {
+            "status": "warn",
+            "title": "Runtime needs attention",
+            "next_action": runtime.get("next_action", "Run notification-hub verify-runtime."),
+        }
+    if queue_health.get("needs_review"):
+        return {
+            "status": "warn",
+            "title": "Review queued handoffs",
+            "next_action": queue_health.get(
+                "next_action", "Review queued personal-ops handoff items."
+            ),
+        }
+    if outcome_sync_reminder.get("should_remind"):
+        return {
+            "status": "warn",
+            "title": "Resolve promoted outcomes",
+            "next_action": outcome_sync_reminder.get(
+                "next_action", "Resolve promoted personal-ops handoff outcomes."
+            ),
+        }
+    if action_count > 0:
+        return {
+            "status": "ready",
+            "title": "Action proposals available",
+            "next_action": "Save and validate a review package before queueing handoffs.",
+        }
+    return {
+        "status": "ok",
+        "title": "No action needed",
+        "next_action": "Queue loop is ready; wait for the next real operator signal.",
+    }
+
+
 async def _review_runtime_status() -> dict[str, object]:
     details = await _collect_health_details()
     config = cast(dict[str, object], details.get("config", {}))
@@ -285,6 +327,9 @@ REVIEW_HTML = """<!doctype html>
     .badge.warn { border-color: #d89b25; color: #7a4b00; }
     .toolbar { align-items: center; display: flex; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
     select { border: 1px solid #d0d5dd; border-radius: 6px; padding: 5px 8px; }
+    .focus { border-color: #b9d6ef; margin-bottom: 14px; }
+    .focus .title { font-size: 18px; }
+    .focus .next { font-size: 14px; }
     .trust { background: #eef6f1; border-color: #badfc8; }
     .warn { background: #fff8eb; border-color: #efd49a; }
     .empty { color: #667085; font-style: italic; }
@@ -309,6 +354,10 @@ REVIEW_HTML = """<!doctype html>
       </div>
     </header>
     <div class="summary" id="summary"></div>
+    <section class="focus">
+      <h2>Operator Focus</h2>
+      <ul id="operatorFocus"></ul>
+    </section>
     <div class="grid">
       <section>
         <h2>Action Proposals</h2>
@@ -358,6 +407,7 @@ REVIEW_HTML = """<!doctype html>
   </main>
   <script>
     const summary = document.getElementById("summary");
+    const operatorFocus = document.getElementById("operatorFocus");
     const actions = document.getElementById("actions");
     const rollups = document.getElementById("rollups");
     const attention = document.getElementById("attention");
@@ -424,6 +474,17 @@ REVIEW_HTML = """<!doctype html>
         item(`<span>Rollups</span><strong>${esc(data.inbox.rollups.length)}</strong>`),
         item(`<span>Applied</span><strong>${data.trust.applied ? "yes" : "no"}</strong>`)
       );
+      const focus = data.operator_focus || {};
+      operatorFocus.replaceChildren(item(`
+        <div class="line"><span class="title">${esc(focus.title || "Operator focus")}</span><span class="meta">${esc(focus.status || "unknown")}</span></div>
+        <div class="badge-row">
+          ${warnBadge(`queued ${focus.queued_count ?? 0}`, (focus.queued_count ?? 0) > 0)}
+          ${warnBadge(`pending ${focus.pending_count ?? 0}`, (focus.pending_count ?? 0) > 0)}
+          ${warnBadge(`stale ${focus.stale_count ?? 0}`, (focus.stale_count ?? 0) > 0)}
+          ${badge(`actions ${focus.action_count ?? 0}`)}
+        </div>
+        <div class="next">${esc(focus.next_action || "")}</div>
+      `));
       renderList(actions, data.actions.actions, a => item(`
         <div class="line"><span class="title">${esc(a.title)}</span><span class="meta">${esc(a.priority)}/${esc(a.state)} x${esc(a.count)}</span></div>
         <div class="next">${esc(a.suggested_next_action)}</div>
@@ -628,7 +689,7 @@ REVIEW_HTML = """<!doctype html>
       if (status === "promoted") {
         body.promotion_target = "personal-ops task suggestion";
         body.promotion_outcome = "pending";
-        body.promotion_outcome_note = "Review UI marked the handoff promoted; sync personal-ops outcome later.";
+        body.promotion_outcome_note = "Review UI marked the handoff promoted; record the personal-ops outcome later.";
       }
       const res = await fetch(`/review/import-queue/${encodeURIComponent(queueId)}`, {
         method: "PATCH",
@@ -758,15 +819,40 @@ async def review_data(hours: int = 2, limit: int = 6) -> dict[str, object]:
     inbox = run_inbox(hours=safe_hours, limit=safe_limit)
     actions = run_personal_ops_action_export(hours=safe_hours, limit=safe_limit)
     runtime = await _review_runtime_status()
+    queue_health = run_personal_ops_import_queue_health_check(limit=safe_limit)
+    outcome_sync_reminder = run_personal_ops_outcome_sync_reminder(limit=safe_limit)
+    operator_focus = _review_operator_focus(
+        runtime=runtime,
+        action_count=len(actions["actions"]),
+        queue_health=dict(queue_health["health"]),
+        outcome_sync_reminder=dict(outcome_sync_reminder),
+    )
+    operator_focus.update(
+        {
+            "queued_count": queue_health["health"]["queued_count"],
+            "pending_count": queue_health["health"]["promoted_pending_count"],
+            "stale_count": queue_health["health"]["promoted_pending_stale_count"],
+            "action_count": len(actions["actions"]),
+        }
+    )
     return {
         "status": "ok"
-        if inbox["status"] == "ok" and actions["status"] == "ok" and runtime["status"] == "ok"
+        if (
+            inbox["status"] == "ok"
+            and actions["status"] == "ok"
+            and runtime["status"] == "ok"
+            and queue_health["status"] == "ok"
+            and outcome_sync_reminder["status"] == "ok"
+        )
         else "degraded",
         "hours": safe_hours,
         "limit": safe_limit,
         "runtime": runtime,
         "inbox": inbox,
         "actions": actions,
+        "operator_focus": operator_focus,
+        "queue_health": queue_health["health"],
+        "outcome_sync_reminder": outcome_sync_reminder,
         "trust": {
             "proposed": bool(actions["actions"]),
             "saved": _latest_review_package_path is not None,

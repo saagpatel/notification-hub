@@ -437,6 +437,15 @@ def _build_parser(prog: str = "notification-hub") -> argparse.ArgumentParser:
         help="Maximum queue items to inspect.",
     )
     personal_ops_queue_burn_in.add_argument(
+        "--save-report",
+        action="store_true",
+        help="Save the burn-in report under local notification-hub runtime state.",
+    )
+    personal_ops_queue_burn_in.add_argument(
+        "--report-dir",
+        help="Optional directory for saved burn-in reports.",
+    )
+    personal_ops_queue_burn_in.add_argument(
         "--json",
         action="store_true",
         help="Emit the burn-in report as JSON.",
@@ -806,6 +815,11 @@ def _print_personal_ops_queue_burn_in_report(report: PersonalOpsQueueBurnInRepor
     print(f"- runtime health: {runtime_health['status']}")
     print(f"- outcome sync posture: {report['outcome_sync_posture']}")
     print(f"- next action: {report['next_action']}")
+    report_file = report.get("report_file") or {}
+    if report_file.get("requested"):
+        print(f"- report file: {report_file.get('status')}")
+        if report_file.get("path") is not None:
+            print(f"- report path: {report_file.get('path')}")
     print("- operator steps:")
     for step in report["operator_steps"]:
         print(f"  - {step}")
@@ -1159,6 +1173,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             minutes=args.minutes,
             lines=args.lines,
             limit=args.limit,
+            save_report=args.save_report,
+            report_dir=Path(args.report_dir).expanduser() if args.report_dir else None,
         )
         if args.json:
             print(json.dumps(report, indent=2, sort_keys=True))

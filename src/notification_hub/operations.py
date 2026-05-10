@@ -300,6 +300,7 @@ class PersonalOpsQueueBurnInReport(TypedDict):
     outcome_sync_posture: str
     operator_steps: list[str]
     next_action: str
+    report_file: dict[str, object]
     applied: bool
 
 
@@ -446,6 +447,7 @@ class StatusReport(TypedDict):
 DEFAULT_BRIDGE_DB_PATH = Path.home() / ".local" / "share" / "bridge-db" / "bridge.db"
 BRIDGE_SNAPSHOT_RETENTION_PER_SYSTEM = 10
 ACTION_EXPORT_DIR = EVENTS_DIR / "action-exports"
+BURN_IN_REPORT_DIR = EVENTS_DIR / "burn-in-reports"
 PERSONAL_OPS_IMPORT_QUEUE = EVENTS_DIR / "personal-ops-import-queue.jsonl"
 ACTION_EXPORT_SCHEMA_VERSION = "notification-hub.personal_ops_action_export.v1"
 PERSONAL_OPS_IMPORT_QUEUE_SCHEMA_VERSION = "notification-hub.personal_ops_import_queue.v1"
@@ -1271,6 +1273,8 @@ def run_personal_ops_queue_burn_in(
     minutes: int = 10,
     lines: int = 200,
     limit: int = 10,
+    save_report: bool = False,
+    report_dir: Path | None = None,
 ) -> PersonalOpsQueueBurnInReport:
     """Report whether the queue loop is ready for live operator burn-in."""
     queue_health = run_personal_ops_import_queue_health_check(limit=limit)
@@ -1285,18 +1289,18 @@ def run_personal_ops_queue_burn_in(
     status = "ok" if ready_for_live_promotion and queue_health["status"] == "ok" else "warn"
     operator_steps = _personal_ops_queue_operator_steps(health)
     if health["queued_count"] > 0:
-        next_action = "Promote one reviewed handoff, then sync the personal-ops outcome back."
+        next_action = "Promote one reviewed handoff, then record the personal-ops outcome."
     elif health["promoted_pending_stale_count"] > 0:
-        next_action = "Sync stale promoted handoff outcomes before promoting more work."
+        next_action = "Record stale promoted handoff outcomes before promoting more work."
     elif health["promoted_pending_count"] > 0:
-        next_action = "Wait for or sync the pending promoted handoff outcome."
+        next_action = "Wait for or record the pending promoted handoff outcome."
     elif ready_for_live_promotion:
         next_action = (
             "Queue loop is ready; use the operator steps when the next real handoff appears."
         )
     else:
         next_action = "Fix the queue scenario or runtime burn-in warning before live promotion."
-    return {
+    report: PersonalOpsQueueBurnInReport = {
         "status": status,
         "queue_health": queue_health,
         "scenario": scenario,
@@ -1305,7 +1309,55 @@ def run_personal_ops_queue_burn_in(
         "outcome_sync_posture": PERSONAL_OPS_OUTCOME_SYNC_POSTURE,
         "operator_steps": operator_steps,
         "next_action": next_action,
+        "report_file": {
+            "requested": save_report,
+            "status": "not_requested",
+            "path": None,
+            "error": None,
+        },
         "applied": False,
+    }
+    if save_report:
+        report_file = _write_personal_ops_queue_burn_in_report(report, output_dir=report_dir)
+        report["report_file"] = report_file
+        if report_file["status"] != "ok":
+            report["status"] = "warn"
+    return report
+
+
+def _write_personal_ops_queue_burn_in_report(
+    report: PersonalOpsQueueBurnInReport,
+    *,
+    output_dir: Path | None = None,
+) -> dict[str, object]:
+    target_dir = output_dir or BURN_IN_REPORT_DIR
+    generated_at = datetime.now(timezone.utc)
+    target_path = target_dir / (
+        f"personal-ops-queue-burn-in-{generated_at.strftime('%Y%m%d-%H%M%S')}.json"
+    )
+    payload = {
+        "schema_version": "notification-hub.personal_ops_queue_burn_in.v1",
+        "generated_at": generated_at.isoformat(),
+        "report": {key: value for key, value in report.items() if key != "report_file"},
+    }
+    try:
+        target_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        fd = os.open(str(target_path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+    except OSError as exc:
+        return {
+            "requested": True,
+            "status": "degraded",
+            "path": str(target_path),
+            "error": str(exc),
+        }
+    return {
+        "requested": True,
+        "status": "ok",
+        "path": str(target_path),
+        "error": None,
     }
 
 
@@ -1504,9 +1556,7 @@ def update_personal_ops_import_queue_item(
     if status == "promoted":
         item_report = _import_queue_item_report(matched)
         if item_report["promotion_outcome"] == "pending":
-            next_action = (
-                "Accept or reject the matching personal-ops task suggestion, then sync the outcome."
-            )
+            next_action = "Accept or reject the matching personal-ops task suggestion, then record the outcome."
         else:
             next_action = "Promotion outcome is recorded; no queue action is needed."
     elif status == "rejected":

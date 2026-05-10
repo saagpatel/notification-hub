@@ -215,17 +215,68 @@ async def test_review_data_endpoint_is_read_only(client: AsyncClient) -> None:
                 "next_action": "No action needed.",
             },
         ) as mock_status,
+        patch(
+            "notification_hub.server.run_personal_ops_import_queue_health_check",
+            return_value={
+                "status": "ok",
+                "health": {
+                    "status": "ok",
+                    "queue_path": "/tmp/queue.jsonl",
+                    "total_count": 0,
+                    "queued_count": 0,
+                    "reviewed_count": 0,
+                    "rejected_count": 0,
+                    "snoozed_count": 0,
+                    "superseded_count": 0,
+                    "promoted_count": 0,
+                    "promoted_pending_count": 0,
+                    "promoted_pending_stale_count": 0,
+                    "promoted_accepted_count": 0,
+                    "promoted_rejected_count": 0,
+                    "promoted_ignored_count": 0,
+                    "needs_outcome_sync": False,
+                    "needs_review": False,
+                    "oldest_queued_at": None,
+                    "oldest_queued_age_seconds": None,
+                    "oldest_promoted_pending_at": None,
+                    "oldest_promoted_pending_age_seconds": None,
+                    "stale_after_hours": 4.0,
+                    "next_action": "No queued personal-ops handoff items.",
+                },
+                "queued_items": [],
+                "pending_promotion_items": [],
+                "next_commands": ["uv run notification-hub personal-ops-queue-health"],
+                "applied": False,
+            },
+        ) as mock_queue_health,
+        patch(
+            "notification_hub.server.run_personal_ops_outcome_sync_reminder",
+            return_value={
+                "status": "ok",
+                "should_remind": False,
+                "pending_count": 0,
+                "stale_count": 0,
+                "reminders": [],
+                "next_commands": ["uv run notification-hub personal-ops-queue-health"],
+                "next_action": "No pending promoted personal-ops handoff outcomes.",
+                "applied": False,
+            },
+        ) as mock_reminder,
     ):
         resp = await client.get("/review/data?hours=2&limit=3")
 
     assert resp.status_code == 200
     data = resp.json()
     assert data["status"] == "ok"
+    assert data["operator_focus"]["title"] == "No action needed"
+    assert data["operator_focus"]["queued_count"] == 0
     assert data["trust"]["applied"] is False
     assert data["trust"]["validated"] is False
     mock_inbox.assert_called_once_with(hours=2, limit=3)
     mock_actions.assert_called_once_with(hours=2, limit=3)
     mock_status.assert_awaited_once_with()
+    mock_queue_health.assert_called_once_with(limit=3)
+    mock_reminder.assert_called_once_with(limit=3)
 
 
 async def test_review_save_package_endpoint_stages_without_applying(client: AsyncClient) -> None:

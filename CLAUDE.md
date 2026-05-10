@@ -40,8 +40,9 @@ for maintainer notes and portfolio context. The cleanup and hardening pass is co
 
 ## Next Recommended Move
 
-Use `docs/CURRENT-STATE.md` to resume quickly, use the README for day-to-day commands, keep
-implementation history in the roadmap, and capture future design changes close to the code instead
-of reopening repo-baseline cleanup work.
+Use `docs/CURRENT-STATE.md` to resume quickly, use the README for day-to-day commands, and treat
+the current lane as operator-loop burn-in: save queue burn-in reports around real handoff use,
+review the `/review` Operator Focus state first, and only expand coordination features after real
+queue volume justifies them.
 
 <!-- portfolio-context:end -->

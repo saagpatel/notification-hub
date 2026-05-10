@@ -67,6 +67,7 @@ uv run notification-hub personal-ops-outcome-sync-reminder
 uv run notification-hub-personal-ops-outcome-sync-reminder --json
 uv run notification-hub personal-ops-queue-burn-in
 uv run notification-hub-personal-ops-queue-burn-in --json
+uv run notification-hub personal-ops-queue-burn-in --save-report
 uv run notification-hub personal-ops-queue-scenario
 uv run notification-hub logs
 uv run notification-hub-logs --json
@@ -120,7 +121,9 @@ The personal-ops-queue-burn-in command combines queue health, the temporary queu
 scenario, and recent runtime burn-in into one non-applying readiness report. Use it before promoting
 real handoffs or after syncing a downstream personal-ops outcome. The report now states the
 outcome-sync posture explicitly: notification-hub can show pending or stale promoted outcomes, but
-the operator still owns creating and syncing the downstream personal-ops work.
+the operator still owns creating and recording the downstream personal-ops work. Pass
+`--save-report` when you want a timestamped local report under
+`~/.local/share/notification-hub/burn-in-reports/`.
 The personal-ops-queue-scenario command runs a temporary end-to-end queue lifecycle, including a
 promoted handoff with an accepted outcome, without touching the real operator queue.
 See `docs/PRODUCT-BOUNDARY.md` for the current ownership split between notification-hub,
@@ -336,6 +339,7 @@ uv run --frozen notification-hub personal-ops-outcome-sync-reminder
 uv run --frozen notification-hub-personal-ops-outcome-sync-reminder --json
 uv run --frozen notification-hub personal-ops-queue-burn-in
 uv run --frozen notification-hub-personal-ops-queue-burn-in --json
+uv run --frozen notification-hub personal-ops-queue-burn-in --save-report
 uv run --frozen notification-hub personal-ops-queue-scenario
 uv run --frozen notification-hub logs
 curl http://127.0.0.1:9199/review
