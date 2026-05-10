@@ -164,11 +164,14 @@ notification-hub runtime state; queued items are handoff records only and are no
 approvals, sends, or applied changes.
 The personal-ops-queue command lists and updates queued handoffs through explicit lifecycle states:
 `queued`, `reviewed`, `rejected`, `snoozed`, `superseded`, and `promoted`. Marking an item
-`promoted` records that an operator-mediated personal-ops task suggestion was created; it does not
-create that suggestion by itself. Promotion records can also store the personal-ops suggestion id
-and final `pending`, `accepted`, `rejected`, or `ignored` outcome.
+`reviewed` is now treated as a reviewed-only closeout lane: evidence was checked and no downstream
+personal-ops promotion is required. Marking an item `promoted` records that an operator-mediated
+personal-ops task suggestion was created; it does not create that suggestion by itself. Promotion
+records can also store the personal-ops suggestion id and final `pending`, `accepted`, `rejected`, or
+`ignored` outcome.
 The Coordination Console treats reviewed and snoozed handoffs as handled history, so they do not
-block readiness once queue health is clean.
+block readiness once queue health is clean. Proposal Review also breaks handled history into
+reviewed-only, resolved, closed, and snoozed counts so reviewed-but-not-promoted work is visible.
 The personal-ops-queue-health command is the normal maintenance check for this queue. It reports
 queued item age, promoted handoffs still waiting on downstream outcome sync, stale pending
 promotions, and the next safe operator commands without applying work.
@@ -303,6 +306,13 @@ project = "personal-ops"
 title_contains = "daemon started"
 level = "info"
 window_minutes = 10
+
+[[noise.rules]]
+source = "personal-ops"
+project = "personal-ops"
+title_contains = "system needs attention"
+body_contains = "run personal-ops doctor"
+window_minutes = 30
 
 [[noise.rules]]
 source = "notion-os"
