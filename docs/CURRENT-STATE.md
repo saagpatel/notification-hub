@@ -77,7 +77,9 @@ tuning pass.
 - An `operator-review-session` command and `/review/operator-review-session` endpoint now summarize
   recent local review activity across grouped proposal saves, queues, dismissals, outcomes, and
   queue follow-through. The `/review` Operator State panel shows this alongside the daily state, and
-  `--save-report` or `save_report=true` writes timestamped local JSON audit reports.
+  `--save-report` or `save_report=true` writes timestamped local JSON audit reports. Saved
+  review-session reports can now be listed and inspected from `/review` as a compact session
+  timeline.
 - An `operator-handoff-drill` command and `/review/operator-handoff-drill` endpoint now run the
   temporary handoff lifecycle plus queue burn-in as a non-applying rehearsal.
 - The sample policy now includes the repeated `personal-ops` daemon-start and `notion-os`
@@ -296,6 +298,8 @@ uv run --frozen notification-hub personal-ops-queue-burn-in
 uv run --frozen notification-hub-personal-ops-queue-burn-in --json
 uv run --frozen notification-hub personal-ops-queue-burn-in --save-report
 uv run --frozen notification-hub personal-ops-queue-scenario
+uv run --frozen notification-hub operator-review-session
+uv run --frozen notification-hub operator-review-session --save-report
 uv run --frozen notification-hub logs
 curl http://127.0.0.1:9199/review
 curl http://127.0.0.1:9199/review/packages
@@ -303,6 +307,10 @@ curl http://127.0.0.1:9199/review/package/personal-ops-actions-YYYYMMDD-HHMMSS.j
 curl -X POST http://127.0.0.1:9199/review/package/personal-ops-actions-YYYYMMDD-HHMMSS.json/queue
 curl http://127.0.0.1:9199/review/import-queue
 curl http://127.0.0.1:9199/review/outcome-sync-reminder
+curl http://127.0.0.1:9199/review/operator-review-session
+curl 'http://127.0.0.1:9199/review/operator-review-session?save_report=true'
+curl http://127.0.0.1:9199/review/operator-review-session-reports
+curl http://127.0.0.1:9199/review/operator-review-session-report/operator-review-session-YYYYMMDD-HHMMSS.json
 curl -X POST http://127.0.0.1:9199/review/action-proposal/DISMISSAL_KEY/dismiss -H 'Content-Type: application/json' -d '{"reason":"known repeated test signal"}'
 curl -X PATCH http://127.0.0.1:9199/review/import-queue/QUEUE_ID -H 'Content-Type: application/json' -d '{"status":"reviewed","reason":"evidence checked"}'
 curl -X DELETE http://127.0.0.1:9199/review/package/personal-ops-actions-YYYYMMDD-HHMMSS.json
@@ -317,7 +325,7 @@ uv run --frozen notification-hub retention --max-events 2000
 
 Expected current outcome:
 
-- `pytest`: 307 passed
+- `pytest`: 345 passed
 - `ruff`: clean
 - `pyright`: 0 errors
 - `/health/details`: `status: ok`, watcher active, push available, Slack configured
@@ -377,8 +385,8 @@ Expected current outcome:
   final accepted promotion outcome without touching runtime queue state
 - `/review`: localhost-only review UI for runtime state, Operator Focus, Coordination Readiness,
   Coordination Console next signal and operator guide, inbox rollups, action proposals, import queue
-  health, saved burn-in report history, proposal dismissal/undismissal, daily operator state,
-  handoff drill, and trust state
+  health, saved burn-in report history, saved review-session history, proposal dismissal/undismissal,
+  daily operator state, handoff drill, and trust state
 - `/review/save-package` and `/review/validate-package`: review UI controls for staging and
   validating packages without importing or applying them
 - `/review/packages`: lists recent saved review packages and validation summaries without importing
@@ -399,6 +407,8 @@ Expected current outcome:
 - `/review/operator-daily-state`: returns a read-only operator state payload for the review surface
 - `/review/operator-review-session`: returns a read-only summary of recent grouped-review and queue
   follow-through activity; `save_report=true` writes the same summary to local runtime state
+- `/review/operator-review-session-reports` and `/review/operator-review-session-report/{name}`:
+  list and inspect saved review-session reports without applying work
 - `POST /review/operator-handoff-drill`: runs the temporary handoff lifecycle from the review surface
   without touching the live queue
 - `PATCH /review/import-queue/{queue_id}`: marks a queued handoff reviewed, rejected, snoozed,

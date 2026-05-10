@@ -143,7 +143,8 @@ a timestamped JSON report under `~/.local/share/notification-hub/operator-state-
 The operator-review-session command summarizes recent local review activity, including grouped
 proposal saves, queues, dismissals, outcomes, and queue follow-through. It is read-only and mirrors
 the review-session summary shown in `/review`; pass `--save-report` when you want a timestamped JSON
-audit report under `~/.local/share/notification-hub/operator-review-session-reports/`.
+audit report under `~/.local/share/notification-hub/operator-review-session-reports/`. Saved
+review-session reports can be listed and inspected from `/review` for a compact session timeline.
 The operator-handoff-drill command runs the temporary queue lifecycle plus queue burn-in as a
 non-applying rehearsal before using the same review flow for a real handoff.
 Pass `--save-review-package` when you want notification-hub to stage a local review package under
@@ -444,6 +445,8 @@ curl -X POST http://127.0.0.1:9199/review/action-proposal/DISMISSAL_KEY/undismis
 curl http://127.0.0.1:9199/review/operator-daily-state
 curl http://127.0.0.1:9199/review/operator-review-session
 curl 'http://127.0.0.1:9199/review/operator-review-session?save_report=true'
+curl http://127.0.0.1:9199/review/operator-review-session-reports
+curl http://127.0.0.1:9199/review/operator-review-session-report/operator-review-session-YYYYMMDD-HHMMSS.json
 curl -X POST http://127.0.0.1:9199/review/operator-handoff-drill
 curl -X PATCH http://127.0.0.1:9199/review/import-queue/QUEUE_ID \
   -H 'Content-Type: application/json' \

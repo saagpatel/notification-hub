@@ -32,9 +32,11 @@ from notification_hub.operations import (
     list_action_review_packages,
     list_action_proposal_dismissals,
     list_action_proposal_group_history,
+    list_operator_review_session_reports,
     list_personal_ops_queue_burn_in_reports,
     list_personal_ops_import_queue,
     load_action_review_package_detail,
+    load_operator_review_session_report_detail,
     load_personal_ops_queue_burn_in_report_detail,
     run_action_proposal_dismissal_list,
     run_burn_in,
@@ -1522,6 +1524,54 @@ def test_operator_review_session_can_save_report(tmp_path: Path) -> None:
     assert payload["schema_version"] == "notification-hub.operator_review_session.v1"
     assert payload["report"]["applied"] is False
     assert payload["report"]["group_history_count"] == 0
+
+
+def test_list_and_load_operator_review_session_reports(tmp_path: Path) -> None:
+    report_dir = tmp_path / "reports"
+    report_dir.mkdir()
+    report_path = report_dir / "operator-review-session-20260510-091508.json"
+    payload: dict[str, object] = {
+        "schema_version": "notification-hub.operator_review_session.v1",
+        "generated_at": "2026-05-10T09:15:08+00:00",
+        "report": {
+            "status": "ok",
+            "generated_at": "2026-05-10T09:15:08+00:00",
+            "hours": 2,
+            "group_history_count": 3,
+            "queue_item_count": 3,
+            "saved_count": 1,
+            "queued_count": 2,
+            "dismissed_count": 0,
+            "outcome_count": 0,
+            "reviewed_count": 3,
+            "active_queue_count": 0,
+            "pending_promotion_count": 0,
+            "group_summaries": [],
+            "recent_group_history": [],
+            "recent_queue_items": [],
+            "next_action": "Recent review activity is summarized.",
+            "applied": False,
+        },
+    }
+    report_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    reports = list_operator_review_session_reports(report_dir=report_dir)
+    detail = load_operator_review_session_report_detail(
+        name=report_path.name, report_dir=report_dir
+    )
+    invalid = load_operator_review_session_report_detail(name="../events.jsonl", report_dir=tmp_path)
+
+    assert reports[0]["name"] == report_path.name
+    assert reports[0]["group_history_count"] == 3
+    assert reports[0]["reviewed_count"] == 3
+    assert detail["status"] == "ok"
+    assert detail["schema_version"] == "notification-hub.operator_review_session.v1"
+    assert detail["summary"] is not None
+    assert detail["summary"]["queued_count"] == 2
+    assert detail["report"] is not None
+    assert detail["report"]["applied"] is False
+    assert invalid["status"] == "degraded"
+    assert invalid["error"] == "invalid review-session report name"
 
 
 def test_action_proposal_group_dismisses_each_current_match(tmp_path: Path) -> None:

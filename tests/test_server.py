@@ -149,6 +149,7 @@ async def test_review_page_endpoint(client: AsyncClient) -> None:
     assert "Coordination Readiness" in resp.text
     assert "Coordination Console" in resp.text
     assert "Burn-In Reports" in resp.text
+    assert "Review Sessions" in resp.text
 
 
 async def test_review_data_endpoint_is_read_only(client: AsyncClient) -> None:
@@ -1353,6 +1354,90 @@ async def test_review_operator_review_session_endpoint_can_save_report(
     data = resp.json()
     assert data["report_file"]["status"] == "ok"
     mock_review_session.assert_called_once_with(hours=2, limit=25, save_report=True)
+
+
+async def test_review_operator_review_session_reports_endpoint_lists_saved_reports(
+    client: AsyncClient,
+) -> None:
+    with patch(
+        "notification_hub.server.list_operator_review_session_reports",
+        return_value=[
+            {
+                "path": "/tmp/operator-review-session.json",
+                "name": "operator-review-session-20260510-091508.json",
+                "modified_at": "2026-05-10T09:15:08+00:00",
+                "size_bytes": 200,
+                "status": "ok",
+                "generated_at": "2026-05-10T09:15:08+00:00",
+                "hours": 2,
+                "group_history_count": 3,
+                "queue_item_count": 3,
+                "saved_count": 1,
+                "queued_count": 2,
+                "dismissed_count": 0,
+                "outcome_count": 0,
+                "reviewed_count": 3,
+                "active_queue_count": 0,
+                "pending_promotion_count": 0,
+                "next_action": "Recent review activity is summarized.",
+            }
+        ],
+    ) as mock_reports:
+        resp = await client.get("/review/operator-review-session-reports?limit=4")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert data["applied"] is False
+    assert data["reports"][0]["group_history_count"] == 3
+    mock_reports.assert_called_once_with(limit=4)
+
+
+async def test_review_operator_review_session_report_detail_endpoint_inspects_saved_report(
+    client: AsyncClient,
+) -> None:
+    with patch(
+        "notification_hub.server.load_operator_review_session_report_detail",
+        return_value={
+            "status": "ok",
+            "path": "/tmp/operator-review-session.json",
+            "name": "operator-review-session-20260510-091508.json",
+            "schema_version": "notification-hub.operator_review_session.v1",
+            "generated_at": "2026-05-10T09:15:08+00:00",
+            "summary": {
+                "path": "/tmp/operator-review-session.json",
+                "name": "operator-review-session-20260510-091508.json",
+                "modified_at": "2026-05-10T09:15:08+00:00",
+                "size_bytes": 200,
+                "status": "ok",
+                "generated_at": "2026-05-10T09:15:08+00:00",
+                "hours": 2,
+                "group_history_count": 3,
+                "queue_item_count": 3,
+                "saved_count": 1,
+                "queued_count": 2,
+                "dismissed_count": 0,
+                "outcome_count": 0,
+                "reviewed_count": 3,
+                "active_queue_count": 0,
+                "pending_promotion_count": 0,
+                "next_action": "Recent review activity is summarized.",
+            },
+            "report": {"status": "ok", "applied": False},
+            "applied": False,
+            "error": None,
+        },
+    ) as mock_detail:
+        resp = await client.get(
+            "/review/operator-review-session-report/operator-review-session-20260510-091508.json"
+        )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert data["applied"] is False
+    assert data["summary"]["queued_count"] == 2
+    mock_detail.assert_called_once_with(name="operator-review-session-20260510-091508.json")
 
 
 async def test_review_operator_handoff_drill_endpoint_is_temporary(client: AsyncClient) -> None:

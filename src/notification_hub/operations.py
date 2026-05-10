@@ -252,6 +252,38 @@ class OperatorReviewSessionReport(TypedDict):
     applied: bool
 
 
+class OperatorReviewSessionReportSummary(TypedDict):
+    path: str
+    name: str
+    modified_at: str
+    size_bytes: int
+    status: str
+    generated_at: str | None
+    hours: int | None
+    group_history_count: int
+    queue_item_count: int
+    saved_count: int
+    queued_count: int
+    dismissed_count: int
+    outcome_count: int
+    reviewed_count: int
+    active_queue_count: int
+    pending_promotion_count: int
+    next_action: str | None
+
+
+class OperatorReviewSessionReportDetail(TypedDict):
+    status: str
+    path: str
+    name: str
+    schema_version: str | None
+    generated_at: str | None
+    summary: OperatorReviewSessionReportSummary | None
+    report: dict[str, object] | None
+    applied: bool
+    error: str | None
+
+
 class PersonalOpsActionExportReport(TypedDict):
     status: str
     schema_version: str
@@ -1917,6 +1949,126 @@ def write_operator_review_session_report(
         "path": str(target_path),
         "error": None,
     }
+
+
+def _is_safe_operator_review_session_report_name(name: str) -> bool:
+    return (
+        Path(name).name == name
+        and re.fullmatch(r"operator-review-session-\d{8}-\d{6}\.json", name) is not None
+    )
+
+
+def _operator_review_session_report_summary(
+    *,
+    path: Path,
+    payload: dict[str, object],
+) -> OperatorReviewSessionReportSummary:
+    stat = path.stat()
+    report = _as_dict(payload.get("report"))
+    return {
+        "path": str(path),
+        "name": path.name,
+        "modified_at": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
+        "size_bytes": stat.st_size,
+        "status": _as_str(report.get("status")) or "unknown",
+        "generated_at": _as_str(payload.get("generated_at")),
+        "hours": _as_int(report.get("hours")),
+        "group_history_count": _as_int(report.get("group_history_count")) or 0,
+        "queue_item_count": _as_int(report.get("queue_item_count")) or 0,
+        "saved_count": _as_int(report.get("saved_count")) or 0,
+        "queued_count": _as_int(report.get("queued_count")) or 0,
+        "dismissed_count": _as_int(report.get("dismissed_count")) or 0,
+        "outcome_count": _as_int(report.get("outcome_count")) or 0,
+        "reviewed_count": _as_int(report.get("reviewed_count")) or 0,
+        "active_queue_count": _as_int(report.get("active_queue_count")) or 0,
+        "pending_promotion_count": _as_int(report.get("pending_promotion_count")) or 0,
+        "next_action": _as_str(report.get("next_action")),
+    }
+
+
+def list_operator_review_session_reports(
+    *,
+    report_dir: Path | None = None,
+    limit: int = 10,
+) -> list[OperatorReviewSessionReportSummary]:
+    """List saved operator review-session reports without applying work."""
+    target_dir = report_dir or OPERATOR_REVIEW_SESSION_REPORT_DIR
+    try:
+        candidates = sorted(
+            target_dir.glob("operator-review-session-*.json"),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+    except OSError:
+        return []
+
+    reports: list[OperatorReviewSessionReportSummary] = []
+    for path in candidates[: max(limit, 1)]:
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(payload, dict):
+                continue
+            reports.append(
+                _operator_review_session_report_summary(
+                    path=path, payload=cast(dict[str, object], payload)
+                )
+            )
+        except (OSError, json.JSONDecodeError):
+            continue
+    return reports
+
+
+def load_operator_review_session_report_detail(
+    *,
+    name: str,
+    report_dir: Path | None = None,
+) -> OperatorReviewSessionReportDetail:
+    """Inspect one saved review-session report without applying work."""
+    target_dir = report_dir or OPERATOR_REVIEW_SESSION_REPORT_DIR
+    target_path = target_dir / name
+    if not _is_safe_operator_review_session_report_name(name):
+        return {
+            "status": "degraded",
+            "path": str(target_path),
+            "name": name,
+            "schema_version": None,
+            "generated_at": None,
+            "summary": None,
+            "report": None,
+            "applied": False,
+            "error": "invalid review-session report name",
+        }
+    try:
+        payload = json.loads(target_path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("review-session report root must be an object")
+        typed_payload = cast(dict[str, object], payload)
+        report = _as_dict(typed_payload.get("report"))
+        return {
+            "status": _as_str(report.get("status")) or "unknown",
+            "path": str(target_path),
+            "name": name,
+            "schema_version": _as_str(typed_payload.get("schema_version")),
+            "generated_at": _as_str(typed_payload.get("generated_at")),
+            "summary": _operator_review_session_report_summary(
+                path=target_path, payload=typed_payload
+            ),
+            "report": report,
+            "applied": False,
+            "error": None,
+        }
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        return {
+            "status": "degraded",
+            "path": str(target_path),
+            "name": name,
+            "schema_version": None,
+            "generated_at": None,
+            "summary": None,
+            "report": None,
+            "applied": False,
+            "error": str(exc),
+        }
 
 
 def summarize_personal_ops_import_queue(

@@ -22,9 +22,11 @@ from notification_hub.operations import (
     dismiss_action_proposal,
     dismiss_action_proposal_group,
     list_action_review_packages,
+    list_operator_review_session_reports,
     list_personal_ops_import_queue,
     list_personal_ops_queue_burn_in_reports,
     load_action_review_package_detail,
+    load_operator_review_session_report_detail,
     load_personal_ops_queue_burn_in_report_detail,
     run_action_proposal_dismissal_list,
     run_coordination_console,
@@ -415,6 +417,14 @@ REVIEW_HTML = """<!doctype html>
         <ul id="operatorState"></ul>
       </section>
       <section>
+        <h2>Review Sessions</h2>
+        <ul id="reviewSessions"></ul>
+      </section>
+      <section>
+        <h2>Review Session Detail</h2>
+        <ul id="reviewSessionDetail"></ul>
+      </section>
+      <section>
         <h2>Review Package</h2>
         <ul id="package"></ul>
       </section>
@@ -465,6 +475,8 @@ REVIEW_HTML = """<!doctype html>
     const trust = document.getElementById("trust");
     const dismissals = document.getElementById("dismissals");
     const operatorState = document.getElementById("operatorState");
+    const reviewSessions = document.getElementById("reviewSessions");
+    const reviewSessionDetail = document.getElementById("reviewSessionDetail");
     const packageState = document.getElementById("package");
     const packages = document.getElementById("packages");
     const packageDetail = document.getElementById("packageDetail");
@@ -586,6 +598,7 @@ REVIEW_HTML = """<!doctype html>
       await loadCoordinationConsole();
       await loadDismissals();
       await loadOperatorDailyState();
+      await loadReviewSessionReports();
     }
     async function loadCoordinationConsole() {
       const res = await fetch("/review/coordination-console?hours=2&limit=25");
@@ -865,6 +878,77 @@ REVIEW_HTML = """<!doctype html>
       const sessionRes = await fetch("/review/operator-review-session?hours=2&limit=25&save_report=true");
       const session = await sessionRes.json();
       renderOperatorState(daily, session);
+      await loadReviewSessionReports();
+    }
+    async function loadReviewSessionReports() {
+      const res = await fetch("/review/operator-review-session-reports?limit=6");
+      const data = await res.json();
+      renderList(reviewSessions, data.reports, r => item(`
+        <div class="line"><span class="title">${esc(r.name)}</span><span class="meta">${esc(r.status)} / ${esc(r.hours || "unknown")}h</span></div>
+        <div class="badge-row">
+          ${badge(`groups ${r.group_history_count ?? 0}`)}
+          ${badge(`queue ${r.queue_item_count ?? 0}`)}
+          ${badge(`saved ${r.saved_count ?? 0}`)}
+          ${warnBadge(`queued ${r.queued_count ?? 0}`, (r.queued_count ?? 0) > 0)}
+          ${badge(`reviewed ${r.reviewed_count ?? 0}`)}
+          ${warnBadge(`active ${r.active_queue_count ?? 0}`, (r.active_queue_count ?? 0) > 0)}
+          ${warnBadge(`pending ${r.pending_promotion_count ?? 0}`, (r.pending_promotion_count ?? 0) > 0)}
+        </div>
+        <div class="next">${esc(r.next_action || "")}</div>
+        <div class="button-row">
+          <button type="button" data-review-session-report="${esc(r.name)}">Inspect</button>
+        </div>
+      `), "No saved review-session reports.");
+      reviewSessions.querySelectorAll("button[data-review-session-report]").forEach(button => {
+        button.addEventListener("click", () => loadReviewSessionDetail(button.dataset.reviewSessionReport));
+      });
+      if (data.reports && data.reports.length > 0) {
+        await loadReviewSessionDetail(data.reports[0].name);
+      } else {
+        empty(reviewSessionDetail, "No review-session report selected.");
+      }
+    }
+    async function loadReviewSessionDetail(name) {
+      if (!name) {
+        empty(reviewSessionDetail, "No review-session report selected.");
+        return;
+      }
+      const res = await fetch(`/review/operator-review-session-report/${encodeURIComponent(name)}`);
+      const data = await res.json();
+      const summary = data.summary || {};
+      const report = data.report || {};
+      const groupRows = (report.group_summaries || []).slice(0, 4).map(group => item(`
+        <div class="line"><span class="title">${esc(group.group_key)}</span><span class="meta">${esc(group.latest_event_type || "unknown")}</span></div>
+        <div class="badge-row">
+          ${badge(`actions ${group.action_count ?? 0}`)}
+          ${badge(`saved ${group.saved_count ?? 0}`)}
+          ${warnBadge(`queued ${group.queued_count ?? 0}`, (group.queued_count ?? 0) > 0)}
+          ${badge(`dismissed ${group.dismissed_count ?? 0}`)}
+          ${badge(`outcomes ${group.outcome_count ?? 0}`)}
+        </div>
+        <div class="next">${esc(group.latest_outcome || group.latest_recorded_at || "")}</div>
+      `));
+      const historyRows = (report.recent_group_history || []).slice(0, 5).map(entry => item(`
+        <div class="line"><span class="title">${esc(entry.event_type)}</span><span class="meta">${esc(entry.status)}</span></div>
+        <div class="next">${esc(entry.group_key)} / ${esc(entry.recorded_at)}</div>
+      `));
+      reviewSessionDetail.replaceChildren(
+        item(`<div class="line"><span class="title">${esc(data.name)}</span><span class="meta">${esc(data.status)}</span></div>`),
+        item(`<div class="next">${esc(data.path)}</div>`),
+        item(`<div class="line"><span class="title">Generated</span><span class="meta">${esc(data.generated_at || "unknown")}</span></div>`),
+        item(`<div class="badge-row">
+          ${badge(`groups ${summary.group_history_count ?? 0}`)}
+          ${badge(`queue ${summary.queue_item_count ?? 0}`)}
+          ${badge(`saved ${summary.saved_count ?? 0}`)}
+          ${warnBadge(`queued ${summary.queued_count ?? 0}`, (summary.queued_count ?? 0) > 0)}
+          ${badge(`dismissed ${summary.dismissed_count ?? 0}`)}
+          ${badge(`outcomes ${summary.outcome_count ?? 0}`)}
+          ${badge(`reviewed ${summary.reviewed_count ?? 0}`)}
+        </div>`),
+        item(`<div class="next">${esc(summary.next_action || data.error || "")}</div>`),
+        ...(groupRows.length ? groupRows : [item(`<div class="next">No grouped summary in this report.</div>`)]),
+        ...(historyRows.length ? historyRows : [item(`<div class="next">No recent group-history entries in this report.</div>`)])
+      );
     }
     async function runHandoffDrill() {
       const res = await fetch("/review/operator-handoff-drill", { method: "POST" });
@@ -1589,6 +1673,22 @@ async def review_operator_review_session(
         save_report=save_report,
     )
     return dict(report)
+
+
+@app.get("/review/operator-review-session-reports")
+async def review_operator_review_session_reports(limit: int = 10) -> dict[str, object]:
+    """List saved review-session reports without applying work."""
+    return {
+        "status": "ok",
+        "reports": list_operator_review_session_reports(limit=max(limit, 1)),
+        "applied": False,
+    }
+
+
+@app.get("/review/operator-review-session-report/{name}")
+async def review_operator_review_session_report_detail(name: str) -> dict[str, object]:
+    """Inspect one saved review-session report without applying work."""
+    return dict(load_operator_review_session_report_detail(name=name))
 
 
 @app.post("/review/operator-handoff-drill")
