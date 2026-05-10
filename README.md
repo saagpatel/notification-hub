@@ -132,6 +132,9 @@ separates concrete reply candidates from repeated phase or workflow chatter. The
 advisory only; it never promotes, suppresses, or sends by itself. The review controls can also save
 or queue just the `promote` route, or locally dismiss just the `suppress` route, so mixed mail batches
 do not have to be handled as one all-or-nothing group.
+The same recommendation now exposes a separate Operator Decision Required lane for real outbound
+mail approvals, so approval requests stay visible as operator work instead of being mixed into
+noise-review follow-up.
 The personal-ops-actions command turns inbox rollups into action proposals for review. It does not
 write to personal-ops; pass `--output path/to/actions.json` when you want a handoff file.
 It scans a deeper candidate set than the display limit, so dismissed or policy-covered rollups do not
@@ -257,6 +260,10 @@ Mail proposal groups include a route recommendation with promote, suppress, and 
 the operator can split mixed batches before queueing or dismissing them. Route-aware group controls
 still only stage local packages, queue local handoff records, or append local dismissals; they do not
 send email, create personal-ops tasks, or approve work.
+The review page also includes a Noise Candidate Review panel backed by
+`/review/noise-candidates`; it highlights repeated burn-in signatures with decision hints, while
+keeping real mail approvals in Operator Decision Required instead of suggesting automatic policy
+suppression.
 Coordination snapshots target bridge-db's `codex` snapshot shape: the emitted
 `bridge_snapshot` object can be passed as snapshot data after operator review, or saved directly
 with the explicit `--save-bridge-db` flag.
@@ -456,6 +463,7 @@ curl -X POST http://127.0.0.1:9199/review/package/personal-ops-actions-YYYYMMDD-
 curl http://127.0.0.1:9199/review/import-queue
 curl http://127.0.0.1:9199/review/coordination-readiness
 curl http://127.0.0.1:9199/review/coordination-console
+curl http://127.0.0.1:9199/review/noise-candidates
 curl http://127.0.0.1:9199/review/policy-check
 curl http://127.0.0.1:9199/review/outcome-sync-reminder
 curl http://127.0.0.1:9199/review/action-proposal-dismissals

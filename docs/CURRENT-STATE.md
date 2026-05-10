@@ -117,6 +117,9 @@ tuning pass.
 - Proposal Review group controls are now route-aware for mixed mail batches: operators can save or
   queue only the `promote` route, or locally dismiss only the `suppress` route, while leaving
   follow-up candidates visible for separate inspection.
+- The review surface now splits real personal-ops mail approvals into an Operator Decision Required
+  lane and repeated burn-in signatures into Noise Candidate Review, preserving the outbound-approval
+  operator gate while still surfacing narrow policy candidates.
 - The review page can stage a local review package, list recent saved review packages, inspect
   package actions/evidence plus queue lineage, queue import handoff items, filter
   queued/promoted/pending/stale/resolved handoffs, mark queued items reviewed/rejected/snoozed/promoted,
@@ -406,15 +409,17 @@ Expected current outcome:
   small coordination expansion without applying work
 - `/review/coordination-console`: reports the compact coordination console payload, including active
   and handled proposal counts plus dismissal counts and guide steps, without applying work
+- `/review/noise-candidates`: reports the latest burn-in repeated-signature candidates with
+  decision hints, suggested narrow policy text, and an explicit non-applying status
 - `/review/policy-check`: reports live policy warnings and sample-vs-live noise-rule drift without
   applying work
 - `notification-hub personal-ops-queue-scenario`: runs a temporary queue lifecycle and records a
   final accepted promotion outcome without touching runtime queue state
 - `/review`: localhost-only review UI for runtime state, Operator Focus, Coordination Readiness,
   Coordination Console next signal and operator guide, inbox rollups, action proposals, import queue
-  health, policy drift, saved burn-in report history, latest saved review-session state, saved
-  review-session history, proposal dismissal/undismissal, daily operator state, handoff drill, and
-  trust state
+  health, Operator Decision Required, Noise Candidate Review, policy drift, saved burn-in report
+  history, latest saved review-session state, saved review-session history, proposal
+  dismissal/undismissal, daily operator state, handoff drill, and trust state
 - `/review/save-package` and `/review/validate-package`: review UI controls for staging and
   validating packages without importing or applying them
 - `/review/packages`: lists recent saved review packages and validation summaries without importing
