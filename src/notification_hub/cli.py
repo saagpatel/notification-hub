@@ -30,7 +30,11 @@ from notification_hub.operations import (
     PersonalOpsQueueBurnInReport,
     PersonalOpsQueueScenarioReport,
     ActionPackageValidationReport,
+    ActionProposalDismissalListReport,
     ActionProposalDismissReport,
+    ActionProposalUndismissReport,
+    OperatorDailyStateReport,
+    OperatorHandoffDrillReport,
     PolicyCheckReport,
     RetentionReport,
     SmokeReport,
@@ -38,6 +42,7 @@ from notification_hub.operations import (
     VerifyRuntimeReport,
     bootstrap_policy_config,
     dismiss_action_proposal,
+    run_action_proposal_dismissal_list,
     run_burn_in,
     run_coordination_console,
     run_coordination_readiness,
@@ -45,6 +50,8 @@ from notification_hub.operations import (
     run_delivery_check,
     run_inbox,
     run_logs,
+    run_operator_daily_state,
+    run_operator_handoff_drill,
     run_personal_ops_action_export,
     run_personal_ops_import_queue_health_check,
     run_personal_ops_import_stub,
@@ -53,6 +60,7 @@ from notification_hub.operations import (
     run_personal_ops_queue_scenario,
     list_personal_ops_import_queue,
     summarize_personal_ops_import_queue,
+    undismiss_action_proposal,
     update_personal_ops_import_queue_item,
     validate_action_package,
     run_policy_check,
@@ -400,6 +408,56 @@ def _build_parser(prog: str = "notification-hub") -> argparse.ArgumentParser:
         "--json",
         action="store_true",
         help="Emit the undismiss report as JSON.",
+    )
+
+    operator_daily_state = subparsers.add_parser(
+        "operator-daily-state",
+        help="Build a resume-ready local operator state snapshot.",
+    )
+    operator_daily_state.add_argument(
+        "--hours",
+        type=int,
+        default=24,
+        help="Recent runtime window to summarize.",
+    )
+    operator_daily_state.add_argument(
+        "--limit",
+        type=int,
+        default=10,
+        help="Maximum queue, dismissal, and console items to include.",
+    )
+    operator_daily_state.add_argument(
+        "--save-report",
+        action="store_true",
+        help="Save the snapshot under local notification-hub runtime state.",
+    )
+    operator_daily_state.add_argument(
+        "--report-dir",
+        help="Optional directory for saved operator state reports.",
+    )
+    operator_daily_state.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the operator daily state report as JSON.",
+    )
+
+    operator_handoff_drill = subparsers.add_parser(
+        "operator-handoff-drill",
+        help="Run a temporary handoff lifecycle drill through the review model.",
+    )
+    operator_handoff_drill.add_argument(
+        "--save-burn-in-report",
+        action="store_true",
+        help="Save the queue burn-in report produced during the drill.",
+    )
+    operator_handoff_drill.add_argument(
+        "--report-dir",
+        help="Optional directory for saved burn-in reports.",
+    )
+    operator_handoff_drill.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the operator handoff drill report as JSON.",
     )
 
     personal_ops_import = subparsers.add_parser(
@@ -840,6 +898,67 @@ def _print_action_proposal_dismiss_report(report: ActionProposalDismissReport) -
         print(f"- reason: {report['dismissal']['reason']}")
     if report["error"] is not None:
         print(f"- error: {report['error']}")
+
+
+def _print_action_proposal_dismissal_list_report(
+    report: ActionProposalDismissalListReport,
+) -> None:
+    print(f"notification-hub action-proposal-dismissals: {report['status']}")
+    print(f"- path: {report['path']}")
+    print(f"- dismissals: {report['dismissal_count']}")
+    if not report["dismissals"]:
+        print("- items: none")
+        return
+    print("- items:")
+    for dismissal in report["dismissals"]:
+        state = "active" if dismissal["active"] else "inactive"
+        title = dismissal["title"] or dismissal["dismissal_key"]
+        print(f"  - [{state}] {dismissal['dismissal_key']}: {title}")
+        print(f"    reason: {dismissal['reason']}")
+        if dismissal["deleted_at"] is not None:
+            print(f"    removed: {dismissal['deleted_at']}")
+
+
+def _print_action_proposal_undismiss_report(report: ActionProposalUndismissReport) -> None:
+    print(f"notification-hub action-proposal-undismiss: {report['status']}")
+    print(f"- path: {report['path']}")
+    print(f"- dismissal: {report['dismissal_key']}")
+    print(f"- removed: {report['removed']}")
+    if report["error"] is not None:
+        print(f"- error: {report['error']}")
+
+
+def _print_operator_daily_state_report(report: OperatorDailyStateReport) -> None:
+    console = report["coordination_console"]
+    queue = report["queue_health"]["health"]
+    print(f"notification-hub operator-daily-state: {report['status']}")
+    print(f"- generated: {report['generated_at']}")
+    print(f"- window: {report['hours']} hours")
+    print(f"- runtime: {report['runtime']['status']}")
+    print(f"- queue: {queue['status']}")
+    print(f"- queued/pending/stale: {queue['queued_count']}/{queue['promoted_pending_count']}/{queue['promoted_pending_stale_count']}")
+    print(f"- next signal: {console['next_signal']['title']} ({console['next_signal']['status']})")
+    print(f"- active actions: {console['active_action_count']}")
+    print(f"- dismissals: {len(report['dismissals'])}")
+    print(f"- burn-in: {report['burn_in']['status']}")
+    report_file = report["report_file"]
+    if report_file.get("requested"):
+        print(f"- report file: {report_file.get('status')}")
+        if report_file.get("path") is not None:
+            print(f"- report path: {report_file.get('path')}")
+    print(f"- next action: {report['next_action']}")
+
+
+def _print_operator_handoff_drill_report(report: OperatorHandoffDrillReport) -> None:
+    print(f"notification-hub operator-handoff-drill: {report['status']}")
+    print(f"- generated: {report['generated_at']}")
+    print(f"- scenario: {report['scenario']['status']}")
+    print(f"- queue burn-in: {report['queue_burn_in']['status']}")
+    print(f"- ready for live promotion: {report['queue_burn_in']['ready_for_live_promotion']}")
+    print(f"- next action: {report['next_action']}")
+    print("- review steps:")
+    for step in report["review_steps"]:
+        print(f"  - {step}")
 
 
 def _print_action_package_validation_report(report: ActionPackageValidationReport) -> None:
@@ -1305,6 +1424,53 @@ def main(argv: Sequence[str] | None = None) -> int:
             _print_action_proposal_dismiss_report(report)
         return 0 if report["status"] == "ok" else 1
 
+    if args.command == "action-proposal-dismissals":
+        report = run_action_proposal_dismissal_list(
+            limit=args.limit,
+            dismissal_key=args.dismissal_key,
+            include_inactive=args.include_inactive,
+        )
+        if args.json:
+            print(json.dumps(report, indent=2, sort_keys=True))
+        else:
+            _print_action_proposal_dismissal_list_report(report)
+        return 0 if report["status"] == "ok" else 1
+
+    if args.command == "action-proposal-undismiss":
+        report = undismiss_action_proposal(
+            dismissal_key=args.dismissal_key,
+            reason=args.reason,
+        )
+        if args.json:
+            print(json.dumps(report, indent=2, sort_keys=True))
+        else:
+            _print_action_proposal_undismiss_report(report)
+        return 0 if report["status"] == "ok" else 1
+
+    if args.command == "operator-daily-state":
+        report = run_operator_daily_state(
+            hours=args.hours,
+            limit=args.limit,
+            save_report=args.save_report,
+            report_dir=Path(args.report_dir).expanduser() if args.report_dir else None,
+        )
+        if args.json:
+            print(json.dumps(report, indent=2, sort_keys=True))
+        else:
+            _print_operator_daily_state_report(report)
+        return 0 if report["status"] == "ok" else 1
+
+    if args.command == "operator-handoff-drill":
+        report = run_operator_handoff_drill(
+            save_burn_in_report=args.save_burn_in_report,
+            report_dir=Path(args.report_dir).expanduser() if args.report_dir else None,
+        )
+        if args.json:
+            print(json.dumps(report, indent=2, sort_keys=True))
+        else:
+            _print_operator_handoff_drill_report(report)
+        return 0 if report["status"] == "ok" else 1
+
     if args.command == "personal-ops-import":
         report = run_personal_ops_import_stub(
             path=Path(args.path),
@@ -1501,6 +1667,26 @@ def validate_action_package_main(argv: Sequence[str] | None = None) -> int:
 def action_proposal_dismiss_main(argv: Sequence[str] | None = None) -> int:
     forwarded = list(argv) if argv is not None else sys.argv[1:]
     return main(["action-proposal-dismiss", *forwarded])
+
+
+def action_proposal_dismissals_main(argv: Sequence[str] | None = None) -> int:
+    forwarded = list(argv) if argv is not None else sys.argv[1:]
+    return main(["action-proposal-dismissals", *forwarded])
+
+
+def action_proposal_undismiss_main(argv: Sequence[str] | None = None) -> int:
+    forwarded = list(argv) if argv is not None else sys.argv[1:]
+    return main(["action-proposal-undismiss", *forwarded])
+
+
+def operator_daily_state_main(argv: Sequence[str] | None = None) -> int:
+    forwarded = list(argv) if argv is not None else sys.argv[1:]
+    return main(["operator-daily-state", *forwarded])
+
+
+def operator_handoff_drill_main(argv: Sequence[str] | None = None) -> int:
+    forwarded = list(argv) if argv is not None else sys.argv[1:]
+    return main(["operator-handoff-drill", *forwarded])
 
 
 def personal_ops_import_main(argv: Sequence[str] | None = None) -> int:

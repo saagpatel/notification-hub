@@ -3333,7 +3333,10 @@ def _build_next_signal_report(
     dismissals: list[ActionProposalDismissalReport],
     limit: int,
 ) -> CoordinationNextSignalReport:
-    policy_covered = _policy_covered_rollups(actions["inbox"].get("rollups", []))[:limit]
+    raw_inbox = cast(dict[str, object], actions.get("inbox", {}))
+    raw_rollups = raw_inbox.get("rollups")
+    rollups = cast(list[InboxRollupReport], raw_rollups) if isinstance(raw_rollups, list) else []
+    policy_covered = _policy_covered_rollups(rollups)[:limit]
     if active_actions:
         title = "Active proposal waiting"
         summary = "The next real signal is already visible as an action proposal."
