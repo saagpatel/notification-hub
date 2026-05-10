@@ -688,9 +688,11 @@ REVIEW_HTML = """<!doctype html>
           ${warnBadge(`thin ${group.thin_evidence_count ?? 0}`, (group.thin_evidence_count ?? 0) > 0)}
           ${badge(`titles ${(group.titles || []).length}`)}
           ${badge(`history ${group.history_count ?? 0}`)}
+          ${badge(group.promotion_readiness || "review_required")}
           ${group.routing_recommendation ? badge(group.routing_recommendation.decision) : ""}
         </div>
         <div class="next">${esc((group.titles || []).join(", "))}</div>
+        <div class="next"><strong>Promotion readiness</strong>: ${esc(group.promotion_readiness_summary || "")}</div>
         ${group.latest_history ? `<div class="next"><strong>Last group action</strong>: ${esc(group.latest_history.event_type)} (${esc(group.latest_history.status)})</div>` : ""}
         ${group.routing_recommendation ? `<div class="next"><strong>Route</strong>: ${esc(group.routing_recommendation.reason)}</div>` : ""}
         ${group.routing_recommendation ? `<div class="next">Promote ${esc(group.routing_recommendation.promote_candidate_count)} / suppress ${esc(group.routing_recommendation.suppress_candidate_count)} / follow up ${esc(group.routing_recommendation.follow_up_candidate_count)}</div>` : ""}

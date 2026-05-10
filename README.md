@@ -254,6 +254,8 @@ mail/thread anchor and a concrete work-item ID; `thin` means the proposal still 
 inspection before promotion.
 For mail proposal routing, promotion-looking signals only enter the promote lane when evidence is
 rich. Thin promotion-looking signals stay in follow-up until the source emits enough context.
+Proposal Review also reports promotion readiness for each active group, including which action IDs
+are ready to queue and which are blocked by thin evidence or workflow chatter.
 The inbox report also includes `rollups` for repeated source/project/title/body patterns, so repeated
 approval drafts and completion pings can be reviewed as one grouped signal.
 Personal-ops action exports are proposal-only: they include priority, state, suggested next action,

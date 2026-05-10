@@ -1012,6 +1012,10 @@ def _print_coordination_console_report(report: CoordinationConsoleReport) -> Non
                 "    evidence: "
                 f"rich {group['rich_evidence_count']} / thin {group['thin_evidence_count']}"
             )
+            print(
+                "    promotion readiness: "
+                f"{group['promotion_readiness']} - {group['promotion_readiness_summary']}"
+            )
             routing = group.get("routing_recommendation")
             if isinstance(routing, dict):
                 print(f"    route: {routing.get('decision')} - {routing.get('reason')}")

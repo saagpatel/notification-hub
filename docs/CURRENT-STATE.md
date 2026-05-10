@@ -143,6 +143,8 @@ tuning pass.
 - Mail proposal routing now uses evidence quality: rich promotion-looking signals can be routed to
   the promote lane, while thin promotion-looking signals remain follow-up work until more context is
   present.
+- Proposal Review now reports per-group promotion readiness, including ready action IDs and blocked
+  action IDs, so a mixed mail group can be split before any local handoff is queued.
 - The review page can stage a local review package, list recent saved review packages, inspect
   package actions/evidence plus queue lineage, queue import handoff items, filter
   queued/promoted/pending/stale/resolved handoffs, mark queued items reviewed/rejected/snoozed/promoted,

@@ -757,6 +757,10 @@ class CoordinationProposalReviewGroup(TypedDict):
     latest_history: ActionProposalGroupHistoryReport | None
     latest_outcome: str | None
     routing_recommendation: CoordinationProposalRouteRecommendation | None
+    promotion_readiness: str
+    promotion_readiness_summary: str
+    promotion_ready_action_ids: list[str]
+    promotion_blocked_action_ids: list[str]
     next_action: str
 
 
@@ -5234,6 +5238,61 @@ def _group_route_recommendation(
     return None
 
 
+def _group_promotion_readiness(
+    *,
+    key: tuple[str, str | None, str, str, str],
+    actions: list[CoordinationConsoleActionReport],
+    routing_recommendation: CoordinationProposalRouteRecommendation | None,
+) -> tuple[str, str, list[str], list[str]]:
+    source, project, intent, _, _ = key
+    if not actions:
+        return "none", "No active proposals are in this group.", [], []
+    if source != "personal-ops" or project != "mail" or intent != "waiting_on_user":
+        return (
+            "review_required",
+            "Review this group before deciding whether it belongs in the handoff queue.",
+            [],
+            [item["action"]["action_id"] for item in actions],
+        )
+    ready_ids = [
+        item["action"]["action_id"]
+        for item in actions
+        if _mail_route_category(item["action"]) == "promote"
+    ]
+    blocked_ids = [
+        item["action"]["action_id"]
+        for item in actions
+        if item["action"]["action_id"] not in ready_ids
+    ]
+    if ready_ids and not blocked_ids:
+        return (
+            "ready",
+            "All mail proposal(s) have rich evidence and concrete promotion cues.",
+            ready_ids,
+            blocked_ids,
+        )
+    if ready_ids and blocked_ids:
+        return (
+            "split_required",
+            "Queue only the rich promote route; keep thin or workflow-like items in follow-up.",
+            ready_ids,
+            blocked_ids,
+        )
+    if routing_recommendation is not None and routing_recommendation["suppress_candidate_count"]:
+        return (
+            "not_promotable",
+            "This mail group looks like workflow chatter, not a downstream handoff.",
+            ready_ids,
+            blocked_ids,
+        )
+    return (
+        "needs_rich_evidence",
+        "Promotion needs both a mail/thread anchor and a concrete work-item id.",
+        ready_ids,
+        blocked_ids,
+    )
+
+
 def _build_proposal_review_group(
     *,
     key: tuple[str, str | None, str, str, str],
@@ -5260,6 +5319,17 @@ def _build_proposal_review_group(
         if len(actions) > 1
         else "Review this proposal on its own before queueing or dismissing it."
     )
+    routing_recommendation = _group_route_recommendation(key=key, actions=actions)
+    (
+        promotion_readiness,
+        promotion_readiness_summary,
+        promotion_ready_action_ids,
+        promotion_blocked_action_ids,
+    ) = _group_promotion_readiness(
+        key=key,
+        actions=actions,
+        routing_recommendation=routing_recommendation,
+    )
     group: CoordinationProposalReviewGroup = {
         "group_key": group_label,
         "source": source,
@@ -5277,12 +5347,14 @@ def _build_proposal_review_group(
         "history_count": len(group_history),
         "latest_history": group_history[0] if group_history else None,
         "latest_outcome": latest_outcome,
-        "routing_recommendation": None,
+        "routing_recommendation": routing_recommendation,
+        "promotion_readiness": promotion_readiness,
+        "promotion_readiness_summary": promotion_readiness_summary,
+        "promotion_ready_action_ids": promotion_ready_action_ids,
+        "promotion_blocked_action_ids": promotion_blocked_action_ids,
         "next_action": next_action,
     }
-    routing_recommendation = _group_route_recommendation(key=key, actions=actions)
     if routing_recommendation is not None:
-        group["routing_recommendation"] = routing_recommendation
         group["next_action"] = routing_recommendation["suggested_next_action"]
     return group
 

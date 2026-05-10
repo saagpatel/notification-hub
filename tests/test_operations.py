@@ -376,6 +376,12 @@ def test_coordination_console_summarizes_ready_expansion(tmp_path: Path) -> None
     assert report["proposal_review"]["groups"][0]["total_event_count"] == 5
     assert report["proposal_review"]["groups"][0]["rich_evidence_count"] == 1
     assert report["proposal_review"]["groups"][0]["thin_evidence_count"] == 1
+    assert report["proposal_review"]["groups"][0]["promotion_readiness"] == "split_required"
+    assert report["proposal_review"]["groups"][0]["promotion_ready_action_ids"] == ["action-1"]
+    assert report["proposal_review"]["groups"][0]["promotion_blocked_action_ids"] == ["action-2"]
+    assert "Queue only the rich promote route" in (
+        report["proposal_review"]["groups"][0]["promotion_readiness_summary"]
+    )
     assert report["proposal_review"]["groups"][0]["newest_evidence_timestamp"] == (
         "2026-05-10T04:42:00+00:00"
     )
@@ -531,6 +537,9 @@ def test_coordination_console_keeps_thin_mail_promote_cues_in_follow_up(
     assert routing is not None
     assert group["rich_evidence_count"] == 1
     assert group["thin_evidence_count"] == 1
+    assert group["promotion_readiness"] == "split_required"
+    assert group["promotion_ready_action_ids"] == ["rich-action"]
+    assert group["promotion_blocked_action_ids"] == ["thin-action"]
     assert routing["decision"] == "promote_rich_evidence"
     assert routing["promote_candidate_action_ids"] == ["rich-action"]
     assert routing["follow_up_candidate_action_ids"] == ["thin-action"]
