@@ -149,6 +149,8 @@ async def test_review_page_endpoint(client: AsyncClient) -> None:
     assert "Coordination Readiness" in resp.text
     assert "Coordination Console" in resp.text
     assert "Policy Drift" in resp.text
+    assert "Operator Decision Required" in resp.text
+    assert "Noise Candidate Review" in resp.text
     assert "Burn-In Reports" in resp.text
     assert "Latest Review Session" in resp.text
     assert "Review Sessions" in resp.text
@@ -726,6 +728,41 @@ async def test_review_burn_in_report_detail_endpoint_inspects_saved_report(
     assert data["applied"] is False
     assert data["summary"]["ready_for_live_promotion"] is True
     mock_detail.assert_called_once_with(name="personal-ops-queue-burn-in-20260510-040904.json")
+
+
+async def test_review_noise_candidates_endpoint_is_read_only(client: AsyncClient) -> None:
+    with patch(
+        "notification_hub.server.review_latest_noise_candidates",
+        return_value={
+            "status": "warn",
+            "report_name": "personal-ops-queue-burn-in-20260510-040904.json",
+            "generated_at": "2026-05-10T04:09:04+00:00",
+            "noise_candidate_count": 1,
+            "candidates": [
+                {
+                    "count": 4,
+                    "source": "personal-ops",
+                    "project": "mail",
+                    "level": "urgent",
+                    "title": "Approval Requested",
+                    "body": "Initial reply needed",
+                    "decision_hint": "operator_decision_required",
+                    "suggested_rule": "Review noise rule candidate: source='personal-ops'",
+                }
+            ],
+            "next_action": "Review operator-decision candidates before adding policy coverage.",
+            "applied": False,
+            "error": None,
+        },
+    ) as mock_review:
+        resp = await client.get("/review/noise-candidates?limit=3")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "warn"
+    assert data["applied"] is False
+    assert data["candidates"][0]["decision_hint"] == "operator_decision_required"
+    mock_review.assert_called_once_with(limit=3)
 
 
 async def test_review_coordination_readiness_endpoint_is_read_only(

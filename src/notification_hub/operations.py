@@ -696,9 +696,11 @@ class CoordinationProposalRouteRecommendation(TypedDict):
     decision: str
     reason: str
     suggested_next_action: str
+    operator_decision_required_count: int
     promote_candidate_count: int
     suppress_candidate_count: int
     follow_up_candidate_count: int
+    operator_decision_required_action_ids: list[str]
     promote_candidate_action_ids: list[str]
     suppress_candidate_action_ids: list[str]
     follow_up_candidate_action_ids: list[str]
@@ -787,6 +789,28 @@ class CoordinationConsoleReport(TypedDict):
     next_commands: list[str]
     next_action: str
     applied: bool
+
+
+class NoiseCandidateReviewItem(TypedDict):
+    count: int
+    source: str
+    project: str | None
+    level: str
+    title: str
+    body: str
+    decision_hint: str
+    suggested_rule: str | None
+
+
+class NoiseCandidateReviewReport(TypedDict):
+    status: str
+    report_name: str | None
+    generated_at: str | None
+    noise_candidate_count: int
+    candidates: list[NoiseCandidateReviewItem]
+    next_action: str
+    applied: bool
+    error: str | None
 
 
 class OperatorDailyStateReport(TypedDict):
@@ -2634,6 +2658,108 @@ def load_personal_ops_queue_burn_in_report_detail(
             "applied": False,
             "error": str(exc),
         }
+
+
+def _noise_candidate_decision_hint(candidate: RepeatedSignatureReport) -> str:
+    title = candidate["title"].lower()
+    body = candidate["body"].lower()
+    source = candidate["source"]
+    project = candidate["project"]
+    if source == "personal-ops" and project == "mail" and "approval requested" in title:
+        return "operator_decision_required"
+    if source == "personal-ops" and project == "mail":
+        return "review_for_narrow_policy_or_follow_up"
+    if source == "personal-ops" and project == "personal-ops":
+        return "review_for_policy_coverage"
+    if source == "codex" and ("finished a turn" in title or "session complete" in body):
+        return "likely_policy_chatter"
+    return "inspect_before_policy_change"
+
+
+def review_latest_noise_candidates(
+    *,
+    report_dir: Path | None = None,
+    limit: int = 10,
+) -> NoiseCandidateReviewReport:
+    """Summarize the latest saved burn-in noise candidates for operator review."""
+    reports = list_personal_ops_queue_burn_in_reports(report_dir=report_dir, limit=1)
+    if not reports:
+        return {
+            "status": "ok",
+            "report_name": None,
+            "generated_at": None,
+            "noise_candidate_count": 0,
+            "candidates": [],
+            "next_action": "No saved burn-in report is available; run queue burn-in before reviewing noise.",
+            "applied": False,
+            "error": None,
+        }
+
+    latest = reports[0]
+    detail = load_personal_ops_queue_burn_in_report_detail(
+        name=latest["name"],
+        report_dir=report_dir,
+    )
+    if detail["report"] is None:
+        return {
+            "status": "degraded",
+            "report_name": latest["name"],
+            "generated_at": latest["generated_at"],
+            "noise_candidate_count": 0,
+            "candidates": [],
+            "next_action": "Inspect the saved burn-in report error before changing policy.",
+            "applied": False,
+            "error": detail["error"],
+        }
+
+    runtime_burn_in = _as_dict(detail["report"].get("runtime_burn_in"))
+    raw_candidates = runtime_burn_in.get("noise_candidates")
+    candidates = cast(list[object], raw_candidates) if isinstance(raw_candidates, list) else []
+    raw_suggestions = runtime_burn_in.get("noise_rule_suggestions")
+    suggestions = (
+        [item for item in cast(list[object], raw_suggestions) if isinstance(item, str)]
+        if isinstance(raw_suggestions, list)
+        else []
+    )
+
+    items: list[NoiseCandidateReviewItem] = []
+    for index, raw_candidate in enumerate(candidates[: max(limit, 1)]):
+        candidate = _as_dict(raw_candidate)
+        item: RepeatedSignatureReport = {
+            "count": _as_int(candidate.get("count")) or 0,
+            "source": _as_str(candidate.get("source")) or "unknown",
+            "project": _as_str(candidate.get("project")),
+            "level": _as_str(candidate.get("level")) or "unknown",
+            "title": _as_str(candidate.get("title")) or "",
+            "body": _as_str(candidate.get("body")) or "",
+        }
+        items.append(
+            {
+                **item,
+                "decision_hint": _noise_candidate_decision_hint(item),
+                "suggested_rule": suggestions[index] if index < len(suggestions) else None,
+            }
+        )
+
+    if not items:
+        next_action = "No uncovered noise candidates in the latest saved burn-in report."
+    elif any(item["decision_hint"] == "operator_decision_required" for item in items):
+        next_action = (
+            "Review operator-decision candidates before adding policy coverage; do not suppress "
+            "real approval requests automatically."
+        )
+    else:
+        next_action = "Review the suggested narrow policy rules and apply only proven chatter."
+    return {
+        "status": "warn" if items else "ok",
+        "report_name": latest["name"],
+        "generated_at": detail["generated_at"],
+        "noise_candidate_count": len(items),
+        "candidates": items,
+        "next_action": next_action,
+        "applied": False,
+        "error": None,
+    }
 
 
 def _enqueue_personal_ops_import_actions(
@@ -4692,9 +4818,11 @@ def _mail_route_recommendation(
             "decision": decision,
             "reason": reason,
             "suggested_next_action": suggested_next_action,
+            "operator_decision_required_count": promote_count,
             "promote_candidate_count": promote_count,
             "suppress_candidate_count": suppress_count,
             "follow_up_candidate_count": follow_up_count,
+            "operator_decision_required_action_ids": promote_action_ids,
             "promote_candidate_action_ids": promote_action_ids,
             "suppress_candidate_action_ids": suppress_action_ids,
             "follow_up_candidate_action_ids": follow_up_action_ids,

@@ -39,6 +39,7 @@ from notification_hub.operations import (
     load_operator_review_session_report_detail,
     load_personal_ops_queue_burn_in_report_detail,
     prune_operator_review_session_reports,
+    review_latest_noise_candidates,
     run_action_proposal_dismissal_list,
     run_burn_in,
     run_coordination_console,
@@ -374,8 +375,10 @@ def test_coordination_console_summarizes_ready_expansion(tmp_path: Path) -> None
     routing = report["proposal_review"]["groups"][0]["routing_recommendation"]
     assert routing is not None
     assert routing["decision"] == "split_mail_batch"
+    assert routing["operator_decision_required_count"] == 1
     assert routing["promote_candidate_count"] == 1
     assert routing["suppress_candidate_count"] == 1
+    assert routing["operator_decision_required_action_ids"] == ["action-1"]
     assert routing["promote_candidate_action_ids"] == ["action-1"]
     assert routing["suppress_candidate_action_ids"] == ["action-2"]
     assert report["proposal_review"]["group_history"][0]["group_key"] == (
@@ -2681,6 +2684,67 @@ def test_list_and_load_personal_ops_queue_burn_in_reports(tmp_path: Path) -> Non
     assert detail["status"] == "ok"
     assert detail["summary"] is not None
     assert detail["summary"]["next_action"] == "Queue loop is ready."
+
+
+def test_review_latest_noise_candidates_marks_mail_approvals_as_operator_decisions(
+    tmp_path: Path,
+) -> None:
+    report_dir = tmp_path / "reports"
+    report_dir.mkdir()
+    report_path = report_dir / "personal-ops-queue-burn-in-20260510-040904.json"
+    report_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "notification-hub.personal_ops_queue_burn_in.v1",
+                "generated_at": "2026-05-10T04:09:04+00:00",
+                "report": {
+                    "status": "ok",
+                    "ready_for_live_promotion": False,
+                    "next_action": "Review noise.",
+                    "queue_health": {"health": {}},
+                    "runtime_burn_in": {
+                        "health": {"status": "ok"},
+                        "noise_candidates": [
+                            {
+                                "count": 4,
+                                "source": "personal-ops",
+                                "project": "mail",
+                                "level": "urgent",
+                                "title": "Approval Requested",
+                                "body": "Initial reply needed",
+                            },
+                            {
+                                "count": 2,
+                                "source": "codex",
+                                "project": "notification-hub",
+                                "level": "normal",
+                                "title": "Codex finished a turn",
+                                "body": "A Codex turn completed.",
+                            },
+                        ],
+                        "noise_rule_suggestions": [
+                            "Review noise rule candidate: source='personal-ops'",
+                            "Review noise rule candidate: source='codex'",
+                        ],
+                    },
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    report = review_latest_noise_candidates(report_dir=report_dir)
+
+    assert report["status"] == "warn"
+    assert report["report_name"] == report_path.name
+    assert report["noise_candidate_count"] == 2
+    assert report["candidates"][0]["decision_hint"] == "operator_decision_required"
+    assert report["candidates"][0]["suggested_rule"] == (
+        "Review noise rule candidate: source='personal-ops'"
+    )
+    assert report["candidates"][1]["decision_hint"] == "likely_policy_chatter"
+    assert "do not suppress" in report["next_action"]
 
 
 def test_load_personal_ops_queue_burn_in_report_rejects_unsafe_name(tmp_path: Path) -> None:
