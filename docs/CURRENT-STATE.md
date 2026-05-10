@@ -68,7 +68,9 @@ tuning pass.
   from a small batch package. Group controls can save a scoped review package, queue that group into
   the local handoff queue, or locally dismiss the group without applying personal-ops work. Each
   group action now appends local group-history JSONL so the console can show recent group lifecycle
-  state after a save, queue, dismiss, or explicit local outcome decision.
+  state after a save, queue, dismiss, or explicit local outcome decision. Queued or promoted-pending
+  handoffs now remain the console's next action until their local queue lifecycle is resolved, even
+  when the readiness gate is also warning.
 - Action proposal export now scans a deeper candidate set than the display limit, so dismissed or
   policy-covered rollups cannot crowd out real lower-ranked operator signals from the default view.
 - Action proposal dismissals can now be listed, inspected, and undismissed through CLI and `/review`
