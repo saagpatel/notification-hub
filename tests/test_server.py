@@ -880,6 +880,7 @@ async def test_review_action_proposal_group_package_endpoint_is_read_only(
     assert data["applied"] is False
     mock_save_group.assert_called_once_with(
         group_key="personal-ops:mail:waiting_on_user:high:waiting",
+        route=None,
         hours=4,
         limit=25,
         enqueue=False,
@@ -914,6 +915,7 @@ async def test_review_action_proposal_group_queue_endpoint_stays_non_applying(
     assert data["applied"] is False
     mock_queue_group.assert_called_once_with(
         group_key="personal-ops:mail:waiting_on_user:high:waiting",
+        route=None,
         hours=2,
         limit=25,
         enqueue=True,
@@ -951,6 +953,73 @@ async def test_review_action_proposal_group_dismiss_endpoint_is_local_only(
     mock_dismiss_group.assert_called_once_with(
         group_key="personal-ops:mail:waiting_on_user:high:waiting",
         reason="known noise",
+        route=None,
+        hours=2,
+        limit=25,
+    )
+
+
+async def test_review_action_proposal_group_route_posts_are_local_only(
+    client: AsyncClient,
+) -> None:
+    with patch(
+        "notification_hub.server.save_action_proposal_group_package",
+        return_value={
+            "status": "ok",
+            "group_key": "personal-ops:mail:waiting_on_user:high:waiting",
+            "action_count": 1,
+            "review_package": {"status": "ok", "path": "/tmp/actions.json"},
+            "import_result": {"status": "ok", "queued_count": 1},
+            "next_action": "Review the queued personal-ops handoff items.",
+            "applied": False,
+            "error": None,
+        },
+    ) as mock_queue_group:
+        resp = await client.post(
+            "/review/action-proposal-group/queue",
+            json={
+                "group_key": "personal-ops:mail:waiting_on_user:high:waiting",
+                "route": "promote",
+            },
+        )
+
+    assert resp.status_code == 200
+    assert resp.json()["applied"] is False
+    mock_queue_group.assert_called_once_with(
+        group_key="personal-ops:mail:waiting_on_user:high:waiting",
+        route="promote",
+        hours=2,
+        limit=25,
+        enqueue=True,
+    )
+
+    with patch(
+        "notification_hub.server.dismiss_action_proposal_group",
+        return_value={
+            "status": "ok",
+            "group_key": "personal-ops:mail:waiting_on_user:high:waiting",
+            "dismissed_count": 1,
+            "dismissals": [],
+            "next_action": "Group dismissed from the local console.",
+            "applied": False,
+            "error": None,
+        },
+    ) as mock_dismiss_group:
+        resp = await client.post(
+            "/review/action-proposal-group/dismiss",
+            json={
+                "group_key": "personal-ops:mail:waiting_on_user:high:waiting",
+                "route": "suppress",
+                "reason": "already covered",
+            },
+        )
+
+    assert resp.status_code == 200
+    assert resp.json()["applied"] is False
+    mock_dismiss_group.assert_called_once_with(
+        group_key="personal-ops:mail:waiting_on_user:high:waiting",
+        reason="already covered",
+        route="suppress",
         hours=2,
         limit=25,
     )

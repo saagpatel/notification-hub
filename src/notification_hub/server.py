@@ -634,6 +634,9 @@ REVIEW_HTML = """<!doctype html>
         <div class="button-row">
           <button type="button" data-save-group="${esc(group.group_key)}">Save group</button>
           <button type="button" data-queue-group="${esc(group.group_key)}">Queue group</button>
+          ${group.routing_recommendation && group.routing_recommendation.promote_candidate_count ? `<button type="button" data-save-route="promote" data-route-group="${esc(group.group_key)}">Save promote</button>` : ""}
+          ${group.routing_recommendation && group.routing_recommendation.promote_candidate_count ? `<button type="button" data-queue-route="promote" data-route-group="${esc(group.group_key)}">Queue promote</button>` : ""}
+          ${group.routing_recommendation && group.routing_recommendation.suppress_candidate_count ? `<button type="button" data-dismiss-route="suppress" data-route-group="${esc(group.group_key)}">Dismiss suppress</button>` : ""}
           <button type="button" data-follow-up-group="${esc(group.group_key)}">Needs follow-up</button>
           <button type="button" data-dismiss-group="${esc(group.group_key)}">Dismiss group</button>
         </div>
@@ -656,6 +659,15 @@ REVIEW_HTML = """<!doctype html>
       proposalReview.querySelectorAll("button[data-queue-group]").forEach(button => {
         button.addEventListener("click", () => queueProposalGroup(button.dataset.queueGroup));
       });
+      proposalReview.querySelectorAll("button[data-save-route]").forEach(button => {
+        button.addEventListener("click", () => saveProposalGroup(button.dataset.routeGroup, button.dataset.saveRoute));
+      });
+      proposalReview.querySelectorAll("button[data-queue-route]").forEach(button => {
+        button.addEventListener("click", () => queueProposalGroup(button.dataset.routeGroup, button.dataset.queueRoute));
+      });
+      proposalReview.querySelectorAll("button[data-dismiss-route]").forEach(button => {
+        button.addEventListener("click", () => dismissProposalGroup(button.dataset.routeGroup, button.dataset.dismissRoute));
+      });
       proposalReview.querySelectorAll("button[data-follow-up-group]").forEach(button => {
         button.addEventListener("click", () => outcomeProposalGroup(button.dataset.followUpGroup, "needs_follow_up"));
       });
@@ -673,24 +685,24 @@ REVIEW_HTML = """<!doctype html>
         <div class="next">${esc(signal.next_action || "")}</div>
       `));
     }
-    async function postProposalGroup(path, groupKey, reason) {
+    async function postProposalGroup(path, groupKey, reason, route) {
       if (!groupKey) {
         return null;
       }
       const res = await fetch(path, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ group_key: groupKey, hours: 2, limit: 25, reason })
+        body: JSON.stringify({ group_key: groupKey, hours: 2, limit: 25, reason, route })
       });
       return res.json();
     }
-    async function saveProposalGroup(groupKey) {
-      const data = await postProposalGroup("/review/action-proposal-group/package", groupKey);
+    async function saveProposalGroup(groupKey, route) {
+      const data = await postProposalGroup("/review/action-proposal-group/package", groupKey, undefined, route);
       if (!data) {
         return;
       }
       packageDetail.replaceChildren(
-        item(`<div class="line"><span class="title">Save group</span><span class="meta">${esc(data.status)}</span></div>`),
+        item(`<div class="line"><span class="title">Save group${route ? " / " + esc(route) : ""}</span><span class="meta">${esc(data.status)}</span></div>`),
         item(`<div class="next">Actions: ${esc(data.action_count ?? 0)}</div>`),
         item(`<div class="next">History: ${esc((data.group_history || {}).event_type || "not recorded")}</div>`),
         item(`<div class="next">${esc(data.next_action || data.error || "")}</div>`)
@@ -698,17 +710,17 @@ REVIEW_HTML = """<!doctype html>
       await loadPackages();
       await loadCoordinationConsole();
     }
-    async function queueProposalGroup(groupKey) {
+    async function queueProposalGroup(groupKey, route) {
       if (!window.confirm("Queue this proposal group for operator review?")) {
         return;
       }
-      const data = await postProposalGroup("/review/action-proposal-group/queue", groupKey);
+      const data = await postProposalGroup("/review/action-proposal-group/queue", groupKey, undefined, route);
       if (!data) {
         return;
       }
       const importResult = data.import_result || {};
       packageDetail.replaceChildren(
-        item(`<div class="line"><span class="title">Queue group</span><span class="meta">${esc(data.status)}</span></div>`),
+        item(`<div class="line"><span class="title">Queue group${route ? " / " + esc(route) : ""}</span><span class="meta">${esc(data.status)}</span></div>`),
         item(`<div class="next">Actions: ${esc(data.action_count ?? 0)} / queued: ${esc(importResult.queued_count ?? 0)}</div>`),
         item(`<div class="next">History: ${esc((data.group_history || {}).event_type || "not recorded")}</div>`),
         item(`<div class="next">${esc(data.next_action || data.error || "")}</div>`)
@@ -717,20 +729,23 @@ REVIEW_HTML = """<!doctype html>
       await loadImportQueue();
       await loadCoordinationConsole();
     }
-    async function dismissProposalGroup(groupKey) {
+    async function dismissProposalGroup(groupKey, route) {
       if (!window.confirm("Dismiss this proposal group from the local console?")) {
         return;
       }
       const data = await postProposalGroup(
         "/review/action-proposal-group/dismiss",
         groupKey,
-        "Review UI dismissed this grouped proposal as known noise."
+        route === "suppress"
+          ? "Review UI dismissed the suppress route as already-covered mail workflow chatter."
+          : "Review UI dismissed this grouped proposal as known noise.",
+        route
       );
       if (!data) {
         return;
       }
       packageDetail.replaceChildren(
-        item(`<div class="line"><span class="title">Dismiss group</span><span class="meta">${esc(data.status)}</span></div>`),
+        item(`<div class="line"><span class="title">Dismiss group${route ? " / " + esc(route) : ""}</span><span class="meta">${esc(data.status)}</span></div>`),
         item(`<div class="next">Dismissed: ${esc(data.dismissed_count ?? 0)}</div>`),
         item(`<div class="next">History: ${esc((data.group_history || {}).event_type || "not recorded")}</div>`),
         item(`<div class="next">${esc(data.next_action || data.error || "")}</div>`)
@@ -1359,11 +1374,13 @@ async def review_save_action_proposal_group(request: Request) -> dict[str, objec
     """Stage one proposal-review group as a saved package without applying work."""
     body = await _action_proposal_group_body(request)
     group_key = body.get("group_key")
+    route = body.get("route")
     hours = body.get("hours", 2)
     limit = body.get("limit", 25)
     report = await asyncio.to_thread(
         save_action_proposal_group_package,
         group_key=group_key if isinstance(group_key, str) else "",
+        route=route if isinstance(route, str) else None,
         hours=int(hours) if isinstance(hours, int) else 2,
         limit=int(limit) if isinstance(limit, int) else 25,
         enqueue=False,
@@ -1376,11 +1393,13 @@ async def review_queue_action_proposal_group(request: Request) -> dict[str, obje
     """Save and queue one proposal-review group without applying personal-ops work."""
     body = await _action_proposal_group_body(request)
     group_key = body.get("group_key")
+    route = body.get("route")
     hours = body.get("hours", 2)
     limit = body.get("limit", 25)
     report = await asyncio.to_thread(
         save_action_proposal_group_package,
         group_key=group_key if isinstance(group_key, str) else "",
+        route=route if isinstance(route, str) else None,
         hours=int(hours) if isinstance(hours, int) else 2,
         limit=int(limit) if isinstance(limit, int) else 25,
         enqueue=True,
@@ -1393,6 +1412,7 @@ async def review_dismiss_action_proposal_group(request: Request) -> dict[str, ob
     """Dismiss every active proposal in one proposal-review group locally."""
     body = await _action_proposal_group_body(request)
     group_key = body.get("group_key")
+    route = body.get("route")
     reason = body.get("reason")
     hours = body.get("hours", 2)
     limit = body.get("limit", 25)
@@ -1402,6 +1422,7 @@ async def review_dismiss_action_proposal_group(request: Request) -> dict[str, ob
         reason=reason
         if isinstance(reason, str) and reason.strip()
         else "Review UI dismissed a grouped proposal as known noise.",
+        route=route if isinstance(route, str) else None,
         hours=int(hours) if isinstance(hours, int) else 2,
         limit=int(limit) if isinstance(limit, int) else 25,
     )
