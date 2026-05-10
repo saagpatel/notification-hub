@@ -738,7 +738,7 @@ def test_personal_ops_action_export_prepares_actions_from_rollups() -> None:
         "error": None,
     }
 
-    with patch("notification_hub.operations.run_inbox", return_value=inbox_report):
+    with patch("notification_hub.operations.run_inbox", return_value=inbox_report) as mock_inbox:
         report = run_personal_ops_action_export(hours=2, limit=5)
 
     assert report["status"] == "ok"
@@ -756,6 +756,68 @@ def test_personal_ops_action_export_prepares_actions_from_rollups() -> None:
     )
     assert report["review_package"]["status"] == "not_requested"
     assert report["dismissed_action_count"] == 0
+    mock_inbox.assert_called_once_with(hours=2, limit=25)
+
+
+def test_personal_ops_action_export_scans_past_dismissed_candidates(tmp_path: Path) -> None:
+    dismissals_path = tmp_path / "dismissals.jsonl"
+    dismissed_rollup = {
+        "count": 3,
+        "source": "personal-ops",
+        "project": "mail",
+        "intent": "waiting_on_user",
+        "level": "urgent",
+        "title": "Approval Requested",
+        "body": "Known test draft",
+        "latest_timestamp": "2026-05-09T00:00:00+00:00",
+        "latest_event_id": "dismissed123",
+    }
+    active_rollup = {
+        "count": 2,
+        "source": "personal-ops",
+        "project": "mail",
+        "intent": "waiting_on_user",
+        "level": "urgent",
+        "title": "Approval Requested",
+        "body": "Real reply needed",
+        "latest_timestamp": "2026-05-09T00:01:00+00:00",
+        "latest_event_id": "active123",
+    }
+    inbox_report: dict[str, object] = {
+        "status": "ok",
+        "hours": 2,
+        "events_seen": 5,
+        "needs_attention": [],
+        "waiting_or_blocked": [],
+        "ready": [],
+        "completed": [],
+        "rollups": [dismissed_rollup, active_rollup],
+        "noise_candidates": [],
+        "error": None,
+    }
+
+    with patch("notification_hub.operations.run_inbox", return_value=inbox_report):
+        first_report = run_personal_ops_action_export(
+            hours=2,
+            limit=1,
+            dismissals_path=dismissals_path,
+        )
+    dismiss_action_proposal(
+        dismissal_key=first_report["actions"][0]["dismissal_key"],
+        reason="known first candidate",
+        dismissals_path=dismissals_path,
+    )
+
+    with patch("notification_hub.operations.run_inbox", return_value=inbox_report) as mock_inbox:
+        second_report = run_personal_ops_action_export(
+            hours=2,
+            limit=1,
+            dismissals_path=dismissals_path,
+        )
+
+    assert [action["signal_body"] for action in second_report["actions"]] == ["Real reply needed"]
+    assert second_report["dismissed_action_count"] == 1
+    mock_inbox.assert_called_once_with(hours=2, limit=25)
 
 
 def test_action_proposal_dismissal_filters_matching_rollup(tmp_path: Path) -> None:

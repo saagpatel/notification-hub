@@ -59,6 +59,8 @@ tuning pass.
   handled history so resolved or ignored handoffs stop reappearing as fresh work, includes the next
   real signal lane, and includes a guided operator stage with exact safe commands for the current
   handoff state.
+- Action proposal export now scans a deeper candidate set than the display limit, so dismissed or
+  policy-covered rollups cannot crowd out real lower-ranked operator signals from the default view.
 - Action proposal dismissals can now be listed, inspected, and undismissed through CLI and `/review`
   without deleting dismissal history.
 - An `operator-daily-state` command and `/review/operator-daily-state` endpoint now build a

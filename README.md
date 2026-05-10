@@ -116,6 +116,8 @@ safe commands for saving, validating, queueing, promoting, or outcome-syncing ha
 apply behavior outside notification-hub.
 The personal-ops-actions command turns inbox rollups into action proposals for review. It does not
 write to personal-ops; pass `--output path/to/actions.json` when you want a handoff file.
+It scans a deeper candidate set than the display limit, so dismissed or policy-covered rollups do not
+hide a real operator signal that appears just below them.
 Each proposal now includes a stable dismissal key, and `action-proposal-dismiss` can hide a known
 repeated proposal from future console/action exports without deleting the underlying event log.
 `action-proposal-dismissals` lists active or inactive dismissal records, while

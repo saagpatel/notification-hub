@@ -623,6 +623,8 @@ PERSONAL_OPS_IMPORT_QUEUE = EVENTS_DIR / "personal-ops-import-queue.jsonl"
 ACTION_PROPOSAL_DISMISSALS = EVENTS_DIR / "action-proposal-dismissals.jsonl"
 ACTION_EXPORT_SCHEMA_VERSION = "notification-hub.personal_ops_action_export.v1"
 PERSONAL_OPS_IMPORT_QUEUE_SCHEMA_VERSION = "notification-hub.personal_ops_import_queue.v1"
+ACTION_PROPOSAL_MIN_CANDIDATES = 25
+ACTION_PROPOSAL_CANDIDATE_MULTIPLIER = 5
 PERSONAL_OPS_QUEUE_STATUSES = {
     "queued",
     "reviewed",
@@ -1163,6 +1165,14 @@ def _action_from_rollup(rollup: InboxRollupReport) -> PersonalOpsActionReport:
         "evidence_timestamp": rollup["latest_timestamp"],
         "count": rollup["count"],
     }
+
+
+def _action_proposal_candidate_limit(limit: int) -> int:
+    item_limit = max(limit, 1)
+    return max(
+        ACTION_PROPOSAL_MIN_CANDIDATES,
+        item_limit * ACTION_PROPOSAL_CANDIDATE_MULTIPLIER,
+    )
 
 
 def _write_action_review_package(
@@ -2649,7 +2659,10 @@ def run_personal_ops_action_export(
     window_hours = max(hours, 1)
     item_limit = max(limit, 1)
     generated_at = datetime.now(timezone.utc).isoformat()
-    inbox = run_inbox(hours=window_hours, limit=item_limit)
+    inbox = run_inbox(
+        hours=window_hours,
+        limit=_action_proposal_candidate_limit(item_limit),
+    )
     proposed_actions = [
         _action_from_rollup(rollup)
         for rollup in inbox["rollups"]
