@@ -2973,20 +2973,6 @@ def _build_coordination_console_guide(
     queued_items: list[PersonalOpsImportQueueItemReport],
     pending_promotion_items: list[PersonalOpsImportQueueItemReport],
 ) -> tuple[str, list[CoordinationConsoleGuideStep]]:
-    if readiness["decision"] != "ready_to_expand":
-        return (
-            "readiness",
-            [
-                _console_guide_step(
-                    step=1,
-                    title="Clear readiness gate",
-                    status="current",
-                    summary=readiness["next_action"],
-                    commands=["uv run notification-hub coordination-readiness"],
-                )
-            ],
-        )
-
     first_new_action = next(
         (item for item in active_actions if item["lineage_status"] == "new"), None
     )
@@ -3045,6 +3031,20 @@ def _build_coordination_console_guide(
                     ],
                     queue_id=first_queued["queue_id"] if first_queued is not None else None,
                 ),
+            ],
+        )
+
+    if readiness["decision"] != "ready_to_expand":
+        return (
+            "readiness",
+            [
+                _console_guide_step(
+                    step=1,
+                    title="Clear readiness gate",
+                    status="current",
+                    summary=readiness["next_action"],
+                    commands=["uv run notification-hub coordination-readiness"],
+                )
             ],
         )
 

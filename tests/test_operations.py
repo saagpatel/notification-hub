@@ -464,20 +464,20 @@ def test_coordination_console_guides_queued_handoff_lifecycle() -> None:
         patch(
             "notification_hub.operations.run_coordination_readiness",
             return_value={
-                "status": "ok",
-                "decision": "ready_to_expand",
-                "summary": "Runtime, queue, and saved burn-in evidence are ready.",
-                "queue_status": "ok",
+                "status": "warn",
+                "decision": "fix_noise_first",
+                "summary": "Runtime or policy needs attention before expanding coordination.",
+                "queue_status": "warn",
                 "queued_count": 1,
                 "pending_count": 0,
                 "stale_count": 0,
                 "saved_burn_in_reports": 2,
                 "latest_burn_in_ready": True,
                 "latest_burn_in_noise_candidates": 0,
-                "runtime_status": "ok",
+                "runtime_status": "degraded",
                 "policy_warning_count": 0,
-                "next_action": "Plan the next compact coordination console slice.",
-                "evidence": ["runtime=ok"],
+                "next_action": "Review queued personal-ops handoff items.",
+                "evidence": ["runtime=degraded", "queue=warn queued=1 pending=0 stale=0"],
                 "applied": False,
             },
         ),
@@ -542,6 +542,7 @@ def test_coordination_console_guides_queued_handoff_lifecycle() -> None:
         report = run_coordination_console(hours=2, limit=3)
 
     assert report["guide_stage"] == "queue_review"
+    assert report["readiness"]["decision"] == "fix_noise_first"
     assert report["actions"][0]["lineage_status"] == "queued"
     assert report["guide_steps"][0]["queue_id"] == "queue-active"
     assert "queue-active" in report["next_commands"][1]

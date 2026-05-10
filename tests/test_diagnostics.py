@@ -846,6 +846,10 @@ def test_run_verify_runtime_is_read_only_by_default() -> None:
             },
         ),
         patch("notification_hub.operations.run_burn_in", return_value=_burn_in_report()),
+        patch(
+            "notification_hub.operations.summarize_personal_ops_import_queue",
+            return_value=_import_queue_health(),
+        ),
         patch("notification_hub.operations.run_delivery_check") as mock_delivery_check,
         patch("notification_hub.operations.run_smoke_check") as mock_smoke,
     ):
@@ -896,6 +900,10 @@ def test_run_verify_runtime_reports_degraded_policy() -> None:
             },
         ),
         patch("notification_hub.operations.run_burn_in", return_value=_burn_in_report()),
+        patch(
+            "notification_hub.operations.summarize_personal_ops_import_queue",
+            return_value=_import_queue_health(),
+        ),
         patch("notification_hub.operations.run_delivery_check") as mock_delivery_check,
     ):
         report = run_verify_runtime()
@@ -933,6 +941,10 @@ def test_run_verify_runtime_reports_degraded_recent_runtime_health() -> None:
         patch(
             "notification_hub.operations.run_burn_in",
             return_value=_burn_in_report(status="degraded", slack_delivery_failure_count=2),
+        ),
+        patch(
+            "notification_hub.operations.summarize_personal_ops_import_queue",
+            return_value=_import_queue_health(),
         ),
         patch("notification_hub.operations.run_delivery_check") as mock_delivery_check,
     ):
@@ -1010,6 +1022,10 @@ def test_run_verify_runtime_smoke_is_opt_in() -> None:
             },
         ),
         patch("notification_hub.operations.run_burn_in", return_value=_burn_in_report()),
+        patch(
+            "notification_hub.operations.summarize_personal_ops_import_queue",
+            return_value=_import_queue_health(),
+        ),
         patch("notification_hub.operations.run_delivery_check") as mock_delivery_check,
         patch(
             "notification_hub.operations.run_smoke_check",
@@ -1060,6 +1076,10 @@ def test_run_verify_runtime_delivery_check_is_opt_in() -> None:
             },
         ),
         patch("notification_hub.operations.run_burn_in", return_value=_burn_in_report()),
+        patch(
+            "notification_hub.operations.summarize_personal_ops_import_queue",
+            return_value=_import_queue_health(),
+        ),
         patch(
             "notification_hub.operations.run_delivery_check",
             return_value=_delivery_check_report(status="degraded", verify_slack=True),
