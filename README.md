@@ -134,7 +134,9 @@ or queue just the `promote` route, or locally dismiss just the `suppress` route,
 do not have to be handled as one all-or-nothing group.
 The same recommendation now exposes a separate Operator Decision Required lane for real outbound
 mail approvals, so approval requests stay visible as operator work instead of being mixed into
-noise-review follow-up.
+noise-review follow-up. The approval lane packages every approval-titled mail item except known
+phase/workflow chatter, while the narrower promote route remains available for concrete reply
+candidates.
 The personal-ops-actions command turns inbox rollups into action proposals for review. It does not
 write to personal-ops; pass `--output path/to/actions.json` when you want a handoff file.
 It scans a deeper candidate set than the display limit, so dismissed or policy-covered rollups do not

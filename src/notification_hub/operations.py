@@ -3725,7 +3725,7 @@ def save_action_proposal_group_package(
             },
             "import_result": None,
             "group_history": None,
-            "next_action": "Choose one of: all, promote, suppress, or follow_up.",
+            "next_action": "Choose one of: all, operator_decision, promote, suppress, or follow_up.",
             "applied": False,
             "error": route_error,
         }
@@ -3858,7 +3858,7 @@ def dismiss_action_proposal_group(
             "dismissed_count": 0,
             "dismissals": [],
             "group_history": None,
-            "next_action": "Choose one of: all, promote, suppress, or follow_up.",
+            "next_action": "Choose one of: all, operator_decision, promote, suppress, or follow_up.",
             "applied": False,
             "error": route_error,
         }
@@ -4503,16 +4503,16 @@ def run_coordination_readiness(*, limit: int = 5) -> CoordinationReadinessReport
             f"noise={latest_report['noise_candidate_count']}"
         )
 
-    if runtime_status["status"] != "ok" or runtime_status["policy_warning_count"] > 0:
-        decision = "fix_noise_first"
-        status = "warn"
-        summary = "Runtime or policy needs attention before expanding coordination."
-        next_action = runtime_status["next_action"]
-    elif queued_count > 0 or pending_count > 0 or stale_count > 0:
+    if queued_count > 0 or pending_count > 0 or stale_count > 0:
         decision = "keep_burning_in"
         status = "warn" if stale_count > 0 else "ok"
         summary = "Operator queue has active handoff state; finish the loop before expanding."
         next_action = queue["next_action"]
+    elif runtime_status["status"] != "ok" or runtime_status["policy_warning_count"] > 0:
+        decision = "fix_noise_first"
+        status = "warn"
+        summary = "Runtime or policy needs attention before expanding coordination."
+        next_action = runtime_status["next_action"]
     elif latest_report is None:
         decision = "keep_burning_in"
         status = "ok"
@@ -4746,7 +4746,7 @@ MAIL_SUPPRESSION_CUES = (
     "secondary approval",
     "test draft",
 )
-ACTION_PROPOSAL_GROUP_ROUTES = {"promote", "suppress", "follow_up"}
+ACTION_PROPOSAL_GROUP_ROUTES = {"operator_decision", "promote", "suppress", "follow_up"}
 
 
 def _action_signal_body(action: PersonalOpsActionReport) -> str:
@@ -4761,6 +4761,11 @@ def _mail_route_category(action: PersonalOpsActionReport) -> str:
     if any(cue in body for cue in MAIL_SUPPRESSION_CUES):
         return "suppress"
     return "follow_up"
+
+
+def _mail_operator_decision_required(action: PersonalOpsActionReport) -> bool:
+    title = action["title"].lower()
+    return "approval requested" in title and _mail_route_category(action) != "suppress"
 
 
 def _normalize_action_proposal_group_route(route: str | None) -> tuple[str | None, str | None]:
@@ -4781,6 +4786,8 @@ def _filter_actions_for_group_route(
 ) -> list[PersonalOpsActionReport]:
     if route is None:
         return actions
+    if route == "operator_decision":
+        return [action for action in actions if _mail_operator_decision_required(action)]
     return [action for action in actions if _mail_route_category(action) == route]
 
 
@@ -4794,8 +4801,11 @@ def _mail_route_recommendation(
     promote_action_ids: list[str] = []
     suppress_action_ids: list[str] = []
     follow_up_action_ids: list[str] = []
+    operator_decision_action_ids: list[str] = []
     for item in actions:
         action = item["action"]
+        if _mail_operator_decision_required(action):
+            operator_decision_action_ids.append(action["action_id"])
         category = _mail_route_category(action)
         if category == "promote":
             promote_action_ids.append(action["action_id"])
@@ -4807,6 +4817,7 @@ def _mail_route_recommendation(
     promote_count = len(promote_action_ids)
     suppress_count = len(suppress_action_ids)
     follow_up_count = len(follow_up_action_ids)
+    operator_decision_count = len(operator_decision_action_ids)
 
     def recommendation(
         *,
@@ -4818,11 +4829,11 @@ def _mail_route_recommendation(
             "decision": decision,
             "reason": reason,
             "suggested_next_action": suggested_next_action,
-            "operator_decision_required_count": promote_count,
+            "operator_decision_required_count": operator_decision_count,
             "promote_candidate_count": promote_count,
             "suppress_candidate_count": suppress_count,
             "follow_up_candidate_count": follow_up_count,
-            "operator_decision_required_action_ids": promote_action_ids,
+            "operator_decision_required_action_ids": operator_decision_action_ids,
             "promote_candidate_action_ids": promote_action_ids,
             "suppress_candidate_action_ids": suppress_action_ids,
             "follow_up_candidate_action_ids": follow_up_action_ids,

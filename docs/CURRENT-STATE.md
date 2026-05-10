@@ -119,7 +119,9 @@ tuning pass.
   follow-up candidates visible for separate inspection.
 - The review surface now splits real personal-ops mail approvals into an Operator Decision Required
   lane and repeated burn-in signatures into Noise Candidate Review, preserving the outbound-approval
-  operator gate while still surfacing narrow policy candidates.
+  operator gate while still surfacing narrow policy candidates. The approval lane now has its own
+  route so approval-titled mail items that are not known phase/workflow chatter can be packaged
+  together even when they are not concrete reply-promotion candidates.
 - The review page can stage a local review package, list recent saved review packages, inspect
   package actions/evidence plus queue lineage, queue import handoff items, filter
   queued/promoted/pending/stale/resolved handoffs, mark queued items reviewed/rejected/snoozed/promoted,

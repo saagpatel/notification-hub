@@ -1373,6 +1373,74 @@ def test_action_proposal_group_package_can_save_promote_route(tmp_path: Path) ->
     assert report["group_history"]["event_type"] == "saved_promote"
 
 
+def test_action_proposal_group_package_can_save_operator_decision_route(tmp_path: Path) -> None:
+    inbox_report: dict[str, object] = {
+        "status": "ok",
+        "hours": 2,
+        "events_seen": 3,
+        "needs_attention": [],
+        "waiting_or_blocked": [],
+        "ready": [],
+        "completed": [],
+        "rollups": [
+            {
+                "count": 2,
+                "source": "personal-ops",
+                "project": "mail",
+                "intent": "waiting_on_user",
+                "level": "urgent",
+                "title": "Approval Requested",
+                "body": "Outbound workflow reply",
+                "latest_timestamp": "2026-05-09T00:00:00+00:00",
+                "latest_event_id": "abc123",
+            },
+            {
+                "count": 2,
+                "source": "personal-ops",
+                "project": "mail",
+                "intent": "waiting_on_user",
+                "level": "urgent",
+                "title": "Approval Requested",
+                "body": "Phase 36 prepared handoff",
+                "latest_timestamp": "2026-05-09T00:01:00+00:00",
+                "latest_event_id": "def456",
+            },
+            {
+                "count": 2,
+                "source": "personal-ops",
+                "project": "mail",
+                "intent": "waiting_on_user",
+                "level": "urgent",
+                "title": "Approval Requested",
+                "body": "Orphan approval draft",
+                "latest_timestamp": "2026-05-09T00:02:00+00:00",
+                "latest_event_id": "ghi789",
+            },
+        ],
+        "noise_candidates": [],
+        "error": None,
+    }
+
+    with patch("notification_hub.operations.run_inbox", return_value=inbox_report):
+        report = save_action_proposal_group_package(
+            group_key="personal-ops:mail:waiting_on_user:high:waiting",
+            route="operator_decision",
+            hours=2,
+            limit=5,
+            review_dir=tmp_path,
+            group_history_path=tmp_path / "group-history.jsonl",
+        )
+
+    assert report["status"] == "ok"
+    assert report["action_count"] == 2
+    package_path = Path(str(report["review_package"]["path"]))
+    payload = json.loads(package_path.read_text(encoding="utf-8"))
+    assert payload["selected_group"]["route"] == "operator_decision"
+    assert [action["evidence_event_id"] for action in payload["actions"]] == ["abc123", "ghi789"]
+    assert report["group_history"] is not None
+    assert report["group_history"]["event_type"] == "saved_operator_decision"
+
+
 def test_action_review_package_names_are_collision_safe(tmp_path: Path) -> None:
     inbox_report: dict[str, object] = {
         "status": "ok",

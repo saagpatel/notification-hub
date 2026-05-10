@@ -723,7 +723,7 @@ REVIEW_HTML = """<!doctype html>
           <div class="next">${esc(route.reason || group.next_action || "")}</div>
           <div class="next">${esc(route.suggested_next_action || "")}</div>
           <div class="button-row">
-            <button type="button" data-save-route="promote" data-route-group="${esc(group.group_key)}">Save approval lane</button>
+            <button type="button" data-save-route="operator_decision" data-route-group="${esc(group.group_key)}">Save approval lane</button>
             <button type="button" data-follow-up-group="${esc(group.group_key)}">Needs follow-up</button>
           </div>
         `);
