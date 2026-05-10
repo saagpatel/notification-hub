@@ -377,6 +377,10 @@ REVIEW_HTML = """<!doctype html>
       <ul id="coordinationConsole"></ul>
     </section>
     <section class="focus">
+      <h2>Proposal Review</h2>
+      <ul id="proposalReview"></ul>
+    </section>
+    <section class="focus">
       <h2>Next Signal</h2>
       <ul id="nextSignal"></ul>
     </section>
@@ -448,6 +452,7 @@ REVIEW_HTML = """<!doctype html>
     const operatorFocus = document.getElementById("operatorFocus");
     const coordinationReadiness = document.getElementById("coordinationReadiness");
     const coordinationConsole = document.getElementById("coordinationConsole");
+    const proposalReview = document.getElementById("proposalReview");
     const nextSignal = document.getElementById("nextSignal");
     const actions = document.getElementById("actions");
     const rollups = document.getElementById("rollups");
@@ -584,6 +589,7 @@ REVIEW_HTML = """<!doctype html>
       const queue = data.queue_health || {};
       const reminder = data.outcome_sync_reminder || {};
       const signal = data.next_signal || {};
+      const review = data.proposal_review || {};
       const guideSteps = data.guide_steps || [];
       const guideRows = guideSteps.slice(0, 4).map(step => item(`
         <div class="line"><span class="title">${esc(step.step)}. ${esc(step.title)}</span><span class="meta">${esc(step.status)}</span></div>
@@ -606,6 +612,29 @@ REVIEW_HTML = """<!doctype html>
         <div class="next"><strong>Guide</strong>: ${esc(data.guide_stage || "unknown")}</div>
         <div class="next">${esc(data.next_action || "")}</div>
       `), ...(guideRows.length ? guideRows : [item(`<div class="next">No guide steps.</div>`)]));
+      const reviewGroups = review.groups || [];
+      const groupRows = reviewGroups.slice(0, 5).map(group => item(`
+        <div class="line"><span class="title">${esc(group.source)}${group.project ? " / " + esc(group.project) : ""}</span><span class="meta">${esc(group.intent)} x${esc(group.action_count)}</span></div>
+        <div class="badge-row">
+          ${badge(group.priority)}
+          ${badge(group.state)}
+          ${badge(`events ${group.total_event_count ?? 0}`)}
+          ${badge(`titles ${(group.titles || []).length}`)}
+        </div>
+        <div class="next">${esc((group.titles || []).join(", "))}</div>
+        <div class="next">${esc(group.next_action || "")}</div>
+      `));
+      proposalReview.replaceChildren(item(`
+        <div class="line"><span class="title">${esc(review.mode || "unknown")}</span><span class="meta">${esc(review.group_count ?? 0)} group(s)</span></div>
+        <div class="badge-row">
+          ${warnBadge(`new ${review.new_count ?? 0}`, (review.new_count ?? 0) > 0)}
+          ${warnBadge(`queued ${review.queued_count ?? 0}`, (review.queued_count ?? 0) > 0)}
+          ${warnBadge(`promoted ${review.promoted_count ?? 0}`, (review.promoted_count ?? 0) > 0)}
+          ${badge(`handled ${review.handled_count ?? 0}`)}
+        </div>
+        <div class="next">${esc(review.summary || "")}</div>
+        <div class="next">${esc(review.next_action || "")}</div>
+      `), ...(groupRows.length ? groupRows : [item(`<div class="next">No active proposal groups.</div>`)]));
       nextSignal.replaceChildren(item(`
         <div class="line"><span class="title">${esc(signal.title || "Next signal")}</span><span class="meta">${esc(signal.status || "unknown")}</span></div>
         <div class="badge-row">
