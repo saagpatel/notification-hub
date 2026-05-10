@@ -301,6 +301,8 @@ tuning pass.
 - Added first-class follow-up lineage in Coordination Console so `needs_follow_up` outcomes are
   counted as handled follow-up history rather than new active proposal work, including repeated
   rollups whose newest event IDs rotate under the same stable proposal key.
+- Added handled-proposal lineage reasons plus stable-key and evidence-rotation counts, so monitor
+  mode can explain why a repeated proposal remains history instead of active work.
 - Added advisory mail route recommendations to Proposal Review so mixed mail approval batches show
   whether they contain promote candidates, suppression candidates, or follow-up-only items.
 - Added route-aware Proposal Review actions so a mixed mail batch can be split into local promote,

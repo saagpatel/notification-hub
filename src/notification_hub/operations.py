@@ -719,6 +719,13 @@ class CoordinationConsoleActionReport(TypedDict):
     lineage_status: str
     lineage_label: str
     lineage_next_action: str
+    lineage_reason: str
+    lineage_history_event_type: str | None
+    lineage_history_recorded_at: str | None
+    lineage_history_outcome: str | None
+    stable_key_matched: bool
+    evidence_event_rotated: bool
+    previous_action_id: str | None
     queue_id: str | None
     queue_status: str | None
     promotion_outcome: str | None
@@ -780,6 +787,8 @@ class CoordinationProposalReviewReport(TypedDict):
     handled_mail_count: int
     handled_mail_rich_count: int
     handled_mail_thin_count: int
+    handled_stable_key_match_count: int
+    handled_evidence_rotation_count: int
     handled_history_summary: str | None
     group_count: int
     primary_action_id: str | None
@@ -4886,11 +4895,11 @@ def _proposal_lineage_next_action(status: str) -> str:
 
 def _latest_follow_up_action_markers(
     group_history: list[ActionProposalGroupHistoryReport],
-) -> tuple[set[str], set[str]]:
+) -> tuple[dict[str, ActionProposalGroupHistoryReport], dict[str, ActionProposalGroupHistoryReport]]:
     """Return action IDs and stable keys covered by latest follow-up outcomes."""
     seen_outcome_groups: set[str] = set()
-    follow_up_action_ids: set[str] = set()
-    follow_up_action_keys: set[str] = set()
+    follow_up_action_ids: dict[str, ActionProposalGroupHistoryReport] = {}
+    follow_up_action_keys: dict[str, ActionProposalGroupHistoryReport] = {}
     for item in group_history:
         group_key = item["group_key"]
         if group_key in seen_outcome_groups or item["event_type"] != "outcome":
@@ -4900,9 +4909,51 @@ def _latest_follow_up_action_markers(
             item["status"] == "ok"
             and item["outcome"] == "needs_follow_up"
         ):
-            follow_up_action_ids.update(item["action_ids"])
-            follow_up_action_keys.update(item["action_keys"])
+            for action_id in item["action_ids"]:
+                follow_up_action_ids[action_id] = item
+            for action_key in item["action_keys"]:
+                follow_up_action_keys[action_key] = item
     return follow_up_action_ids, follow_up_action_keys
+
+
+def _lineage_reason(
+    *,
+    status: str,
+    queue_item: PersonalOpsImportQueueItemReport | None,
+    follow_up_history: ActionProposalGroupHistoryReport | None,
+    stable_key_matched: bool,
+    evidence_event_rotated: bool,
+) -> str:
+    if status == "follow_up" and follow_up_history is not None:
+        if stable_key_matched and evidence_event_rotated:
+            return (
+                "Latest needs_follow_up group outcome matched this stable proposal key; "
+                "the evidence event rotated, so it remains handled history."
+            )
+        if stable_key_matched:
+            return (
+                "Latest needs_follow_up group outcome matched this stable proposal key, "
+                "so it remains handled history."
+            )
+        return (
+            "Latest needs_follow_up group outcome matched this action id, "
+            "so it remains handled history."
+        )
+    if queue_item is not None:
+        if status == "resolved":
+            return "Queue item has a recorded downstream outcome, so it is resolved history."
+        if status == "reviewed":
+            return "Queue item was reviewed without downstream promotion, so it is handled history."
+        if status == "snoozed":
+            return "Queue item is snoozed until its recorded wake time."
+        if status == "promoted":
+            return "Queue item is promoted and still waiting for a downstream outcome."
+        if status == "queued":
+            return "Queue item is waiting for operator review."
+        return "Queue lineage determines this proposal state."
+    if status == "new":
+        return "No queue item or handled group outcome matches this proposal."
+    return "Proposal lineage is derived from local review history."
 
 
 def _build_proposal_lineage(
@@ -4929,17 +4980,51 @@ def _build_proposal_lineage(
             action["evidence_event_id"]
         )
         lineage_status = _proposal_lineage_status(queue_item)
-        if queue_item is None and (
-            action["action_id"] in follow_up_action_ids
-            or action.get("dismissal_key") in follow_up_action_keys
-        ):
+        follow_up_history = follow_up_action_ids.get(action["action_id"])
+        stable_key_matched = False
+        if follow_up_history is None:
+            dismissal_key = action.get("dismissal_key")
+            if dismissal_key:
+                follow_up_history = follow_up_action_keys.get(dismissal_key)
+                stable_key_matched = follow_up_history is not None
+        previous_action_id = (
+            follow_up_history["action_ids"][0]
+            if follow_up_history is not None and follow_up_history["action_ids"]
+            else None
+        )
+        evidence_event_rotated = bool(
+            stable_key_matched
+            and previous_action_id is not None
+            and previous_action_id != action["action_id"]
+        )
+        if queue_item is None and follow_up_history is not None:
             lineage_status = "follow_up"
+        lineage_reason = _lineage_reason(
+            status=lineage_status,
+            queue_item=queue_item,
+            follow_up_history=follow_up_history,
+            stable_key_matched=stable_key_matched,
+            evidence_event_rotated=evidence_event_rotated,
+        )
         reports.append(
             {
                 "action": action,
                 "lineage_status": lineage_status,
                 "lineage_label": _proposal_lineage_label(lineage_status),
                 "lineage_next_action": _proposal_lineage_next_action(lineage_status),
+                "lineage_reason": lineage_reason,
+                "lineage_history_event_type": follow_up_history["event_type"]
+                if follow_up_history is not None
+                else None,
+                "lineage_history_recorded_at": follow_up_history["recorded_at"]
+                if follow_up_history is not None
+                else None,
+                "lineage_history_outcome": follow_up_history["outcome"]
+                if follow_up_history is not None
+                else None,
+                "stable_key_matched": stable_key_matched,
+                "evidence_event_rotated": evidence_event_rotated,
+                "previous_action_id": previous_action_id,
                 "queue_id": queue_item["queue_id"] if queue_item is not None else None,
                 "queue_status": queue_item["status"] if queue_item is not None else None,
                 "promotion_outcome": queue_item["promotion_outcome"]
@@ -5407,6 +5492,10 @@ def _build_proposal_review(
     handled_mail_rich_count = sum(
         1 for item in handled_mail if _action_evidence_quality(item["action"]) == "rich"
     )
+    handled_stable_key_match_count = sum(1 for item in handled_actions if item["stable_key_matched"])
+    handled_evidence_rotation_count = sum(
+        1 for item in handled_actions if item["evidence_event_rotated"]
+    )
     handled_history_summary = _handled_history_summary(handled_actions)
     grouped: dict[tuple[str, str | None, str, str, str], list[CoordinationConsoleActionReport]] = {}
     for item in active_actions:
@@ -5483,6 +5572,8 @@ def _build_proposal_review(
         "handled_mail_count": len(handled_mail),
         "handled_mail_rich_count": handled_mail_rich_count,
         "handled_mail_thin_count": len(handled_mail) - handled_mail_rich_count,
+        "handled_stable_key_match_count": handled_stable_key_match_count,
+        "handled_evidence_rotation_count": handled_evidence_rotation_count,
         "handled_history_summary": handled_history_summary,
         "group_count": len(groups),
         "primary_action_id": primary_action_id,

@@ -994,6 +994,8 @@ def _print_coordination_console_report(report: CoordinationConsoleReport) -> Non
     print(f"- review mode: {proposal_review['mode']}")
     print(f"- proposal groups: {proposal_review['group_count']}")
     print(f"- handled mail: {proposal_review['handled_mail_count']}")
+    print(f"- stable-key history: {proposal_review['handled_stable_key_match_count']}")
+    print(f"- evidence rotations: {proposal_review['handled_evidence_rotation_count']}")
     print(f"- outcome quality: {outcome_quality['summary']}")
     print(f"- watch posture: {next_signal['watch_posture']}")
     print(f"- guide stage: {report['guide_stage']}")
@@ -1026,6 +1028,14 @@ def _print_coordination_console_report(report: CoordinationConsoleReport) -> Non
                     f"{latest_history.get('event_type')} "
                     f"({latest_history.get('status')})"
                 )
+    if report["handled_actions"]:
+        print("- handled history:")
+        for item in report["handled_actions"][:3]:
+            action = item["action"]
+            print(
+                "  - "
+                f"{action['title']}: {item['lineage_label']} - {item['lineage_reason']}"
+            )
     if proposal_review["group_history"]:
         print("- recent group history:")
         for item in proposal_review["group_history"][:3]:

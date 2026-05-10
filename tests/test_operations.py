@@ -907,6 +907,11 @@ def test_coordination_console_treats_follow_up_outcome_as_history(tmp_path: Path
     assert report["handled_actions"][0]["lineage_label"] == "Needs follow-up"
     assert report["proposal_review"]["mode"] == "monitor"
     assert report["proposal_review"]["follow_up_count"] == 1
+    assert report["proposal_review"]["handled_stable_key_match_count"] == 0
+    assert report["proposal_review"]["handled_evidence_rotation_count"] == 0
+    assert report["handled_actions"][0]["stable_key_matched"] is False
+    assert report["handled_actions"][0]["evidence_event_rotated"] is False
+    assert "action id" in report["handled_actions"][0]["lineage_reason"]
     assert report["proposal_review"]["handled_mail_count"] == 1
     assert report["proposal_review"]["handled_mail_thin_count"] == 1
     assert "handled mail follow-up" in report["proposal_review"]["summary"]
@@ -1076,6 +1081,12 @@ def test_coordination_console_keeps_follow_up_history_when_action_id_rotates(
     assert report["handled_actions"][0]["lineage_status"] == "follow_up"
     assert report["proposal_review"]["mode"] == "monitor"
     assert report["proposal_review"]["follow_up_count"] == 1
+    assert report["proposal_review"]["handled_stable_key_match_count"] == 1
+    assert report["proposal_review"]["handled_evidence_rotation_count"] == 1
+    assert report["handled_actions"][0]["stable_key_matched"] is True
+    assert report["handled_actions"][0]["evidence_event_rotated"] is True
+    assert report["handled_actions"][0]["previous_action_id"] == "action-follow-up-old"
+    assert "stable proposal key" in report["handled_actions"][0]["lineage_reason"]
 
 
 def test_coordination_console_guides_queued_handoff_lifecycle() -> None:

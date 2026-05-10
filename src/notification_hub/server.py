@@ -719,9 +719,12 @@ REVIEW_HTML = """<!doctype html>
           ${badge(`closed ${review.ignored_count ?? 0}`)}
           ${badge(`handled ${review.handled_count ?? 0}`)}
           ${badge(`mail ${review.handled_mail_count ?? 0}`)}
+          ${badge(`stable key ${review.handled_stable_key_match_count ?? 0}`)}
+          ${badge(`rotated ${review.handled_evidence_rotation_count ?? 0}`)}
         </div>
         <div class="next">${esc(review.summary || "")}</div>
         ${review.handled_history_summary ? `<div class="next">${esc(review.handled_history_summary)}</div>` : ""}
+        ${(data.handled_actions || []).slice(0, 3).map(entry => `<div class="next"><strong>Handled</strong>: ${esc(entry.action?.title || "proposal")} - ${esc(entry.lineage_reason || "")}</div>`).join("")}
         <div class="next">${esc(review.next_action || "")}</div>
         ${(review.group_history || []).slice(0, 3).map(entry => `<div class="next"><strong>Recent group action</strong>: ${esc(entry.event_type)} ${esc(entry.group_key)} (${esc(entry.status)})</div>`).join("")}
       `), ...(groupRows.length ? groupRows : [item(`<div class="next">No active proposal groups.</div>`)]));

@@ -188,6 +188,8 @@ they do not block readiness once queue health is clean. Proposal Review also bre
 into reviewed-only, follow-up, resolved, closed, and snoozed counts so reviewed-but-not-promoted work
 is visible. Handled mail follow-ups are summarized separately with rich/thin evidence counts, so
 repeated handled mail echoes remain reviewable history without looking like fresh operator work.
+Handled proposals also include a lineage reason plus stable-key and evidence-rotation flags, so the
+console can explain when a newer event is still covered by an earlier `needs_follow_up` outcome.
 The console also reports promoted handoff outcome quality by rich versus thin evidence and narrows
 the monitor posture to notify only on active proposals, queued handoffs, pending promoted outcomes,
 runtime degradation, or repeated diagnostic echoes.
