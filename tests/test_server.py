@@ -148,6 +148,10 @@ async def test_review_page_endpoint(client: AsyncClient) -> None:
     assert "notification-hub review" in resp.text
     assert "Coordination Readiness" in resp.text
     assert "Coordination Console" in resp.text
+    assert "Real Signal Readiness" in resp.text
+    assert "No resolved rich-evidence handoff outcomes yet" in resp.text
+    assert "Latest proof" in resp.text
+    assert "rich resolved" in resp.text
     assert "Policy Drift" in resp.text
     assert "Operator Decision Required" in resp.text
     assert "Noise Candidate Review" in resp.text

@@ -169,6 +169,9 @@ The operator-handoff-drill command runs the temporary queue lifecycle plus queue
 non-applying rehearsal before using the same review flow for a real handoff. The `/review` drill
 button saves the burn-in proof by default and shows rich-evidence readiness, live-promotion
 readiness, and the saved report status.
+The `/review` page also includes a Real Signal Readiness lane that combines active proposals,
+handled follow-ups, queue state, latest saved proof, the next safe command, and a rich-outcome
+guardrail so expansion stays operator-mediated until a real rich-evidence handoff resolves.
 Pass `--save-review-package` when you want notification-hub to stage a local review package under
 `~/.local/share/notification-hub/action-exports/`; this still does not import or apply actions.
 The validate-action-package command checks a saved review package before any future import/apply

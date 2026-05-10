@@ -388,6 +388,10 @@ REVIEW_HTML = """<!doctype html>
       <ul id="coordinationConsole"></ul>
     </section>
     <section class="focus">
+      <h2>Real Signal Readiness</h2>
+      <ul id="realSignalReadiness"></ul>
+    </section>
+    <section class="focus">
       <h2>Proposal Review</h2>
       <ul id="proposalReview"></ul>
     </section>
@@ -496,6 +500,7 @@ REVIEW_HTML = """<!doctype html>
     const operatorFocus = document.getElementById("operatorFocus");
     const coordinationReadiness = document.getElementById("coordinationReadiness");
     const coordinationConsole = document.getElementById("coordinationConsole");
+    const realSignalReadiness = document.getElementById("realSignalReadiness");
     const proposalReview = document.getElementById("proposalReview");
     const operatorDecisionRequired = document.getElementById("operatorDecisionRequired");
     const noiseCandidateReview = document.getElementById("noiseCandidateReview");
@@ -569,6 +574,51 @@ REVIEW_HTML = """<!doctype html>
         return;
       }
       target.replaceChildren(...rows.map(render));
+    }
+    function outcomeGuardrail(outcomeQuality) {
+      const rich = outcomeQuality.rich || {};
+      if ((rich.resolved ?? 0) === 0) {
+        return "No resolved rich-evidence handoff outcomes yet; keep expansion operator-mediated until the first real rich handoff is promoted and resolved.";
+      }
+      return outcomeQuality.next_action || "Rich-evidence outcomes are now represented in the trend.";
+    }
+    function renderRealSignalReadiness(data) {
+      const readiness = data.readiness || {};
+      const queue = data.queue_health || {};
+      const signal = data.next_signal || {};
+      const review = data.proposal_review || {};
+      const outcomeQuality = data.outcome_quality || {};
+      const latestProof = (data.burn_in_reports || [])[0] || {};
+      const active = data.active_action_count ?? 0;
+      const queued = queue.queued_count ?? 0;
+      const pending = queue.promoted_pending_count ?? 0;
+      const stale = queue.promoted_pending_stale_count ?? 0;
+      const readyForLive = Boolean(latestProof.ready_for_live_promotion);
+      const status = active > 0 || queued > 0 || pending > 0 || stale > 0
+        ? "action"
+        : readiness.decision === "ready_to_expand" && readyForLive
+          ? "ready"
+          : "watch";
+      const nextCommand = (data.next_commands || [])[0]
+        || (signal.next_commands || [])[0]
+        || "uv run notification-hub coordination-console";
+      realSignalReadiness.replaceChildren(item(`
+        <div class="line"><span class="title">${esc(signal.title || "Waiting for next real signal")}</span><span class="meta">${esc(status)}</span></div>
+        <div class="badge-row">
+          ${warnBadge(`active ${active}`, active > 0)}
+          ${badge(`handled ${data.handled_action_count ?? 0}`)}
+          ${warnBadge(`queued ${queued}`, queued > 0)}
+          ${warnBadge(`pending ${pending}`, pending > 0)}
+          ${warnBadge(`stale ${stale}`, stale > 0)}
+          ${badge(`latest proof ${latestProof.status || "none"}`)}
+          ${warnBadge(`rich resolved ${(outcomeQuality.rich || {}).resolved ?? 0}`, ((outcomeQuality.rich || {}).resolved ?? 0) === 0)}
+        </div>
+        <div class="next"><strong>Latest proof</strong>: ${esc(latestProof.name || "No saved proof")} (${esc(latestProof.ready_for_live_promotion ? "ready" : "not ready")}, noise ${esc(latestProof.noise_candidate_count ?? 0)})</div>
+        <div class="next"><strong>Handled follow-ups</strong>: ${esc(review.handled_history_summary || "No handled follow-up history.")}</div>
+        <div class="next"><strong>Guardrail</strong>: ${esc(outcomeGuardrail(outcomeQuality))}</div>
+        <div class="next"><strong>Next command</strong>: ${esc(nextCommand)}</div>
+        <div class="next">${esc(data.next_action || signal.next_action || "")}</div>
+      `));
     }
     async function load() {
       const res = await fetch("/review/data?hours=2&limit=6");
@@ -677,6 +727,7 @@ REVIEW_HTML = """<!doctype html>
         ${signal.quiet_reason ? `<div class="next"><strong>Quiet reason</strong>: ${esc(signal.quiet_reason)}</div>` : ""}
         <div class="next">${esc(data.next_action || "")}</div>
       `), ...(guideRows.length ? guideRows : [item(`<div class="next">No guide steps.</div>`)]));
+      renderRealSignalReadiness(data);
       const reviewGroups = review.groups || [];
       const groupRows = reviewGroups.slice(0, 5).map(group => item(`
         <div class="line"><span class="title">${esc(group.source)}${group.project ? " / " + esc(group.project) : ""}</span><span class="meta">${esc(group.intent)} x${esc(group.action_count)}</span></div>

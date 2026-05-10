@@ -122,6 +122,9 @@ tuning pass.
   save, queue, mark as needing follow-up, or dismiss one proposal group at a time. It also shows
   recent group-history entries so a refresh does not hide the last grouped action. Policy drift and
   the latest saved review-session report are also visible from the review surface.
+- The review page now also includes a Real Signal Readiness lane that combines active proposals,
+  handled follow-ups, queue state, latest saved proof, the next safe command, and a rich-outcome
+  guardrail so coordination expansion waits for a real resolved rich-evidence handoff.
 - Codex now has an active `notification-hub-signal-watch` heartbeat that should stay report-only and
   use the read-only Coordination Console, queue health, and runtime verification surfaces to decide
   whether there is an active operator handoff or only the narrowed monitor posture.
