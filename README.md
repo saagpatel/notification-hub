@@ -248,11 +248,12 @@ show pending outcome-sync reminders, list and inspect saved burn-in reports, lis
 proposal dismissals, show the Coordination Console next signal, run the temporary operator handoff
 drill, delete saved review packages, validate the latest staged or saved package, and show the
 Coordination Console operator guide plus proposal-review grouping. It also surfaces sample-vs-live
-policy drift and the latest saved review-session summary. The Proposal Review controls can save a
-group package, queue a group package for operator review, or dismiss a group locally, and each group
-action is recorded in local group-history JSONL so later console refreshes still show what happened.
-A group outcome can also be recorded locally after review. These controls still do not apply,
-approve, send, or mutate personal-ops.
+policy drift, the latest saved review-session summary, a Noise Candidate Review panel for the latest
+saved burn-in repeated signatures, and an Operator Decision Required lane for concrete mail approval
+decisions. The Proposal Review controls can save a group package, queue a group package for operator
+review, or dismiss a group locally, and each group action is recorded in local group-history JSONL so
+later console refreshes still show what happened. A group outcome can also be recorded locally after
+review. These controls still do not apply, approve, send, or mutate personal-ops.
 Mail proposal groups include a route recommendation with promote, suppress, and follow-up counts so
 the operator can split mixed batches before queueing or dismissing them. Route-aware group controls
 still only stage local packages, queue local handoff records, or append local dismissals; they do not
@@ -457,6 +458,7 @@ curl http://127.0.0.1:9199/review/import-queue
 curl http://127.0.0.1:9199/review/coordination-readiness
 curl http://127.0.0.1:9199/review/coordination-console
 curl http://127.0.0.1:9199/review/policy-check
+curl http://127.0.0.1:9199/review/noise-candidates
 curl http://127.0.0.1:9199/review/outcome-sync-reminder
 curl http://127.0.0.1:9199/review/action-proposal-dismissals
 curl -X POST http://127.0.0.1:9199/review/action-proposal/DISMISSAL_KEY/dismiss \

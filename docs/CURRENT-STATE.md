@@ -107,7 +107,9 @@ tuning pass.
   first. A Proposal Review section shows grouped active proposals before a package is queued and can
   save, queue, mark as needing follow-up, or dismiss one proposal group at a time. It also shows
   recent group-history entries so a refresh does not hide the last grouped action. Policy drift and
-  the latest saved review-session report are also visible from the review surface.
+  the latest saved review-session report are also visible from the review surface. Noise Candidate
+  Review shows the latest saved burn-in repeated signatures with a decision hint, and Operator
+  Decision Required separates concrete mail approval decisions from follow-up chatter.
 - Codex now has an active `notification-hub-signal-watch` heartbeat that should stay report-only and
   use the read-only Coordination Console, queue health, and runtime verification surfaces to decide
   whether there is an active operator handoff or only a monitor posture.
@@ -408,13 +410,15 @@ Expected current outcome:
   and handled proposal counts plus dismissal counts and guide steps, without applying work
 - `/review/policy-check`: reports live policy warnings and sample-vs-live noise-rule drift without
   applying work
+- `/review/noise-candidates`: summarizes the latest saved burn-in noise candidates with decision
+  hints so policy tuning does not accidentally suppress real approval requests
 - `notification-hub personal-ops-queue-scenario`: runs a temporary queue lifecycle and records a
   final accepted promotion outcome without touching runtime queue state
 - `/review`: localhost-only review UI for runtime state, Operator Focus, Coordination Readiness,
   Coordination Console next signal and operator guide, inbox rollups, action proposals, import queue
-  health, policy drift, saved burn-in report history, latest saved review-session state, saved
-  review-session history, proposal dismissal/undismissal, daily operator state, handoff drill, and
-  trust state
+  health, policy drift, noise candidate review, operator decision-required mail approvals, saved
+  burn-in report history, latest saved review-session state, saved review-session history, proposal
+  dismissal/undismissal, daily operator state, handoff drill, and trust state
 - `/review/save-package` and `/review/validate-package`: review UI controls for staging and
   validating packages without importing or applying them
 - `/review/packages`: lists recent saved review packages and validation summaries without importing
