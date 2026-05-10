@@ -148,7 +148,8 @@ The operator-review-session command summarizes recent local review activity, inc
 proposal saves, queues, dismissals, outcomes, and queue follow-through. It is read-only and mirrors
 the review-session summary shown in `/review`; pass `--save-report` when you want a timestamped JSON
 audit report under `~/.local/share/notification-hub/operator-review-session-reports/`. Saved
-review-session reports can be listed and inspected from `/review` for a compact session timeline.
+review-session reports can be listed and inspected from `/review` for a compact session timeline,
+and the review page surfaces the latest saved session as its own at-a-glance panel.
 The operator-review-session-retention command prunes old saved review-session reports; it defaults to
 a dry run and only deletes files when `--apply` is passed. The `/review` page also shows the same
 retention pressure as a read-only summary, so cleanup stays explicit.
@@ -206,8 +207,8 @@ when you intentionally want to send one real delivery-check notification through
 The delivery-check command runs the same explicit transport checks directly without the rest of
 the runtime report.
 The policy-check command inspects the current policy config for overlapping keywords, shadowed
-routing rules, and no-op rules before they cause confusing behavior, and now also suggests likely
-fixes for each warning it reports.
+routing rules, no-op rules, and drift between the live noise rules and repo sample before they cause
+confusing behavior. It also suggests likely fixes for each warning it reports.
 The explain command shows how a sample event would classify, route, and deliver without posting it
 to the live daemon or sending any notifications.
 The bootstrap command copies the repo sample policy file into `~/.config/notification-hub/config.toml`
@@ -246,11 +247,12 @@ queued/promoted/pending/stale/resolved handoffs, mark queued items reviewed/reje
 show pending outcome-sync reminders, list and inspect saved burn-in reports, list/undismiss action
 proposal dismissals, show the Coordination Console next signal, run the temporary operator handoff
 drill, delete saved review packages, validate the latest staged or saved package, and show the
-Coordination Console operator guide plus proposal-review grouping. The Proposal Review controls can
-save a group package, queue a group package for operator review, or dismiss a group locally, and
-each group action is recorded in local group-history JSONL so later console refreshes still show
-what happened. A group outcome can also be recorded locally after review. These controls still do
-not apply, approve, send, or mutate personal-ops.
+Coordination Console operator guide plus proposal-review grouping. It also surfaces sample-vs-live
+policy drift and the latest saved review-session summary. The Proposal Review controls can save a
+group package, queue a group package for operator review, or dismiss a group locally, and each group
+action is recorded in local group-history JSONL so later console refreshes still show what happened.
+A group outcome can also be recorded locally after review. These controls still do not apply,
+approve, send, or mutate personal-ops.
 Mail proposal groups include a route recommendation with promote, suppress, and follow-up counts so
 the operator can split mixed batches before queueing or dismissing them. Route-aware group controls
 still only stage local packages, queue local handoff records, or append local dismissals; they do not
@@ -454,6 +456,7 @@ curl -X POST http://127.0.0.1:9199/review/package/personal-ops-actions-YYYYMMDD-
 curl http://127.0.0.1:9199/review/import-queue
 curl http://127.0.0.1:9199/review/coordination-readiness
 curl http://127.0.0.1:9199/review/coordination-console
+curl http://127.0.0.1:9199/review/policy-check
 curl http://127.0.0.1:9199/review/outcome-sync-reminder
 curl http://127.0.0.1:9199/review/action-proposal-dismissals
 curl -X POST http://127.0.0.1:9199/review/action-proposal/DISMISSAL_KEY/dismiss \

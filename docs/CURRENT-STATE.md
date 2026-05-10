@@ -104,7 +104,8 @@ tuning pass.
   summaries that put the current action state, expansion gate, next real signal, and next safe action
   first. A Proposal Review section shows grouped active proposals before a package is queued and can
   save, queue, mark as needing follow-up, or dismiss one proposal group at a time. It also shows
-  recent group-history entries so a refresh does not hide the last grouped action.
+  recent group-history entries so a refresh does not hide the last grouped action. Policy drift and
+  the latest saved review-session report are also visible from the review surface.
 - Codex now has an active `notification-hub-signal-watch` heartbeat that should stay report-only and
   use the read-only Coordination Console, queue health, and runtime verification surfaces to decide
   whether there is an active operator handoff or only a monitor posture.
@@ -132,7 +133,8 @@ tuning pass.
   tested intentionally without making default verification noisy.
 - A local explain command can preview classification, routing, and delivery without sending anything.
 - A local policy-check command can audit the ruleset for overlaps, shadowing, and no-op rules,
-  and now suggests likely fixes for each warning.
+  and now suggests likely fixes for each warning. It also compares live noise rules with the repo
+  sample policy so missing sample coverage is visible before repeated producers return.
 - Routing rules now support exact and prefix/text matchers instead of only exact source/project matching.
 - Routing rules can now also opt into `continue_matching` so multiple matching rules can compose.
 - Routing rules can now also use explicit `priority`, so higher-priority rules run before lower-priority ones.
@@ -402,12 +404,15 @@ Expected current outcome:
   small coordination expansion without applying work
 - `/review/coordination-console`: reports the compact coordination console payload, including active
   and handled proposal counts plus dismissal counts and guide steps, without applying work
+- `/review/policy-check`: reports live policy warnings and sample-vs-live noise-rule drift without
+  applying work
 - `notification-hub personal-ops-queue-scenario`: runs a temporary queue lifecycle and records a
   final accepted promotion outcome without touching runtime queue state
 - `/review`: localhost-only review UI for runtime state, Operator Focus, Coordination Readiness,
   Coordination Console next signal and operator guide, inbox rollups, action proposals, import queue
-  health, saved burn-in report history, saved review-session history, proposal dismissal/undismissal,
-  daily operator state, handoff drill, and trust state
+  health, policy drift, saved burn-in report history, latest saved review-session state, saved
+  review-session history, proposal dismissal/undismissal, daily operator state, handoff drill, and
+  trust state
 - `/review/save-package` and `/review/validate-package`: review UI controls for staging and
   validating packages without importing or applying them
 - `/review/packages`: lists recent saved review packages and validation summaries without importing
@@ -443,8 +448,8 @@ Expected current outcome:
   wiring, recent burn-in health, or an explicitly requested delivery check is degraded
 - `notification-hub delivery-check --slack` / `--push`: sends one explicit transport-check
   notification only when requested
-- `notification-hub-policy-check`: `status: ok` or `warn`, depending on the active policy file,
-  plus warning-specific fix suggestions when issues are found
+- `notification-hub-policy-check`: `status: ok`, `warn`, or `degraded`, depending on the active
+  policy file and sample-policy drift, plus warning-specific fix suggestions when issues are found
 - `notification-hub-explain`: returns a non-mutating classification/routing/delivery preview
 - `notification-hub smoke`: `status: ok`
 - `notification-hub retention --max-events 2000`: `status: ok`
@@ -467,7 +472,8 @@ Additional behavioral baseline:
 - `notification-hub policy-check` is available as a non-mutating ruleset audit tool with suggested
   next fixes for the common warning cases, including disabled automatic retention and ineffective
   `continue_matching` usage, redundant rules inside a continue-matching chain, and same-priority
-  ties that still depend on file order
+  ties that still depend on file order. It also reports whether the live policy is missing sample
+  noise rules or has extra live-only noise rules.
 - `notification-hub explain` is available as a non-mutating policy preview tool
 - Bootstrap command wiring is verified, but live bootstrap is intentionally not part of the routine
   confidence pass when no user config exists yet because it would create local runtime state
