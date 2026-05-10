@@ -29,6 +29,7 @@ from notification_hub.operations import (
     load_operator_review_session_report_detail,
     load_personal_ops_queue_burn_in_report_detail,
     prune_operator_review_session_reports,
+    review_latest_noise_candidates,
     run_action_proposal_dismissal_list,
     run_coordination_console,
     run_coordination_readiness,
@@ -390,6 +391,14 @@ REVIEW_HTML = """<!doctype html>
       <ul id="proposalReview"></ul>
     </section>
     <section class="focus">
+      <h2>Operator Decision Required</h2>
+      <ul id="operatorDecisionRequired"></ul>
+    </section>
+    <section class="focus">
+      <h2>Noise Candidate Review</h2>
+      <ul id="noiseCandidateReview"></ul>
+    </section>
+    <section class="focus">
       <h2>Next Signal</h2>
       <ul id="nextSignal"></ul>
     </section>
@@ -483,6 +492,8 @@ REVIEW_HTML = """<!doctype html>
     const coordinationReadiness = document.getElementById("coordinationReadiness");
     const coordinationConsole = document.getElementById("coordinationConsole");
     const proposalReview = document.getElementById("proposalReview");
+    const operatorDecisionRequired = document.getElementById("operatorDecisionRequired");
+    const noiseCandidateReview = document.getElementById("noiseCandidateReview");
     const nextSignal = document.getElementById("nextSignal");
     const actions = document.getElementById("actions");
     const rollups = document.getElementById("rollups");
@@ -618,6 +629,7 @@ REVIEW_HTML = """<!doctype html>
       await loadBurnInReports();
       await loadImportQueue();
       await loadCoordinationConsole();
+      await loadNoiseCandidateReview();
       await loadPolicyDrift();
       await loadDismissals();
       await loadOperatorDailyState();
@@ -695,8 +707,40 @@ REVIEW_HTML = """<!doctype html>
         <div class="next">${esc(review.next_action || "")}</div>
         ${(review.group_history || []).slice(0, 3).map(entry => `<div class="next"><strong>Recent group action</strong>: ${esc(entry.event_type)} ${esc(entry.group_key)} (${esc(entry.status)})</div>`).join("")}
       `), ...(groupRows.length ? groupRows : [item(`<div class="next">No active proposal groups.</div>`)]));
+      const decisionGroups = reviewGroups.filter(group => {
+        const route = group.routing_recommendation || {};
+        return (route.operator_decision_required_count ?? 0) > 0;
+      });
+      const decisionRows = decisionGroups.slice(0, 5).map(group => {
+        const route = group.routing_recommendation || {};
+        return item(`
+          <div class="line"><span class="title">${esc(group.source)}${group.project ? " / " + esc(group.project) : ""}</span><span class="meta">${esc(route.operator_decision_required_count ?? 0)} decision(s)</span></div>
+          <div class="badge-row">
+            ${warnBadge(`approval ${route.operator_decision_required_count ?? 0}`, (route.operator_decision_required_count ?? 0) > 0)}
+            ${badge(`follow up ${route.follow_up_candidate_count ?? 0}`)}
+            ${badge(`suppress ${route.suppress_candidate_count ?? 0}`)}
+          </div>
+          <div class="next">${esc(route.reason || group.next_action || "")}</div>
+          <div class="next">${esc(route.suggested_next_action || "")}</div>
+          <div class="button-row">
+            <button type="button" data-save-route="promote" data-route-group="${esc(group.group_key)}">Save approval lane</button>
+            <button type="button" data-follow-up-group="${esc(group.group_key)}">Needs follow-up</button>
+          </div>
+        `);
+      });
+      operatorDecisionRequired.replaceChildren(
+        ...(decisionRows.length
+          ? decisionRows
+          : [item(`<div class="next">No outbound operator decisions are waiting.</div>`)])
+      );
       proposalReview.querySelectorAll("button[data-save-group]").forEach(button => {
         button.addEventListener("click", () => saveProposalGroup(button.dataset.saveGroup));
+      });
+      operatorDecisionRequired.querySelectorAll("button[data-save-route]").forEach(button => {
+        button.addEventListener("click", () => saveProposalGroup(button.dataset.routeGroup, button.dataset.saveRoute));
+      });
+      operatorDecisionRequired.querySelectorAll("button[data-follow-up-group]").forEach(button => {
+        button.addEventListener("click", () => outcomeProposalGroup(button.dataset.followUpGroup, "needs_follow_up"));
       });
       proposalReview.querySelectorAll("button[data-queue-group]").forEach(button => {
         button.addEventListener("click", () => queueProposalGroup(button.dataset.queueGroup));
@@ -726,6 +770,29 @@ REVIEW_HTML = """<!doctype html>
         <div class="next">${esc(signal.summary || "")}</div>
         <div class="next">${esc(signal.next_action || "")}</div>
       `));
+    }
+    async function loadNoiseCandidateReview() {
+      const res = await fetch("/review/noise-candidates?limit=6");
+      const data = await res.json();
+      const candidates = data.candidates || [];
+      const rows = candidates.slice(0, 6).map(candidate => item(`
+        <div class="line"><span class="title">${esc(candidate.title || "Untitled")}</span><span class="meta">${esc(candidate.decision_hint || "inspect")}</span></div>
+        <div class="badge-row">
+          ${badge(candidate.source)}
+          ${candidate.project ? badge(candidate.project) : ""}
+          ${badge(candidate.level)}
+          ${warnBadge(`x${candidate.count ?? 0}`, (candidate.count ?? 0) > 1)}
+        </div>
+        <div class="next">${esc(candidate.body || "")}</div>
+        ${candidate.suggested_rule ? `<div class="next"><strong>Candidate rule</strong>: ${esc(candidate.suggested_rule)}</div>` : ""}
+      `));
+      noiseCandidateReview.replaceChildren(item(`
+        <div class="line"><span class="title">${esc(data.report_name || "Latest burn-in")}</span><span class="meta">${esc(data.status || "unknown")}</span></div>
+        <div class="badge-row">
+          ${warnBadge(`noise ${data.noise_candidate_count ?? 0}`, (data.noise_candidate_count ?? 0) > 0)}
+        </div>
+        <div class="next">${esc(data.next_action || data.error || "")}</div>
+      `), ...(rows.length ? rows : [item(`<div class="next">No noise candidates need review.</div>`)]));
     }
     async function postProposalGroup(path, groupKey, reason, route) {
       if (!groupKey) {
@@ -1532,6 +1599,13 @@ async def review_burn_in_reports(limit: int = 10) -> dict[str, object]:
 async def review_burn_in_report_detail(name: str) -> dict[str, object]:
     """Inspect one saved queue burn-in report without applying work."""
     return dict(load_personal_ops_queue_burn_in_report_detail(name=name))
+
+
+@app.get("/review/noise-candidates")
+async def review_noise_candidates(limit: int = 10) -> dict[str, object]:
+    """Summarize the latest saved burn-in noise candidates without applying work."""
+    report = await asyncio.to_thread(review_latest_noise_candidates, limit=max(limit, 1))
+    return dict(report)
 
 
 @app.get("/review/coordination-readiness")
