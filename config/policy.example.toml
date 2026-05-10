@@ -32,6 +32,13 @@ level = "info"
 window_minutes = 10
 
 [[noise.rules]]
+source = "personal-ops"
+project = "personal-ops"
+title_contains = "daemon started"
+level = "info"
+window_minutes = 10
+
+[[noise.rules]]
 source = "codex"
 text_contains = "session complete"
 level = "info"

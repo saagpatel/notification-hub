@@ -146,6 +146,7 @@ async def test_review_page_endpoint(client: AsyncClient) -> None:
     assert resp.status_code == 200
     assert "text/html" in resp.headers["content-type"]
     assert "notification-hub review" in resp.text
+    assert "Burn-In Reports" in resp.text
 
 
 async def test_review_data_endpoint_is_read_only(client: AsyncClient) -> None:
@@ -620,6 +621,82 @@ async def test_review_import_queue_endpoint_lists_queue_items(client: AsyncClien
     mock_queue.assert_called_once_with(limit=3)
     mock_health.assert_called_once_with(limit=3, stale_after_hours=4.0)
     mock_reminder.assert_called_once_with(limit=3, stale_after_hours=4.0)
+
+
+async def test_review_burn_in_reports_endpoint_lists_saved_reports(
+    client: AsyncClient,
+) -> None:
+    with patch(
+        "notification_hub.server.list_personal_ops_queue_burn_in_reports",
+        return_value=[
+            {
+                "path": "/tmp/report.json",
+                "name": "personal-ops-queue-burn-in-20260510-040904.json",
+                "modified_at": "2026-05-10T04:09:04+00:00",
+                "size_bytes": 200,
+                "status": "ok",
+                "generated_at": "2026-05-10T04:09:04+00:00",
+                "ready_for_live_promotion": True,
+                "queued_count": 0,
+                "pending_count": 0,
+                "stale_count": 0,
+                "runtime_status": "ok",
+                "noise_candidate_count": 0,
+                "next_action": "Queue loop is ready.",
+            }
+        ],
+    ) as mock_reports:
+        resp = await client.get("/review/burn-in-reports?limit=3")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert data["applied"] is False
+    assert data["reports"][0]["ready_for_live_promotion"] is True
+    mock_reports.assert_called_once_with(limit=3)
+
+
+async def test_review_burn_in_report_detail_endpoint_inspects_saved_report(
+    client: AsyncClient,
+) -> None:
+    with patch(
+        "notification_hub.server.load_personal_ops_queue_burn_in_report_detail",
+        return_value={
+            "status": "ok",
+            "path": "/tmp/report.json",
+            "name": "personal-ops-queue-burn-in-20260510-040904.json",
+            "schema_version": "notification-hub.personal_ops_queue_burn_in.v1",
+            "generated_at": "2026-05-10T04:09:04+00:00",
+            "summary": {
+                "path": "/tmp/report.json",
+                "name": "personal-ops-queue-burn-in-20260510-040904.json",
+                "modified_at": "2026-05-10T04:09:04+00:00",
+                "size_bytes": 200,
+                "status": "ok",
+                "generated_at": "2026-05-10T04:09:04+00:00",
+                "ready_for_live_promotion": True,
+                "queued_count": 0,
+                "pending_count": 0,
+                "stale_count": 0,
+                "runtime_status": "ok",
+                "noise_candidate_count": 0,
+                "next_action": "Queue loop is ready.",
+            },
+            "report": {"status": "ok"},
+            "applied": False,
+            "error": None,
+        },
+    ) as mock_detail:
+        resp = await client.get(
+            "/review/burn-in-report/personal-ops-queue-burn-in-20260510-040904.json"
+        )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert data["applied"] is False
+    assert data["summary"]["ready_for_live_promotion"] is True
+    mock_detail.assert_called_once_with(name="personal-ops-queue-burn-in-20260510-040904.json")
 
 
 async def test_review_outcome_sync_reminder_endpoint_reports_pending(

@@ -13,8 +13,8 @@ Current repo/runtime status:
 - LaunchAgent-backed local runtime is healthy, with Slack delivery configured through Keychain
 - An optional policy config can override classifier and suppression defaults
 - A doctor command is available for local operator checks
-- The current operator loop includes `/review` Operator Focus and optional saved queue burn-in
-  reports for real-use evidence before broader coordination expansion
+- The current operator loop includes `/review` Operator Focus and saved queue burn-in report
+  history for real-use evidence before broader coordination expansion
 
 For the best resume checkpoint, use `docs/CURRENT-STATE.md` first and treat the rest of this file
 as implementation history rather than the primary current-state source.

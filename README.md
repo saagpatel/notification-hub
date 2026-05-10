@@ -180,8 +180,9 @@ mutating local state.
 The review page can also stage a review package, show recent saved review packages, inspect package
 actions/evidence, show queue lineage for already queued packages, queue import handoff items, filter
 queued/promoted/pending/stale/resolved handoffs, mark queued items reviewed/rejected/snoozed/promoted,
-show pending outcome-sync reminders, delete saved review packages, and validate the latest staged or
-saved package. These controls still do not apply, approve, send, or mutate personal-ops.
+show pending outcome-sync reminders, list and inspect saved burn-in reports, delete saved review
+packages, and validate the latest staged or saved package. These controls still do not apply,
+approve, send, or mutate personal-ops.
 Coordination snapshots target bridge-db's `codex` snapshot shape: the emitted
 `bridge_snapshot` object can be passed as snapshot data after operator review, or saved directly
 with the explicit `--save-bridge-db` flag.
@@ -226,6 +227,13 @@ source = "personal-ops"
 project = "personal-ops"
 title_contains = "approval expires soon"
 body_contains = "approval expires soon: review or cancel"
+level = "info"
+window_minutes = 10
+
+[[noise.rules]]
+source = "personal-ops"
+project = "personal-ops"
+title_contains = "daemon started"
 level = "info"
 window_minutes = 10
 

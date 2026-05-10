@@ -304,6 +304,34 @@ class PersonalOpsQueueBurnInReport(TypedDict):
     applied: bool
 
 
+class PersonalOpsQueueBurnInReportSummary(TypedDict):
+    path: str
+    name: str
+    modified_at: str
+    size_bytes: int
+    status: str
+    generated_at: str | None
+    ready_for_live_promotion: bool
+    queued_count: int
+    pending_count: int
+    stale_count: int
+    runtime_status: str | None
+    noise_candidate_count: int
+    next_action: str | None
+
+
+class PersonalOpsQueueBurnInReportDetail(TypedDict):
+    status: str
+    path: str
+    name: str
+    schema_version: str | None
+    generated_at: str | None
+    summary: PersonalOpsQueueBurnInReportSummary | None
+    report: dict[str, object] | None
+    applied: bool
+    error: str | None
+
+
 class BridgeSaveReport(TypedDict):
     attempted: bool
     status: str
@@ -1359,6 +1387,128 @@ def _write_personal_ops_queue_burn_in_report(
         "path": str(target_path),
         "error": None,
     }
+
+
+def _is_safe_burn_in_report_name(name: str) -> bool:
+    return (
+        Path(name).name == name
+        and re.fullmatch(r"personal-ops-queue-burn-in-\d{8}-\d{6}\.json", name) is not None
+    )
+
+
+def _burn_in_report_summary(
+    *,
+    path: Path,
+    payload: dict[str, object],
+) -> PersonalOpsQueueBurnInReportSummary:
+    stat = path.stat()
+    report = _as_dict(payload.get("report"))
+    queue_health = _as_dict(report.get("queue_health"))
+    health = _as_dict(queue_health.get("health"))
+    runtime_burn_in = _as_dict(report.get("runtime_burn_in"))
+    runtime_health = _as_dict(runtime_burn_in.get("health"))
+    raw_noise_candidates = runtime_burn_in.get("noise_candidates")
+    noise_candidate_count = (
+        len(cast(list[object], raw_noise_candidates))
+        if isinstance(raw_noise_candidates, list)
+        else 0
+    )
+    return {
+        "path": str(path),
+        "name": path.name,
+        "modified_at": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
+        "size_bytes": stat.st_size,
+        "status": _as_str(report.get("status")) or "unknown",
+        "generated_at": _as_str(payload.get("generated_at")),
+        "ready_for_live_promotion": bool(report.get("ready_for_live_promotion")),
+        "queued_count": _as_int(health.get("queued_count")) or 0,
+        "pending_count": _as_int(health.get("promoted_pending_count")) or 0,
+        "stale_count": _as_int(health.get("promoted_pending_stale_count")) or 0,
+        "runtime_status": _as_str(runtime_health.get("status")),
+        "noise_candidate_count": noise_candidate_count,
+        "next_action": _as_str(report.get("next_action")),
+    }
+
+
+def list_personal_ops_queue_burn_in_reports(
+    *,
+    report_dir: Path | None = None,
+    limit: int = 10,
+) -> list[PersonalOpsQueueBurnInReportSummary]:
+    """List saved queue burn-in reports without applying work."""
+    target_dir = report_dir or BURN_IN_REPORT_DIR
+    try:
+        candidates = sorted(
+            target_dir.glob("personal-ops-queue-burn-in-*.json"),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+    except OSError:
+        return []
+
+    reports: list[PersonalOpsQueueBurnInReportSummary] = []
+    for path in candidates[: max(limit, 1)]:
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(payload, dict):
+                continue
+            reports.append(
+                _burn_in_report_summary(path=path, payload=cast(dict[str, object], payload))
+            )
+        except (OSError, json.JSONDecodeError):
+            continue
+    return reports
+
+
+def load_personal_ops_queue_burn_in_report_detail(
+    *,
+    name: str,
+    report_dir: Path | None = None,
+) -> PersonalOpsQueueBurnInReportDetail:
+    """Inspect one saved queue burn-in report without applying work."""
+    target_dir = report_dir or BURN_IN_REPORT_DIR
+    target_path = target_dir / name
+    if not _is_safe_burn_in_report_name(name):
+        return {
+            "status": "degraded",
+            "path": str(target_path),
+            "name": name,
+            "schema_version": None,
+            "generated_at": None,
+            "summary": None,
+            "report": None,
+            "applied": False,
+            "error": "invalid burn-in report name",
+        }
+    try:
+        payload = json.loads(target_path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("burn-in report root must be an object")
+        typed_payload = cast(dict[str, object], payload)
+        report = _as_dict(typed_payload.get("report"))
+        return {
+            "status": _as_str(report.get("status")) or "unknown",
+            "path": str(target_path),
+            "name": name,
+            "schema_version": _as_str(typed_payload.get("schema_version")),
+            "generated_at": _as_str(typed_payload.get("generated_at")),
+            "summary": _burn_in_report_summary(path=target_path, payload=typed_payload),
+            "report": report,
+            "applied": False,
+            "error": None,
+        }
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        return {
+            "status": "degraded",
+            "path": str(target_path),
+            "name": name,
+            "schema_version": None,
+            "generated_at": None,
+            "summary": None,
+            "report": None,
+            "applied": False,
+            "error": str(exc),
+        }
 
 
 def _enqueue_personal_ops_import_actions(

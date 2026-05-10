@@ -21,7 +21,9 @@ from notification_hub.operations import (
     delete_action_review_package,
     list_action_review_packages,
     list_personal_ops_import_queue,
+    list_personal_ops_queue_burn_in_reports,
     load_action_review_package_detail,
+    load_personal_ops_queue_burn_in_report_detail,
     run_inbox,
     run_personal_ops_action_export,
     run_personal_ops_import_queue_health_check,
@@ -388,6 +390,14 @@ REVIEW_HTML = """<!doctype html>
         <ul id="packageDetail"></ul>
       </section>
       <section>
+        <h2>Burn-In Reports</h2>
+        <ul id="burnInReports"></ul>
+      </section>
+      <section>
+        <h2>Burn-In Detail</h2>
+        <ul id="burnInDetail"></ul>
+      </section>
+      <section>
         <div class="toolbar">
           <h2>Import Queue</h2>
           <select id="importQueueFilter" aria-label="Import queue filter">
@@ -415,6 +425,8 @@ REVIEW_HTML = """<!doctype html>
     const packageState = document.getElementById("package");
     const packages = document.getElementById("packages");
     const packageDetail = document.getElementById("packageDetail");
+    const burnInReports = document.getElementById("burnInReports");
+    const burnInDetail = document.getElementById("burnInDetail");
     const importQueueHealth = document.getElementById("importQueueHealth");
     const importQueue = document.getElementById("importQueue");
     const importQueueFilter = document.getElementById("importQueueFilter");
@@ -505,6 +517,7 @@ REVIEW_HTML = """<!doctype html>
       );
       renderPackage(data.review_package);
       await loadPackages();
+      await loadBurnInReports();
       await loadImportQueue();
     }
     function renderPackage(state) {
@@ -605,6 +618,54 @@ REVIEW_HTML = """<!doctype html>
         item(`<div class="next">${esc(data.next_action || data.error)}</div>`)
       );
       await loadImportQueue();
+    }
+    async function loadBurnInReports() {
+      const res = await fetch("/review/burn-in-reports?limit=6");
+      const data = await res.json();
+      renderList(burnInReports, data.reports, r => item(`
+        <div class="line"><span class="title">${esc(r.name)}</span><span class="meta">${esc(r.status)} / ${r.ready_for_live_promotion ? "ready" : "not ready"}</span></div>
+        <div class="badge-row">
+          ${warnBadge(`queued ${r.queued_count ?? 0}`, (r.queued_count ?? 0) > 0)}
+          ${warnBadge(`pending ${r.pending_count ?? 0}`, (r.pending_count ?? 0) > 0)}
+          ${warnBadge(`stale ${r.stale_count ?? 0}`, (r.stale_count ?? 0) > 0)}
+          ${warnBadge(`noise ${r.noise_candidate_count ?? 0}`, (r.noise_candidate_count ?? 0) > 0)}
+        </div>
+        <div class="next">${esc(r.next_action || "")}</div>
+        <div class="button-row">
+          <button type="button" data-burn-in-report="${esc(r.name)}">Inspect</button>
+        </div>
+      `), "No saved burn-in reports.");
+      burnInReports.querySelectorAll("button[data-burn-in-report]").forEach(button => {
+        button.addEventListener("click", () => loadBurnInDetail(button.dataset.burnInReport));
+      });
+      if (data.reports && data.reports.length > 0) {
+        await loadBurnInDetail(data.reports[0].name);
+      } else {
+        empty(burnInDetail, "No burn-in report selected.");
+      }
+    }
+    async function loadBurnInDetail(name) {
+      if (!name) {
+        empty(burnInDetail, "No burn-in report selected.");
+        return;
+      }
+      const res = await fetch(`/review/burn-in-report/${encodeURIComponent(name)}`);
+      const data = await res.json();
+      const summary = data.summary || {};
+      burnInDetail.replaceChildren(
+        item(`<div class="line"><span class="title">${esc(data.name)}</span><span class="meta">${esc(data.status)}</span></div>`),
+        item(`<div class="next">${esc(data.path)}</div>`),
+        item(`<div class="line"><span class="title">Generated</span><span class="meta">${esc(data.generated_at || "unknown")}</span></div>`),
+        item(`<div class="line"><span class="title">Ready</span><span class="meta">${summary.ready_for_live_promotion ? "yes" : "no"}</span></div>`),
+        item(`<div class="badge-row">
+          ${warnBadge(`queued ${summary.queued_count ?? 0}`, (summary.queued_count ?? 0) > 0)}
+          ${warnBadge(`pending ${summary.pending_count ?? 0}`, (summary.pending_count ?? 0) > 0)}
+          ${warnBadge(`stale ${summary.stale_count ?? 0}`, (summary.stale_count ?? 0) > 0)}
+          ${badge(`runtime ${summary.runtime_status || "unknown"}`)}
+          ${warnBadge(`noise ${summary.noise_candidate_count ?? 0}`, (summary.noise_candidate_count ?? 0) > 0)}
+        </div>`),
+        item(`<div class="next">${esc(summary.next_action || data.error || "")}</div>`)
+      );
     }
     async function loadImportQueue() {
       const res = await fetch("/review/import-queue?limit=25");
@@ -927,6 +988,22 @@ async def review_import_queue(limit: int = 10, stale_after_hours: float = 4.0) -
         "outcome_sync_reminder": outcome_sync_reminder,
         "applied": False,
     }
+
+
+@app.get("/review/burn-in-reports")
+async def review_burn_in_reports(limit: int = 10) -> dict[str, object]:
+    """List saved queue burn-in reports without applying work."""
+    return {
+        "status": "ok",
+        "reports": list_personal_ops_queue_burn_in_reports(limit=max(limit, 1)),
+        "applied": False,
+    }
+
+
+@app.get("/review/burn-in-report/{name}")
+async def review_burn_in_report_detail(name: str) -> dict[str, object]:
+    """Inspect one saved queue burn-in report without applying work."""
+    return dict(load_personal_ops_queue_burn_in_report_detail(name=name))
 
 
 @app.get("/review/outcome-sync-reminder")

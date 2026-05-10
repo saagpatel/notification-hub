@@ -25,8 +25,10 @@ from notification_hub.operations import (
     bootstrap_policy_config,
     delete_action_review_package,
     list_action_review_packages,
+    list_personal_ops_queue_burn_in_reports,
     list_personal_ops_import_queue,
     load_action_review_package_detail,
+    load_personal_ops_queue_burn_in_report_detail,
     run_burn_in,
     run_coordination_snapshot,
     run_inbox,
@@ -984,6 +986,59 @@ def test_personal_ops_queue_burn_in_can_save_report(tmp_path: Path) -> None:
     payload = json.loads(report_path.read_text(encoding="utf-8"))
     assert payload["schema_version"] == "notification-hub.personal_ops_queue_burn_in.v1"
     assert payload["report"]["ready_for_live_promotion"] is True
+
+
+def test_list_and_load_personal_ops_queue_burn_in_reports(tmp_path: Path) -> None:
+    report_dir = tmp_path / "reports"
+    report_dir.mkdir()
+    report_path = report_dir / "personal-ops-queue-burn-in-20260510-040904.json"
+    report_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "notification-hub.personal_ops_queue_burn_in.v1",
+                "generated_at": "2026-05-10T04:09:04+00:00",
+                "report": {
+                    "status": "ok",
+                    "ready_for_live_promotion": True,
+                    "next_action": "Queue loop is ready.",
+                    "queue_health": {
+                        "health": {
+                            "queued_count": 0,
+                            "promoted_pending_count": 0,
+                            "promoted_pending_stale_count": 0,
+                        }
+                    },
+                    "runtime_burn_in": {
+                        "health": {"status": "ok"},
+                        "noise_candidates": [],
+                    },
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    reports = list_personal_ops_queue_burn_in_reports(report_dir=report_dir)
+    detail = load_personal_ops_queue_burn_in_report_detail(
+        name=report_path.name, report_dir=report_dir
+    )
+
+    assert reports[0]["name"] == report_path.name
+    assert reports[0]["ready_for_live_promotion"] is True
+    assert reports[0]["runtime_status"] == "ok"
+    assert detail["status"] == "ok"
+    assert detail["summary"] is not None
+    assert detail["summary"]["next_action"] == "Queue loop is ready."
+
+
+def test_load_personal_ops_queue_burn_in_report_rejects_unsafe_name(tmp_path: Path) -> None:
+    detail = load_personal_ops_queue_burn_in_report_detail(
+        name="../events.jsonl", report_dir=tmp_path
+    )
+
+    assert detail["status"] == "degraded"
+    assert detail["error"] == "invalid burn-in report name"
 
 
 def test_personal_ops_import_queue_snooze_requires_until(tmp_path: Path) -> None:
