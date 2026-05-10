@@ -65,6 +65,14 @@ window_minutes = 30
 [[noise.rules]]
 source = "personal-ops"
 project = "mail"
+title_contains = "send succeeded"
+body_contains = "console reply needed"
+level = "info"
+window_minutes = 30
+
+[[noise.rules]]
+source = "personal-ops"
+project = "mail"
 title_contains = "draft ready"
 body_contains = "console reply needed"
 level = "info"

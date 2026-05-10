@@ -79,6 +79,9 @@ tuning pass.
 - The sample policy now includes the repeated `personal-ops` daemon-start and `notion-os`
   control-tower sync signals seen during live burn-in, keeping evidence-based noise tuning in the
   repo without changing machine-local config.
+- The sample and live policy now also cover repeated personal-ops mail `Send Succeeded` events for
+  `Console reply needed`, after a real-use route-aware review pass showed them as success chatter
+  rather than operator work.
 - A localhost-only review page is available at `/review` on the daemon. It shows runtime health,
   inbox rollups, action proposals, and trust state without applying anything.
 - The review page now includes Operator Focus, Coordination Readiness, and Coordination Console
@@ -223,6 +226,8 @@ tuning pass.
   summaries for each local report.
 - Added a sample `personal-ops` daemon-start noise rule after live burn-in surfaced it as a repeated
   informational producer.
+- Added a narrow `personal-ops` mail success noise rule for repeated `Console reply needed`
+  `Send Succeeded` events after route-aware review confirmed they should not block readiness.
 - Added review UI Operator Focus so the top of `/review` names the current next action before the
   operator scans packages, rollups, or queue detail.
 - Added review UI queue-health summary and filters for pending outcome, stale outcome, queued,

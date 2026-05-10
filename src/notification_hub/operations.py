@@ -3032,8 +3032,13 @@ def _actions_for_group_key(
     group_key: str,
     hours: int,
     limit: int,
+    dismissals_path: Path | None = None,
 ) -> tuple[PersonalOpsActionExportReport, list[PersonalOpsActionReport]]:
-    export = run_personal_ops_action_export(hours=hours, limit=max(limit, 1))
+    export = run_personal_ops_action_export(
+        hours=hours,
+        limit=max(limit, 1),
+        dismissals_path=dismissals_path,
+    )
     actions = [
         action
         for action in export["actions"]
@@ -3227,6 +3232,7 @@ def dismiss_action_proposal_group(
         group_key=safe_group_key,
         hours=max(hours, 1),
         limit=max(limit, 1),
+        dismissals_path=dismissals_path,
     )
     actions = _filter_actions_for_group_route(actions, route_key)
     if not actions:
