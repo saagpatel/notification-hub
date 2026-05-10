@@ -325,7 +325,7 @@ REVIEW_HTML = """<!doctype html>
     .line { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
     .title { font-weight: 650; overflow-wrap: anywhere; }
     .meta { color: #667085; font-size: 12px; white-space: nowrap; }
-    .next { color: #475467; font-size: 13px; margin-top: 4px; }
+    .next { color: #475467; font-size: 13px; margin-top: 4px; overflow-wrap: anywhere; }
     .badge-row { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
     .badge { border: 1px solid #d0d5dd; border-radius: 999px; color: #344054; font-size: 12px; padding: 2px 8px; }
     .badge.warn { border-color: #d89b25; color: #7a4b00; }
@@ -554,6 +554,12 @@ REVIEW_HTML = """<!doctype html>
       const readiness = data.readiness || {};
       const queue = data.queue_health || {};
       const reminder = data.outcome_sync_reminder || {};
+      const guideSteps = data.guide_steps || [];
+      const guideRows = guideSteps.slice(0, 4).map(step => item(`
+        <div class="line"><span class="title">${esc(step.step)}. ${esc(step.title)}</span><span class="meta">${esc(step.status)}</span></div>
+        <div class="next">${esc(step.summary || "")}</div>
+        ${(step.commands || []).slice(0, 2).map(command => `<div class="next"><strong>Command</strong>: ${esc(command)}</div>`).join("")}
+      `));
       coordinationConsole.replaceChildren(item(`
         <div class="line"><span class="title">${esc(readiness.decision || "unknown")}</span><span class="meta">${esc(data.status || "unknown")}</span></div>
         <div class="badge-row">
@@ -566,8 +572,9 @@ REVIEW_HTML = """<!doctype html>
           ${warnBadge(`reminders ${reminder.pending_count ?? 0}`, (reminder.pending_count ?? 0) > 0)}
           ${badge(`reports ${(data.burn_in_reports || []).length}`)}
         </div>
+        <div class="next"><strong>Guide</strong>: ${esc(data.guide_stage || "unknown")}</div>
         <div class="next">${esc(data.next_action || "")}</div>
-      `));
+      `), ...(guideRows.length ? guideRows : [item(`<div class="next">No guide steps.</div>`)]));
     }
     function renderPackage(state) {
       packageState.replaceChildren(

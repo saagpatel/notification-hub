@@ -499,6 +499,16 @@ class CoordinationConsoleActionReport(TypedDict):
     promotion_target_id: str | None
 
 
+class CoordinationConsoleGuideStep(TypedDict):
+    step: int
+    title: str
+    status: str
+    summary: str
+    commands: list[str]
+    action_id: str | None
+    queue_id: str | None
+
+
 class CoordinationConsoleReport(TypedDict):
     status: str
     readiness: CoordinationReadinessReport
@@ -512,6 +522,9 @@ class CoordinationConsoleReport(TypedDict):
     pending_promotion_items: list[PersonalOpsImportQueueItemReport]
     outcome_sync_reminder: PersonalOpsOutcomeSyncReminderReport
     burn_in_reports: list[PersonalOpsQueueBurnInReportSummary]
+    guide_stage: str
+    guide_steps: list[CoordinationConsoleGuideStep]
+    next_commands: list[str]
     next_action: str
     applied: bool
 
@@ -2917,6 +2930,200 @@ def _build_proposal_lineage(
     return reports
 
 
+def _console_guide_step(
+    *,
+    step: int,
+    title: str,
+    status: str,
+    summary: str,
+    commands: list[str] | None = None,
+    action_id: str | None = None,
+    queue_id: str | None = None,
+) -> CoordinationConsoleGuideStep:
+    return {
+        "step": step,
+        "title": title,
+        "status": status,
+        "summary": summary,
+        "commands": commands or [],
+        "action_id": action_id,
+        "queue_id": queue_id,
+    }
+
+
+def _queue_outcome_commands(item: PersonalOpsImportQueueItemReport | None) -> list[str]:
+    queue_id = item["queue_id"] if item is not None else "QUEUE_ID"
+    target_id = (
+        item["promotion_target_id"] if item is not None and item["promotion_target_id"] else "SUGGESTION_ID"
+    )
+    return [
+        f'personal-ops suggestion accept|reject {target_id} --note "..."',
+        "uv run notification-hub personal-ops-queue "
+        f"--queue-id {queue_id} --status promoted --promotion-target-id {target_id} "
+        '--promotion-outcome accepted|rejected --promotion-outcome-note "..."',
+    ]
+
+
+def _build_coordination_console_guide(
+    *,
+    readiness: CoordinationReadinessReport,
+    active_actions: list[CoordinationConsoleActionReport],
+    handled_actions: list[CoordinationConsoleActionReport],
+    queue_health: PersonalOpsImportQueueHealthReport,
+    queued_items: list[PersonalOpsImportQueueItemReport],
+    pending_promotion_items: list[PersonalOpsImportQueueItemReport],
+) -> tuple[str, list[CoordinationConsoleGuideStep]]:
+    if readiness["decision"] != "ready_to_expand":
+        return (
+            "readiness",
+            [
+                _console_guide_step(
+                    step=1,
+                    title="Clear readiness gate",
+                    status="current",
+                    summary=readiness["next_action"],
+                    commands=["uv run notification-hub coordination-readiness"],
+                )
+            ],
+        )
+
+    first_new_action = next(
+        (item for item in active_actions if item["lineage_status"] == "new"), None
+    )
+    first_queued = queued_items[0] if queued_items else None
+    first_pending = pending_promotion_items[0] if pending_promotion_items else None
+
+    if queue_health["promoted_pending_count"] > 0:
+        return (
+            "outcome_sync",
+            [
+                _console_guide_step(
+                    step=1,
+                    title="Resolve promoted outcome",
+                    status="current",
+                    summary=queue_health["next_action"],
+                    commands=_queue_outcome_commands(first_pending),
+                    queue_id=first_pending["queue_id"] if first_pending is not None else None,
+                ),
+                _console_guide_step(
+                    step=2,
+                    title="Recheck queue health",
+                    status="pending",
+                    summary="Confirm pending and stale promoted counts return to zero.",
+                    commands=["uv run notification-hub personal-ops-queue-health"],
+                ),
+            ],
+        )
+
+    if queue_health["queued_count"] > 0:
+        queue_id = first_queued["queue_id"] if first_queued is not None else "QUEUE_ID"
+        return (
+            "queue_review",
+            [
+                _console_guide_step(
+                    step=1,
+                    title="Review queued handoff",
+                    status="current",
+                    summary=queue_health["next_action"],
+                    commands=[
+                        "uv run notification-hub personal-ops-queue",
+                        "uv run notification-hub personal-ops-queue "
+                        f'--queue-id {queue_id} --status reviewed --reason "evidence checked"',
+                    ],
+                    queue_id=first_queued["queue_id"] if first_queued is not None else None,
+                ),
+                _console_guide_step(
+                    step=2,
+                    title="Promote through personal-ops",
+                    status="pending",
+                    summary="Create or update the downstream personal-ops suggestion, then record its id.",
+                    commands=[
+                        f'personal-ops notification-hub promote {queue_id} --note "..."',
+                        "uv run notification-hub personal-ops-queue "
+                        f"--queue-id {queue_id} --status promoted "
+                        '--promotion-target-id SUGGESTION_ID --promotion-outcome pending',
+                    ],
+                    queue_id=first_queued["queue_id"] if first_queued is not None else None,
+                ),
+            ],
+        )
+
+    if first_new_action is not None:
+        action = first_new_action["action"]
+        return (
+            "package_review",
+            [
+                _console_guide_step(
+                    step=1,
+                    title="Save review package",
+                    status="current",
+                    summary="Stage the current proposals locally for inspection.",
+                    commands=["uv run notification-hub personal-ops-actions --save-review-package"],
+                    action_id=action["action_id"],
+                ),
+                _console_guide_step(
+                    step=2,
+                    title="Validate and inspect package",
+                    status="pending",
+                    summary="Inspect the saved package in /review or validate it before queueing.",
+                    commands=[
+                        "uv run notification-hub validate-action-package path/to/actions.json"
+                    ],
+                    action_id=action["action_id"],
+                ),
+                _console_guide_step(
+                    step=3,
+                    title="Queue handoff for operator review",
+                    status="pending",
+                    summary="Queue only after the evidence looks right; this still does not apply work.",
+                    commands=[
+                        "uv run notification-hub personal-ops-import "
+                        "path/to/actions.json --enqueue"
+                    ],
+                    action_id=action["action_id"],
+                ),
+            ],
+        )
+
+    if active_actions:
+        active = active_actions[0]
+        return (
+            "active_lineage",
+            [
+                _console_guide_step(
+                    step=1,
+                    title="Continue active handoff",
+                    status="current",
+                    summary="Finish the queued or promoted lifecycle before adding new work.",
+                    commands=["uv run notification-hub personal-ops-queue-health"],
+                    action_id=active["action"]["action_id"],
+                    queue_id=active["queue_id"],
+                )
+            ],
+        )
+
+    handled_summary = (
+        f"{len(handled_actions)} handled proposal(s) are visible as history."
+        if handled_actions
+        else "No active proposals are waiting."
+    )
+    return (
+        "monitor",
+        [
+            _console_guide_step(
+                step=1,
+                title="Monitor for next signal",
+                status="current",
+                summary=f"{handled_summary} Keep watching the read-only console.",
+                commands=[
+                    "uv run notification-hub coordination-console",
+                    "uv run notification-hub personal-ops-queue-health",
+                ],
+            )
+        ],
+    )
+
+
 def run_coordination_console(*, hours: int = 2, limit: int = 5) -> CoordinationConsoleReport:
     """Build one read-only coordination view after readiness has cleared expansion."""
     safe_hours = max(hours, 1)
@@ -2935,6 +3142,19 @@ def run_coordination_console(*, hours: int = 2, limit: int = 5) -> CoordinationC
     ]
 
     queue_health = queue["health"]
+    guide_stage, guide_steps = _build_coordination_console_guide(
+        readiness=readiness,
+        active_actions=active_actions,
+        handled_actions=handled_actions,
+        queue_health=queue_health,
+        queued_items=queue["queued_items"],
+        pending_promotion_items=queue["pending_promotion_items"],
+    )
+    current_guide_step = next(
+        (step for step in guide_steps if step["status"] == "current"),
+        None,
+    )
+    next_commands = current_guide_step["commands"] if current_guide_step is not None else []
     if readiness["decision"] != "ready_to_expand":
         next_action = readiness["next_action"]
     elif queue_health["queued_count"] > 0 or queue_health["promoted_pending_count"] > 0:
@@ -2969,6 +3189,9 @@ def run_coordination_console(*, hours: int = 2, limit: int = 5) -> CoordinationC
         "pending_promotion_items": queue["pending_promotion_items"][:safe_limit],
         "outcome_sync_reminder": outcome_sync_reminder,
         "burn_in_reports": burn_in_reports,
+        "guide_stage": guide_stage,
+        "guide_steps": guide_steps,
+        "next_commands": next_commands,
         "next_action": next_action,
         "applied": False,
     }

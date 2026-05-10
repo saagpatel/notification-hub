@@ -822,6 +822,23 @@ async def test_review_coordination_console_endpoint_is_read_only(
                 "applied": False,
             },
             "burn_in_reports": [],
+            "guide_stage": "package_review",
+            "guide_steps": [
+                {
+                    "step": 1,
+                    "title": "Save review package",
+                    "status": "current",
+                    "summary": "Stage the current proposals locally for inspection.",
+                    "commands": [
+                        "uv run notification-hub personal-ops-actions --save-review-package"
+                    ],
+                    "action_id": "action-1",
+                    "queue_id": None,
+                }
+            ],
+            "next_commands": [
+                "uv run notification-hub personal-ops-actions --save-review-package"
+            ],
             "next_action": "Save and validate a review package.",
             "applied": False,
         },
@@ -832,6 +849,7 @@ async def test_review_coordination_console_endpoint_is_read_only(
     data = resp.json()
     assert data["status"] == "ok"
     assert data["readiness"]["decision"] == "ready_to_expand"
+    assert data["guide_stage"] == "package_review"
     assert data["applied"] is False
     mock_console.assert_called_once_with(hours=4, limit=3)
 

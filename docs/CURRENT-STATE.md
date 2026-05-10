@@ -56,7 +56,8 @@ tuning pass.
 - A compact `coordination-console` command and `/review/coordination-console` endpoint now summarize
   readiness, action proposals, queue state, promoted-outcome reminders, burn-in report history, and
   the next safe action in one read-only view. The console separates active proposal lineage from
-  handled history so resolved or ignored handoffs stop reappearing as fresh work.
+  handled history so resolved or ignored handoffs stop reappearing as fresh work, and it includes a
+  guided operator stage with exact safe commands for the current handoff state.
 - The sample policy now includes the repeated `personal-ops` daemon-start and `notion-os`
   control-tower sync signals seen during live burn-in, keeping evidence-based noise tuning in the
   repo without changing machine-local config.
@@ -195,6 +196,8 @@ tuning pass.
   promoted, resolved, and open handoffs.
 - Added lineage-aware Coordination Console action counts so active proposals and handled proposal
   history are visible separately in CLI, JSON, and `/review`.
+- Added a read-only Coordination Console operator guide so package review, queue review, promotion,
+  outcome sync, and monitor states expose the current stage and safe next commands.
 - Added `personal-ops-queue-scenario` as a temporary end-to-end lifecycle proof that does not touch
   the real operator queue.
 - Added `docs/PRODUCT-BOUNDARY.md` to keep notification-hub, personal-ops, and bridge-db ownership
@@ -252,7 +255,7 @@ uv run --frozen notification-hub retention --max-events 2000
 
 Expected current outcome:
 
-- `pytest`: 306 passed
+- `pytest`: 307 passed
 - `ruff`: clean
 - `pyright`: 0 errors
 - `/health/details`: `status: ok`, watcher active, push available, Slack configured
@@ -268,7 +271,7 @@ Expected current outcome:
 - `notification-hub coordination-console`: read-only compact console for readiness, action proposals,
   queue state, outcome reminders, saved burn-in evidence, and next safe action; proposal lineage is
   split into active actions and handled history so resolved or ignored work does not drive the next
-  operator step
+  operator step, and the guide stage exposes exact safe next commands for the current handoff state
 - `notification-hub personal-ops-actions`: proposal-only action export derived from repeated inbox
   rollups
 - `notification-hub personal-ops-actions --save-review-package`: writes a local JSON review package
@@ -293,12 +296,12 @@ Expected current outcome:
 - `/review/coordination-readiness`: reports whether to fix noise, keep burning in, or start a
   small coordination expansion without applying work
 - `/review/coordination-console`: reports the compact coordination console payload, including active
-  and handled proposal counts, without applying work
+  and handled proposal counts plus guide steps, without applying work
 - `notification-hub personal-ops-queue-scenario`: runs a temporary queue lifecycle and records a
   final accepted promotion outcome without touching runtime queue state
 - `/review`: localhost-only review UI for runtime state, Operator Focus, Coordination Readiness,
-  Coordination Console, inbox rollups, action proposals, import queue health, saved burn-in report
-  history, and trust state
+  Coordination Console operator guide, inbox rollups, action proposals, import queue health, saved
+  burn-in report history, and trust state
 - `/review/save-package` and `/review/validate-package`: review UI controls for staging and
   validating packages without importing or applying them
 - `/review/packages`: lists recent saved review packages and validation summaries without importing
@@ -374,9 +377,9 @@ It is not part of normal day-to-day work.
 
 Start future work from `main`, keep using the frozen verification commands, and treat the repo-owned
 runtime templates as the source of truth for live launcher and hook wiring.
-The next work here should keep `coordination-console` as the first expansion surface, run it through
-real operator use now that handled proposals are separated from active work, and keep apply behavior
-operator-mediated until the compact console proves it should own a broader guided workflow.
+The next work here should keep `coordination-console` as the first expansion surface, run the
+operator guide through real handoff use, and keep apply behavior operator-mediated until the compact
+console proves it should own a broader workflow.
 
 ## Optional Follow-Up
 

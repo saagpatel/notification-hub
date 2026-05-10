@@ -265,6 +265,23 @@ def _coordination_console_report(status: str = "ok") -> dict[str, object]:
             "applied": False,
         },
         "burn_in_reports": [],
+        "guide_stage": "package_review",
+        "guide_steps": [
+            {
+                "step": 1,
+                "title": "Save review package",
+                "status": "current",
+                "summary": "Stage the current proposals locally for inspection.",
+                "commands": [
+                    "uv run notification-hub personal-ops-actions --save-review-package"
+                ],
+                "action_id": "action-1",
+                "queue_id": None,
+            }
+        ],
+        "next_commands": [
+            "uv run notification-hub personal-ops-actions --save-review-package"
+        ],
         "next_action": "Save and validate a review package.",
         "applied": False,
     }
@@ -1265,6 +1282,7 @@ def test_cli_coordination_console_json_output(capsys: CaptureFixture[str]) -> No
     captured = capsys.readouterr()
     assert exit_code == 0
     assert '"action_count": 1' in captured.out
+    assert '"guide_stage": "package_review"' in captured.out
     mock_console.assert_called_once_with(hours=4, limit=3)
 
 

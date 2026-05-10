@@ -738,7 +738,12 @@ def _print_coordination_console_report(report: CoordinationConsoleReport) -> Non
     print(f"- promoted pending: {queue['promoted_pending_count']}")
     print(f"- promoted stale: {queue['promoted_pending_stale_count']}")
     print(f"- burn-in reports: {len(report['burn_in_reports'])}")
+    print(f"- guide stage: {report['guide_stage']}")
     print(f"- next action: {report['next_action']}")
+    if report["next_commands"]:
+        print("- next commands:")
+        for command in report["next_commands"]:
+            print(f"  - {command}")
 
 
 def _print_personal_ops_action_export_report(report: PersonalOpsActionExportReport) -> None:
