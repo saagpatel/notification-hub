@@ -230,7 +230,7 @@ def test_coordination_console_summarizes_ready_expansion(tmp_path: Path) -> None
                 "recorded_at": "2026-05-10T04:38:00+00:00",
                 "status": "ok",
                 "action_count": 2,
-                "action_ids": ["action-1", "action-2"],
+                "action_ids": ["older-action-1", "older-action-2"],
                 "package_path": None,
                 "queued_count": None,
                 "dismissed_count": None,
@@ -648,6 +648,246 @@ def test_coordination_console_treats_reviewed_handoff_as_history() -> None:
     assert "reviewed-only" in report["proposal_review"]["summary"]
     assert report["guide_stage"] == "monitor"
     assert report["next_action"] == "Monitor /review for the next real handoff signal."
+
+
+def test_coordination_console_treats_follow_up_outcome_as_history(tmp_path: Path) -> None:
+    group_history_path = tmp_path / "group-history.jsonl"
+    group_history_path.write_text(
+        json.dumps(
+            {
+                "group_key": "personal-ops:mail:waiting_on_user:high:waiting",
+                "event_type": "outcome",
+                "recorded_at": "2026-05-10T04:45:00+00:00",
+                "status": "ok",
+                "action_count": 1,
+                "action_ids": ["action-follow-up"],
+                "action_keys": ["proposal:personal-ops:mail:waiting-on-user:stable"],
+                "package_path": None,
+                "queued_count": None,
+                "dismissed_count": None,
+                "outcome": "needs_follow_up",
+                "reason": "operator inspection needed",
+                "error": None,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    with (
+        patch(
+            "notification_hub.operations.run_coordination_readiness",
+            return_value={
+                "status": "ok",
+                "decision": "ready_to_expand",
+                "summary": "Runtime, queue, and saved burn-in evidence are ready.",
+                "queue_status": "ok",
+                "queued_count": 0,
+                "pending_count": 0,
+                "stale_count": 0,
+                "saved_burn_in_reports": 2,
+                "latest_burn_in_ready": True,
+                "latest_burn_in_noise_candidates": 0,
+                "runtime_status": "ok",
+                "policy_warning_count": 0,
+                "next_action": "Plan the next compact coordination console slice.",
+                "evidence": ["runtime=ok"],
+                "applied": False,
+            },
+        ),
+        patch(
+            "notification_hub.operations.run_personal_ops_action_export",
+            return_value={
+                "status": "ok",
+                "schema_version": "notification-hub.personal_ops_action_export.v1",
+                "generated_at": "2026-05-10T04:40:00+00:00",
+                "hours": 2,
+                "actions": [
+                    {
+                        "action_id": "action-follow-up",
+                        "dismissal_key": "proposal:personal-ops:mail:waiting-on-user:stable",
+                        "source": "personal-ops",
+                        "project": "mail",
+                        "intent": "waiting_on_user",
+                        "priority": "high",
+                        "state": "waiting",
+                        "title": "Approval Requested",
+                        "summary": "Approval draft needs inspection.",
+                        "signal_body": "Approval draft",
+                        "suggested_next_action": "Review the waiting item.",
+                        "evidence_event_id": "event-follow-up",
+                        "evidence_timestamp": "2026-05-10T04:40:00+00:00",
+                        "count": 3,
+                    }
+                ],
+                "review_package": {"status": "not_requested"},
+                "inbox": {},
+                "error": None,
+            },
+        ),
+        patch(
+            "notification_hub.operations.run_personal_ops_import_queue_health_check",
+            return_value={
+                "status": "ok",
+                "health": _coordination_status()["import_queue"],
+                "queued_items": [],
+                "pending_promotion_items": [],
+                "next_commands": ["uv run notification-hub personal-ops-queue-health"],
+                "applied": False,
+            },
+        ),
+        patch(
+            "notification_hub.operations.run_personal_ops_outcome_sync_reminder",
+            return_value={
+                "status": "ok",
+                "should_remind": False,
+                "pending_count": 0,
+                "stale_count": 0,
+                "reminders": [],
+                "next_commands": ["uv run notification-hub personal-ops-queue-health"],
+                "next_action": "No pending promoted personal-ops handoff outcomes.",
+                "applied": False,
+            },
+        ),
+        patch(
+            "notification_hub.operations.list_personal_ops_queue_burn_in_reports",
+            return_value=[_coordination_burn_in_report()],
+        ),
+        patch("notification_hub.operations._read_import_queue_items", return_value=[]),
+    ):
+        report = run_coordination_console(
+            hours=2,
+            limit=3,
+            group_history_path=group_history_path,
+        )
+
+    assert report["active_action_count"] == 0
+    assert report["handled_action_count"] == 1
+    assert report["handled_actions"][0]["lineage_status"] == "follow_up"
+    assert report["handled_actions"][0]["lineage_label"] == "Needs follow-up"
+    assert report["proposal_review"]["mode"] == "monitor"
+    assert report["proposal_review"]["follow_up_count"] == 1
+    assert "follow-up" in report["proposal_review"]["summary"]
+    assert report["next_signal"]["status"] == "monitor"
+    assert report["next_action"] == "Monitor /review for the next real handoff signal."
+
+
+def test_coordination_console_keeps_follow_up_history_when_action_id_rotates(
+    tmp_path: Path,
+) -> None:
+    group_history_path = tmp_path / "group-history.jsonl"
+    group_history_path.write_text(
+        json.dumps(
+            {
+                "group_key": "personal-ops:mail:waiting_on_user:high:waiting",
+                "event_type": "outcome",
+                "recorded_at": "2026-05-10T04:45:00+00:00",
+                "status": "ok",
+                "action_count": 1,
+                "action_ids": ["action-follow-up-old"],
+                "action_keys": ["proposal:personal-ops:mail:waiting-on-user:stable"],
+                "package_path": None,
+                "queued_count": None,
+                "dismissed_count": None,
+                "outcome": "needs_follow_up",
+                "reason": "operator inspection needed",
+                "error": None,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    with (
+        patch(
+            "notification_hub.operations.run_coordination_readiness",
+            return_value={
+                "status": "ok",
+                "decision": "ready_to_expand",
+                "summary": "Runtime, queue, and saved burn-in evidence are ready.",
+                "queue_status": "ok",
+                "queued_count": 0,
+                "pending_count": 0,
+                "stale_count": 0,
+                "saved_burn_in_reports": 2,
+                "latest_burn_in_ready": True,
+                "latest_burn_in_noise_candidates": 0,
+                "runtime_status": "ok",
+                "policy_warning_count": 0,
+                "next_action": "Plan the next compact coordination console slice.",
+                "evidence": ["runtime=ok"],
+                "applied": False,
+            },
+        ),
+        patch(
+            "notification_hub.operations.run_personal_ops_action_export",
+            return_value={
+                "status": "ok",
+                "schema_version": "notification-hub.personal_ops_action_export.v1",
+                "generated_at": "2026-05-10T04:50:00+00:00",
+                "hours": 2,
+                "actions": [
+                    {
+                        "action_id": "action-follow-up-new",
+                        "dismissal_key": "proposal:personal-ops:mail:waiting-on-user:stable",
+                        "source": "personal-ops",
+                        "project": "mail",
+                        "intent": "waiting_on_user",
+                        "priority": "high",
+                        "state": "waiting",
+                        "title": "Approval Requested",
+                        "summary": "Approval draft needs inspection.",
+                        "signal_body": "Approval draft",
+                        "suggested_next_action": "Review the waiting item.",
+                        "evidence_event_id": "event-follow-up-new",
+                        "evidence_timestamp": "2026-05-10T04:50:00+00:00",
+                        "count": 4,
+                    }
+                ],
+                "review_package": {"status": "not_requested"},
+                "inbox": {},
+                "error": None,
+            },
+        ),
+        patch(
+            "notification_hub.operations.run_personal_ops_import_queue_health_check",
+            return_value={
+                "status": "ok",
+                "health": _coordination_status()["import_queue"],
+                "queued_items": [],
+                "pending_promotion_items": [],
+                "next_commands": ["uv run notification-hub personal-ops-queue-health"],
+                "applied": False,
+            },
+        ),
+        patch(
+            "notification_hub.operations.run_personal_ops_outcome_sync_reminder",
+            return_value={
+                "status": "ok",
+                "should_remind": False,
+                "pending_count": 0,
+                "stale_count": 0,
+                "reminders": [],
+                "next_commands": ["uv run notification-hub personal-ops-queue-health"],
+                "next_action": "No pending promoted personal-ops handoff outcomes.",
+                "applied": False,
+            },
+        ),
+        patch(
+            "notification_hub.operations.list_personal_ops_queue_burn_in_reports",
+            return_value=[_coordination_burn_in_report()],
+        ),
+        patch("notification_hub.operations._read_import_queue_items", return_value=[]),
+    ):
+        report = run_coordination_console(
+            hours=2,
+            limit=3,
+            group_history_path=group_history_path,
+        )
+
+    assert report["active_action_count"] == 0
+    assert report["handled_action_count"] == 1
+    assert report["handled_actions"][0]["lineage_status"] == "follow_up"
+    assert report["proposal_review"]["mode"] == "monitor"
+    assert report["proposal_review"]["follow_up_count"] == 1
 
 
 def test_coordination_console_guides_queued_handoff_lifecycle() -> None:

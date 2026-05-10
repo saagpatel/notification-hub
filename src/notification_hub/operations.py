@@ -211,6 +211,7 @@ class ActionProposalGroupHistoryReport(TypedDict):
     status: str
     action_count: int
     action_ids: list[str]
+    action_keys: list[str]
     package_path: str | None
     queued_count: int | None
     dismissed_count: int | None
@@ -761,6 +762,7 @@ class CoordinationProposalReviewReport(TypedDict):
     queued_count: int
     promoted_count: int
     reviewed_only_count: int
+    follow_up_count: int
     snoozed_count: int
     resolved_count: int
     ignored_count: int
@@ -968,6 +970,12 @@ def _group_history_report(raw: dict[str, object]) -> ActionProposalGroupHistoryR
         if isinstance(raw_action_ids, list)
         else []
     )
+    raw_action_keys = raw.get("action_keys")
+    action_keys = (
+        [item for item in cast(list[object], raw_action_keys) if isinstance(item, str)]
+        if isinstance(raw_action_keys, list)
+        else []
+    )
     return {
         "group_key": group_key,
         "event_type": event_type,
@@ -975,6 +983,7 @@ def _group_history_report(raw: dict[str, object]) -> ActionProposalGroupHistoryR
         "status": status,
         "action_count": _as_int(raw.get("action_count")) or len(action_ids),
         "action_ids": action_ids,
+        "action_keys": action_keys,
         "package_path": _as_str(raw.get("package_path")),
         "queued_count": _as_int(raw.get("queued_count")),
         "dismissed_count": _as_int(raw.get("dismissed_count")),
@@ -1045,6 +1054,7 @@ def _record_action_proposal_group_history(
         "status": status,
         "action_count": len(actions),
         "action_ids": [action["action_id"] for action in actions],
+        "action_keys": [action["dismissal_key"] for action in actions],
         "package_path": package_path,
         "queued_count": queued_count,
         "dismissed_count": dismissed_count,
@@ -4776,6 +4786,7 @@ def _proposal_lineage_label(status: str) -> str:
         "new": "New",
         "queued": "Queued",
         "reviewed": "Reviewed only",
+        "follow_up": "Needs follow-up",
         "snoozed": "Snoozed",
         "promoted": "Pending outcome",
         "resolved": "Resolved",
@@ -4788,6 +4799,7 @@ def _proposal_lineage_next_action(status: str) -> str:
         "new": "Save and validate a review package if the evidence is right.",
         "queued": "Review the queued handoff before any downstream promotion.",
         "reviewed": "Evidence was reviewed and no downstream promotion is required.",
+        "follow_up": "Evidence was inspected and needs operator follow-up before promotion.",
         "snoozed": "Wait until the snooze expires or reactivate the handoff manually.",
         "promoted": "Record the downstream personal-ops outcome.",
         "resolved": "Downstream outcome is recorded; no queue action is needed.",
@@ -4795,8 +4807,31 @@ def _proposal_lineage_next_action(status: str) -> str:
     }.get(status, "Review this handoff before taking further action.")
 
 
+def _latest_follow_up_action_markers(
+    group_history: list[ActionProposalGroupHistoryReport],
+) -> tuple[set[str], set[str]]:
+    """Return action IDs and stable keys covered by latest follow-up outcomes."""
+    seen_outcome_groups: set[str] = set()
+    follow_up_action_ids: set[str] = set()
+    follow_up_action_keys: set[str] = set()
+    for item in group_history:
+        group_key = item["group_key"]
+        if group_key in seen_outcome_groups or item["event_type"] != "outcome":
+            continue
+        seen_outcome_groups.add(group_key)
+        if (
+            item["status"] == "ok"
+            and item["outcome"] == "needs_follow_up"
+        ):
+            follow_up_action_ids.update(item["action_ids"])
+            follow_up_action_keys.update(item["action_keys"])
+    return follow_up_action_ids, follow_up_action_keys
+
+
 def _build_proposal_lineage(
     actions: list[PersonalOpsActionReport],
+    *,
+    group_history: list[ActionProposalGroupHistoryReport] | None = None,
 ) -> list[CoordinationConsoleActionReport]:
     raw_items = _read_import_queue_items(PERSONAL_OPS_IMPORT_QUEUE)
     queue_by_action_id: dict[str, PersonalOpsImportQueueItemReport] = {}
@@ -4808,12 +4843,20 @@ def _build_proposal_lineage(
         if item["evidence_event_id"] and item["evidence_event_id"] not in queue_by_evidence_id:
             queue_by_evidence_id[item["evidence_event_id"]] = item
 
+    follow_up_action_ids, follow_up_action_keys = _latest_follow_up_action_markers(
+        group_history or []
+    )
     reports: list[CoordinationConsoleActionReport] = []
     for action in actions:
         queue_item = queue_by_action_id.get(action["action_id"]) or queue_by_evidence_id.get(
             action["evidence_event_id"]
         )
         lineage_status = _proposal_lineage_status(queue_item)
+        if queue_item is None and (
+            action["action_id"] in follow_up_action_ids
+            or action.get("dismissal_key") in follow_up_action_keys
+        ):
+            lineage_status = "follow_up"
         reports.append(
             {
                 "action": action,
@@ -5059,6 +5102,7 @@ def _build_proposal_review(
     reviewed_only_count = sum(
         1 for item in handled_actions if item["lineage_status"] == "reviewed"
     )
+    follow_up_count = sum(1 for item in handled_actions if item["lineage_status"] == "follow_up")
     snoozed_count = sum(1 for item in handled_actions if item["lineage_status"] == "snoozed")
     resolved_count = sum(1 for item in handled_actions if item["lineage_status"] == "resolved")
     ignored_count = sum(1 for item in handled_actions if item["lineage_status"] == "ignored")
@@ -5105,6 +5149,8 @@ def _build_proposal_review(
             details: list[str] = []
             if reviewed_only_count:
                 details.append(f"{reviewed_only_count} reviewed-only")
+            if follow_up_count:
+                details.append(f"{follow_up_count} follow-up")
             if resolved_count:
                 details.append(f"{resolved_count} resolved")
             if ignored_count:
@@ -5124,6 +5170,7 @@ def _build_proposal_review(
         "queued_count": queued_count,
         "promoted_count": promoted_count,
         "reviewed_only_count": reviewed_only_count,
+        "follow_up_count": follow_up_count,
         "snoozed_count": snoozed_count,
         "resolved_count": resolved_count,
         "ignored_count": ignored_count,
@@ -5349,7 +5396,7 @@ def run_coordination_console(
         limit=safe_limit,
         history_path=group_history_path,
     )
-    proposal_lineage = _build_proposal_lineage(actions["actions"])
+    proposal_lineage = _build_proposal_lineage(actions["actions"], group_history=group_history)
     action_dismissals = actions.get("dismissals", [])
     active_actions = [
         action
@@ -5359,7 +5406,7 @@ def run_coordination_console(
     handled_actions = [
         action
         for action in proposal_lineage
-        if action["lineage_status"] in {"reviewed", "snoozed", "resolved", "ignored"}
+        if action["lineage_status"] in {"reviewed", "follow_up", "snoozed", "resolved", "ignored"}
     ]
     proposal_review = _build_proposal_review(
         active_actions=active_actions,

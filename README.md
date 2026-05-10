@@ -116,8 +116,8 @@ report history into one compact expansion gate. It returns `fix_noise_first`, `k
 The coordination-console command is the first compact expansion after that gate. It brings
 readiness, action proposals, queue state, promoted-outcome reminders, burn-in report history, next
 real signal state, and the next safe action into one read-only summary. It also classifies proposal
-lineage as new, queued, promoted, resolved, or ignored so already-handled proposals stay visible as
-history without being treated as fresh work. Its operator guide names the current stage and exact
+lineage as new, queued, promoted, follow-up, resolved, or ignored so already-handled proposals stay
+visible as history without being treated as fresh work. Its operator guide names the current stage and exact
 safe commands for saving, validating, queueing, promoting, or outcome-syncing handoffs while keeping
 apply behavior outside notification-hub. If a handoff is already queued or waiting on a promoted
 outcome, the console keeps that queue lifecycle as the next action before returning to readiness
@@ -128,6 +128,11 @@ staging a small batch package for inspection. The `/review` surface can save, qu
 dismiss one proposal group, and it can record a local group outcome such as `needs_follow_up`,
 `accepted`, or `rejected`. Queueing still only creates notification-hub handoff records and does not
 create personal-ops tasks.
+When a group's latest recorded outcome is `needs_follow_up`, matching action IDs and stable proposal
+keys are treated as handled follow-up history rather than fresh active proposals. A later save-only
+package inspection does not reopen that group, and repeated rollups can keep that follow-up state
+even when their newest evidence event rotates. Queueing, promotion, dismissal, or a different
+proposal key can still create a new actionable state.
 For personal-ops mail approval groups, Proposal Review adds a local route recommendation that
 separates concrete reply candidates from repeated phase or workflow chatter. The recommendation is
 advisory only; it never promotes, suppresses, or sends by itself. The review controls can also save
@@ -178,9 +183,10 @@ personal-ops promotion is required. Marking an item `promoted` records that an o
 personal-ops task suggestion was created; it does not create that suggestion by itself. Promotion
 records can also store the personal-ops suggestion id and final `pending`, `accepted`, `rejected`, or
 `ignored` outcome.
-The Coordination Console treats reviewed and snoozed handoffs as handled history, so they do not
-block readiness once queue health is clean. Proposal Review also breaks handled history into
-reviewed-only, resolved, closed, and snoozed counts so reviewed-but-not-promoted work is visible.
+The Coordination Console treats reviewed, follow-up, and snoozed handoffs as handled history, so
+they do not block readiness once queue health is clean. Proposal Review also breaks handled history
+into reviewed-only, follow-up, resolved, closed, and snoozed counts so reviewed-but-not-promoted work
+is visible.
 The personal-ops-queue-health command is the normal maintenance check for this queue. It reports
 queued item age, promoted handoffs still waiting on downstream outcome sync, stale pending
 promotions, and the next safe operator commands without applying work.

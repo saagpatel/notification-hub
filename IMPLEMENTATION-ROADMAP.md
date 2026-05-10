@@ -62,6 +62,9 @@ as implementation history rather than the primary current-state source.
 - Runtime wiring is now repo-owned through checked-in LaunchAgent and hook templates under `ops/`
 - Slack transport failures degrade quietly, configurable quiet hours support same-day windows, and
   repeated identical bridge activity lines are detected as new appends
+- Coordination Console treats `needs_follow_up` group outcomes as handled follow-up history, so
+  follow-up-only proposal groups do not keep resurfacing as fresh active work after inspection, even
+  when repeated rollups rotate to a newer evidence event under the same stable proposal key.
 
 ## Phase 0: FastAPI Skeleton + JSONL Logging + Bridge File Watcher
 
