@@ -192,6 +192,16 @@ class ActionProposalGroupDismissReport(TypedDict):
     error: str | None
 
 
+class ActionProposalGroupOutcomeReport(TypedDict):
+    status: str
+    group_key: str
+    outcome: str | None
+    group_history: "ActionProposalGroupHistoryReport | None"
+    next_action: str
+    applied: bool
+    error: str | None
+
+
 class ActionProposalGroupHistoryReport(TypedDict):
     group_key: str
     event_type: str
@@ -202,6 +212,7 @@ class ActionProposalGroupHistoryReport(TypedDict):
     package_path: str | None
     queued_count: int | None
     dismissed_count: int | None
+    outcome: str | None
     reason: str | None
     error: str | None
 
@@ -595,6 +606,7 @@ class CoordinationProposalReviewGroup(TypedDict):
     action_ids: list[str]
     history_count: int
     latest_history: ActionProposalGroupHistoryReport | None
+    latest_outcome: str | None
     next_action: str
 
 
@@ -705,6 +717,13 @@ PERSONAL_OPS_QUEUE_STATUSES = {
     "promoted",
 }
 PERSONAL_OPS_PROMOTION_OUTCOMES = {"pending", "accepted", "rejected", "ignored"}
+ACTION_PROPOSAL_GROUP_OUTCOMES = {
+    "accepted",
+    "rejected",
+    "snoozed",
+    "superseded",
+    "needs_follow_up",
+}
 PERSONAL_OPS_OUTCOME_SYNC_POSTURE = (
     "operator-mediated; notification-hub reports pending or stale promoted outcomes "
     "but does not create, accept, reject, or sync personal-ops work itself"
@@ -789,6 +808,7 @@ def _group_history_report(raw: dict[str, object]) -> ActionProposalGroupHistoryR
         "package_path": _as_str(raw.get("package_path")),
         "queued_count": _as_int(raw.get("queued_count")),
         "dismissed_count": _as_int(raw.get("dismissed_count")),
+        "outcome": _as_str(raw.get("outcome")),
         "reason": _as_str(raw.get("reason")),
         "error": _as_str(raw.get("error")),
     }
@@ -823,6 +843,7 @@ def _record_action_proposal_group_history(
     package_path: str | None = None,
     queued_count: int | None = None,
     dismissed_count: int | None = None,
+    outcome: str | None = None,
     reason: str | None = None,
     error: str | None = None,
     history_path: Path | None = None,
@@ -837,6 +858,7 @@ def _record_action_proposal_group_history(
         "package_path": package_path,
         "queued_count": queued_count,
         "dismissed_count": dismissed_count,
+        "outcome": outcome,
         "reason": reason,
         "error": error,
     }
@@ -1330,7 +1352,7 @@ def _write_action_review_package(
     output_dir: Path | None = None,
 ) -> dict[str, object]:
     target_dir = output_dir or ACTION_EXPORT_DIR
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-%f")
     target_path = target_dir / f"personal-ops-actions-{timestamp}.json"
     try:
         target_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -1408,7 +1430,8 @@ def _empty_package_validation(path: Path, error: str) -> ActionPackageValidation
 def _is_safe_action_review_package_name(name: str) -> bool:
     return (
         Path(name).name == name
-        and re.fullmatch(r"personal-ops-actions-\d{8}-\d{6}\.json", name) is not None
+        and re.fullmatch(r"personal-ops-actions-\d{8}-\d{6}(?:-\d{6})?\.json", name)
+        is not None
     )
 
 
@@ -3213,6 +3236,87 @@ def dismiss_action_proposal_group(
     }
 
 
+def record_action_proposal_group_outcome(
+    *,
+    group_key: str,
+    outcome: str,
+    reason: str,
+    hours: int = 2,
+    limit: int = 25,
+    group_history_path: Path | None = None,
+) -> ActionProposalGroupOutcomeReport:
+    """Record an operator-visible outcome for one proposal-review group."""
+    safe_group_key = group_key.strip()
+    safe_outcome = outcome.strip()
+    if not safe_group_key:
+        return {
+            "status": "degraded",
+            "group_key": group_key,
+            "outcome": None,
+            "group_history": None,
+            "next_action": "Choose a valid proposal group before recording an outcome.",
+            "applied": False,
+            "error": "group_key is required",
+        }
+    if safe_outcome not in ACTION_PROPOSAL_GROUP_OUTCOMES:
+        return {
+            "status": "degraded",
+            "group_key": safe_group_key,
+            "outcome": safe_outcome,
+            "group_history": None,
+            "next_action": "Choose a valid group outcome before recording it.",
+            "applied": False,
+            "error": f"invalid group outcome: {safe_outcome}",
+        }
+
+    _, actions = _actions_for_group_key(
+        group_key=safe_group_key,
+        hours=max(hours, 1),
+        limit=max(limit, 1),
+    )
+    if not actions:
+        return {
+            "status": "degraded",
+            "group_key": safe_group_key,
+            "outcome": safe_outcome,
+            "group_history": None,
+            "next_action": "Refresh Proposal Review; this group is no longer active.",
+            "applied": False,
+            "error": "no active proposals matched this group",
+        }
+
+    try:
+        group_history = _record_action_proposal_group_history(
+            group_key=safe_group_key,
+            event_type="outcome",
+            status="ok",
+            actions=actions,
+            outcome=safe_outcome,
+            reason=reason.strip() or "operator recorded group outcome",
+            history_path=group_history_path,
+        )
+    except OSError as exc:
+        return {
+            "status": "degraded",
+            "group_key": safe_group_key,
+            "outcome": safe_outcome,
+            "group_history": None,
+            "next_action": "Fix group history write errors before recording group outcomes.",
+            "applied": False,
+            "error": str(exc),
+        }
+
+    return {
+        "status": "ok",
+        "group_key": safe_group_key,
+        "outcome": safe_outcome,
+        "group_history": group_history,
+        "next_action": "Group outcome recorded locally. Use queue or dismissal controls for any follow-up handoff state.",
+        "applied": False,
+        "error": None,
+    }
+
+
 def run_personal_ops_queue_scenario() -> PersonalOpsQueueScenarioReport:
     """Exercise the local queue lifecycle without touching the operator queue."""
     with tempfile.TemporaryDirectory(prefix="notification-hub-queue-scenario-") as tmp:
@@ -3836,6 +3940,7 @@ def _build_proposal_review_group(
     total_count = sum(item["action"]["count"] for item in actions)
     group_label = _action_group_label(key)
     group_history = history_by_group.get(group_label, [])
+    latest_outcome = next((item["outcome"] for item in group_history if item["outcome"]), None)
     next_action = (
         "Review this group as one package when the evidence points to the same operator decision."
         if len(actions) > 1
@@ -3855,6 +3960,7 @@ def _build_proposal_review_group(
         "action_ids": [item["action"]["action_id"] for item in actions],
         "history_count": len(group_history),
         "latest_history": group_history[0] if group_history else None,
+        "latest_outcome": latest_outcome,
         "next_action": next_action,
     }
 

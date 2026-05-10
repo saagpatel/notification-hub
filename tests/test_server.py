@@ -956,6 +956,44 @@ async def test_review_action_proposal_group_dismiss_endpoint_is_local_only(
     )
 
 
+async def test_review_action_proposal_group_outcome_endpoint_is_local_only(
+    client: AsyncClient,
+) -> None:
+    with patch(
+        "notification_hub.server.record_action_proposal_group_outcome",
+        return_value={
+            "status": "ok",
+            "group_key": "personal-ops:mail:waiting_on_user:high:waiting",
+            "outcome": "needs_follow_up",
+            "group_history": {"event_type": "outcome", "outcome": "needs_follow_up"},
+            "next_action": "Group outcome recorded locally.",
+            "applied": False,
+            "error": None,
+        },
+    ) as mock_outcome_group:
+        resp = await client.post(
+            "/review/action-proposal-group/outcome",
+            json={
+                "group_key": "personal-ops:mail:waiting_on_user:high:waiting",
+                "outcome": "needs_follow_up",
+                "reason": "follow up",
+            },
+        )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert data["outcome"] == "needs_follow_up"
+    assert data["applied"] is False
+    mock_outcome_group.assert_called_once_with(
+        group_key="personal-ops:mail:waiting_on_user:high:waiting",
+        outcome="needs_follow_up",
+        reason="follow up",
+        hours=2,
+        limit=25,
+    )
+
+
 async def test_review_outcome_sync_reminder_endpoint_reports_pending(
     client: AsyncClient,
 ) -> None:

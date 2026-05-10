@@ -58,6 +58,7 @@ from notification_hub.operations import (
     undismiss_action_proposal,
     update_personal_ops_import_queue_item,
     validate_action_package,
+    record_action_proposal_group_outcome,
 )
 
 
@@ -218,6 +219,23 @@ def test_coordination_console_summarizes_ready_expansion(tmp_path: Path) -> None
         json.dumps(
             {
                 "group_key": "personal-ops:mail:waiting_on_user:high:waiting",
+                "event_type": "outcome",
+                "recorded_at": "2026-05-10T04:38:00+00:00",
+                "status": "ok",
+                "action_count": 2,
+                "action_ids": ["action-1", "action-2"],
+                "package_path": None,
+                "queued_count": None,
+                "dismissed_count": None,
+                "outcome": "needs_follow_up",
+                "reason": "operator follow-up needed",
+                "error": None,
+            }
+        )
+        + "\n"
+        + json.dumps(
+            {
+                "group_key": "personal-ops:mail:waiting_on_user:high:waiting",
                 "event_type": "saved",
                 "recorded_at": "2026-05-10T04:39:00+00:00",
                 "status": "ok",
@@ -342,9 +360,10 @@ def test_coordination_console_summarizes_ready_expansion(tmp_path: Path) -> None
     assert report["proposal_review"]["groups"][0]["newest_evidence_timestamp"] == (
         "2026-05-10T04:42:00+00:00"
     )
-    assert report["proposal_review"]["groups"][0]["history_count"] == 1
+    assert report["proposal_review"]["groups"][0]["history_count"] == 2
     assert report["proposal_review"]["groups"][0]["latest_history"] is not None
     assert report["proposal_review"]["groups"][0]["latest_history"]["event_type"] == "saved"
+    assert report["proposal_review"]["groups"][0]["latest_outcome"] == "needs_follow_up"
     assert report["proposal_review"]["group_history"][0]["group_key"] == (
         "personal-ops:mail:waiting_on_user:high:waiting"
     )
@@ -1086,6 +1105,49 @@ def test_action_proposal_group_package_can_save_selected_group(tmp_path: Path) -
     assert report["group_history"]["action_count"] == 2
 
 
+def test_action_review_package_names_are_collision_safe(tmp_path: Path) -> None:
+    inbox_report: dict[str, object] = {
+        "status": "ok",
+        "hours": 2,
+        "events_seen": 1,
+        "needs_attention": [],
+        "waiting_or_blocked": [],
+        "ready": [],
+        "completed": [],
+        "rollups": [
+            {
+                "count": 2,
+                "source": "personal-ops",
+                "project": "mail",
+                "intent": "waiting_on_user",
+                "level": "urgent",
+                "title": "Approval Requested",
+                "body": "Outbound workflow reply",
+                "latest_timestamp": "2026-05-09T00:00:00+00:00",
+                "latest_event_id": "abc123",
+            }
+        ],
+        "noise_candidates": [],
+        "error": None,
+    }
+
+    with patch("notification_hub.operations.run_inbox", return_value=inbox_report):
+        first = save_action_proposal_group_package(
+            group_key="personal-ops:mail:waiting_on_user:high:waiting",
+            review_dir=tmp_path,
+            group_history_path=tmp_path / "group-history.jsonl",
+        )
+        second = save_action_proposal_group_package(
+            group_key="personal-ops:mail:waiting_on_user:high:waiting",
+            review_dir=tmp_path,
+            group_history_path=tmp_path / "group-history.jsonl",
+        )
+
+    assert first["review_package"]["path"] != second["review_package"]["path"]
+    assert Path(str(first["review_package"]["path"])).exists()
+    assert Path(str(second["review_package"]["path"])).exists()
+
+
 def test_action_proposal_group_package_can_enqueue_selected_group(tmp_path: Path) -> None:
     inbox_report: dict[str, object] = {
         "status": "ok",
@@ -1190,6 +1252,49 @@ def test_action_proposal_group_dismisses_each_current_match(tmp_path: Path) -> N
     assert report["group_history"] is not None
     assert report["group_history"]["event_type"] == "dismissed"
     assert report["group_history"]["dismissed_count"] == 2
+
+
+def test_action_proposal_group_outcome_records_local_decision(tmp_path: Path) -> None:
+    inbox_report: dict[str, object] = {
+        "status": "ok",
+        "hours": 2,
+        "events_seen": 1,
+        "needs_attention": [],
+        "waiting_or_blocked": [],
+        "ready": [],
+        "completed": [],
+        "rollups": [
+            {
+                "count": 2,
+                "source": "personal-ops",
+                "project": "mail",
+                "intent": "waiting_on_user",
+                "level": "urgent",
+                "title": "Approval Requested",
+                "body": "Outbound workflow reply",
+                "latest_timestamp": "2026-05-09T00:00:00+00:00",
+                "latest_event_id": "abc123",
+            }
+        ],
+        "noise_candidates": [],
+        "error": None,
+    }
+
+    with patch("notification_hub.operations.run_inbox", return_value=inbox_report):
+        report = record_action_proposal_group_outcome(
+            group_key="personal-ops:mail:waiting_on_user:high:waiting",
+            outcome="needs_follow_up",
+            reason="operator follow-up required",
+            hours=2,
+            limit=5,
+            group_history_path=tmp_path / "group-history.jsonl",
+        )
+
+    assert report["status"] == "ok"
+    assert report["outcome"] == "needs_follow_up"
+    assert report["group_history"] is not None
+    assert report["group_history"]["event_type"] == "outcome"
+    assert report["group_history"]["outcome"] == "needs_follow_up"
 
 
 def test_personal_ops_action_export_can_save_review_package(tmp_path: Path) -> None:

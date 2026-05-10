@@ -38,6 +38,7 @@ from notification_hub.operations import (
     run_personal_ops_outcome_sync_reminder,
     run_retention,
     save_action_proposal_group_package,
+    record_action_proposal_group_outcome,
     undismiss_action_proposal,
     update_personal_ops_import_queue_item,
     validate_action_package,
@@ -630,6 +631,7 @@ REVIEW_HTML = """<!doctype html>
         <div class="button-row">
           <button type="button" data-save-group="${esc(group.group_key)}">Save group</button>
           <button type="button" data-queue-group="${esc(group.group_key)}">Queue group</button>
+          <button type="button" data-follow-up-group="${esc(group.group_key)}">Needs follow-up</button>
           <button type="button" data-dismiss-group="${esc(group.group_key)}">Dismiss group</button>
         </div>
       `));
@@ -650,6 +652,9 @@ REVIEW_HTML = """<!doctype html>
       });
       proposalReview.querySelectorAll("button[data-queue-group]").forEach(button => {
         button.addEventListener("click", () => queueProposalGroup(button.dataset.queueGroup));
+      });
+      proposalReview.querySelectorAll("button[data-follow-up-group]").forEach(button => {
+        button.addEventListener("click", () => outcomeProposalGroup(button.dataset.followUpGroup, "needs_follow_up"));
       });
       proposalReview.querySelectorAll("button[data-dismiss-group]").forEach(button => {
         button.addEventListener("click", () => dismissProposalGroup(button.dataset.dismissGroup));
@@ -728,6 +733,28 @@ REVIEW_HTML = """<!doctype html>
         item(`<div class="next">${esc(data.next_action || data.error || "")}</div>`)
       );
       await loadDismissals();
+      await loadCoordinationConsole();
+    }
+    async function outcomeProposalGroup(groupKey, outcome) {
+      if (!window.confirm("Record this proposal group outcome locally?")) {
+        return;
+      }
+      const data = await fetch("/review/action-proposal-group/outcome", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          group_key: groupKey,
+          outcome,
+          hours: 2,
+          limit: 25,
+          reason: "Review UI marked this grouped proposal for follow-up."
+        })
+      }).then(res => res.json());
+      packageDetail.replaceChildren(
+        item(`<div class="line"><span class="title">Group outcome</span><span class="meta">${esc(data.status)}</span></div>`),
+        item(`<div class="next">Outcome: ${esc(data.outcome || "not recorded")}</div>`),
+        item(`<div class="next">${esc(data.next_action || data.error || "")}</div>`)
+      );
       await loadCoordinationConsole();
     }
     async function dismissActionProposal(dismissalKey) {
@@ -1372,6 +1399,28 @@ async def review_dismiss_action_proposal_group(request: Request) -> dict[str, ob
         reason=reason
         if isinstance(reason, str) and reason.strip()
         else "Review UI dismissed a grouped proposal as known noise.",
+        hours=int(hours) if isinstance(hours, int) else 2,
+        limit=int(limit) if isinstance(limit, int) else 25,
+    )
+    return dict(report)
+
+
+@app.post("/review/action-proposal-group/outcome")
+async def review_record_action_proposal_group_outcome(request: Request) -> dict[str, object]:
+    """Record a local outcome for one proposal-review group without applying work."""
+    body = await _action_proposal_group_body(request)
+    group_key = body.get("group_key")
+    outcome = body.get("outcome")
+    reason = body.get("reason")
+    hours = body.get("hours", 2)
+    limit = body.get("limit", 25)
+    report = await asyncio.to_thread(
+        record_action_proposal_group_outcome,
+        group_key=group_key if isinstance(group_key, str) else "",
+        outcome=outcome if isinstance(outcome, str) else "",
+        reason=reason
+        if isinstance(reason, str) and reason.strip()
+        else "Review UI recorded a grouped proposal outcome.",
         hours=int(hours) if isinstance(hours, int) else 2,
         limit=int(limit) if isinstance(limit, int) else 25,
     )

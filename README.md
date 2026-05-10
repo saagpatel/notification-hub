@@ -60,6 +60,7 @@ uv run notification-hub personal-ops-actions
 uv run notification-hub-personal-ops-actions --json
 uv run notification-hub action-proposal-dismissals
 uv run notification-hub action-proposal-undismiss DISMISSAL_KEY --reason "signal is useful again"
+uv run notification-hub action-proposal-group-outcome GROUP_KEY --outcome needs_follow_up --reason "operator follow-up needed"
 uv run notification-hub operator-daily-state
 uv run notification-hub operator-handoff-drill
 uv run notification-hub personal-ops-actions --save-review-package
@@ -117,8 +118,9 @@ apply behavior outside notification-hub.
 The console also includes a proposal-review summary that groups active proposals by source, project,
 intent, priority, and state, so the operator can tell when to review one proposal alone versus
 staging a small batch package for inspection. The `/review` surface can save, queue, or locally
-dismiss one proposal group, but queueing still only creates notification-hub handoff records and does
-not create personal-ops tasks.
+dismiss one proposal group, and it can record a local group outcome such as `needs_follow_up`,
+`accepted`, or `rejected`. Queueing still only creates notification-hub handoff records and does not
+create personal-ops tasks.
 The personal-ops-actions command turns inbox rollups into action proposals for review. It does not
 write to personal-ops; pass `--output path/to/actions.json` when you want a handoff file.
 It scans a deeper candidate set than the display limit, so dismissed or policy-covered rollups do not
@@ -223,7 +225,8 @@ drill, delete saved review packages, validate the latest staged or saved package
 Coordination Console operator guide plus proposal-review grouping. The Proposal Review controls can
 save a group package, queue a group package for operator review, or dismiss a group locally, and
 each group action is recorded in local group-history JSONL so later console refreshes still show
-what happened. These controls still do not apply, approve, send, or mutate personal-ops.
+what happened. A group outcome can also be recorded locally after review. These controls still do
+not apply, approve, send, or mutate personal-ops.
 Coordination snapshots target bridge-db's `codex` snapshot shape: the emitted
 `bridge_snapshot` object can be passed as snapshot data after operator review, or saved directly
 with the explicit `--save-bridge-db` flag.

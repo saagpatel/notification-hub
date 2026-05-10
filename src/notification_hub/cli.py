@@ -33,6 +33,7 @@ from notification_hub.operations import (
     ActionProposalDismissalListReport,
     ActionProposalDismissReport,
     ActionProposalUndismissReport,
+    ActionProposalGroupOutcomeReport,
     OperatorDailyStateReport,
     OperatorHandoffDrillReport,
     PolicyCheckReport,
@@ -68,6 +69,7 @@ from notification_hub.operations import (
     run_smoke_check,
     run_status,
     run_verify_runtime,
+    record_action_proposal_group_outcome,
 )
 from notification_hub.pipeline import build_event_explanation_report
 
@@ -408,6 +410,43 @@ def _build_parser(prog: str = "notification-hub") -> argparse.ArgumentParser:
         "--json",
         action="store_true",
         help="Emit the undismiss report as JSON.",
+    )
+
+    action_proposal_group_outcome = subparsers.add_parser(
+        "action-proposal-group-outcome",
+        help="Record a local outcome for one Proposal Review group.",
+    )
+    action_proposal_group_outcome.add_argument(
+        "group_key",
+        help="Proposal Review group key from coordination-console.",
+    )
+    action_proposal_group_outcome.add_argument(
+        "--outcome",
+        required=True,
+        choices=["accepted", "rejected", "snoozed", "superseded", "needs_follow_up"],
+        help="Local group outcome to record.",
+    )
+    action_proposal_group_outcome.add_argument(
+        "--reason",
+        default="operator recorded group outcome",
+        help="Operator note explaining the group outcome.",
+    )
+    action_proposal_group_outcome.add_argument(
+        "--hours",
+        type=int,
+        default=2,
+        help="Recent action-proposal window to search.",
+    )
+    action_proposal_group_outcome.add_argument(
+        "--limit",
+        type=int,
+        default=25,
+        help="Maximum action proposals to search.",
+    )
+    action_proposal_group_outcome.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the group outcome report as JSON.",
     )
 
     operator_daily_state = subparsers.add_parser(
@@ -954,6 +993,19 @@ def _print_action_proposal_undismiss_report(report: ActionProposalUndismissRepor
         print(f"- error: {report['error']}")
 
 
+def _print_action_proposal_group_outcome_report(
+    report: ActionProposalGroupOutcomeReport,
+) -> None:
+    print(f"notification-hub action-proposal-group-outcome: {report['status']}")
+    print(f"- group: {report['group_key']}")
+    print(f"- outcome: {report['outcome']}")
+    if report["group_history"] is not None:
+        print(f"- recorded: {report['group_history']['recorded_at']}")
+    print(f"- next action: {report['next_action']}")
+    if report["error"] is not None:
+        print(f"- error: {report['error']}")
+
+
 def _print_operator_daily_state_report(report: OperatorDailyStateReport) -> None:
     console = report["coordination_console"]
     queue = report["queue_health"]["health"]
@@ -1473,6 +1525,20 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(json.dumps(report, indent=2, sort_keys=True))
         else:
             _print_action_proposal_undismiss_report(report)
+        return 0 if report["status"] == "ok" else 1
+
+    if args.command == "action-proposal-group-outcome":
+        report = record_action_proposal_group_outcome(
+            group_key=args.group_key,
+            outcome=args.outcome,
+            reason=args.reason,
+            hours=args.hours,
+            limit=args.limit,
+        )
+        if args.json:
+            print(json.dumps(report, indent=2, sort_keys=True))
+        else:
+            _print_action_proposal_group_outcome_report(report)
         return 0 if report["status"] == "ok" else 1
 
     if args.command == "operator-daily-state":

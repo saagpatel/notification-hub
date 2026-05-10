@@ -63,7 +63,7 @@ tuning pass.
   from a small batch package. Group controls can save a scoped review package, queue that group into
   the local handoff queue, or locally dismiss the group without applying personal-ops work. Each
   group action now appends local group-history JSONL so the console can show recent group lifecycle
-  state after a save, queue, or dismiss.
+  state after a save, queue, dismiss, or explicit local outcome decision.
 - Action proposal export now scans a deeper candidate set than the display limit, so dismissed or
   policy-covered rollups cannot crowd out real lower-ranked operator signals from the default view.
 - Action proposal dismissals can now be listed, inspected, and undismissed through CLI and `/review`
@@ -82,8 +82,8 @@ tuning pass.
 - The review page now includes Operator Focus, Coordination Readiness, and Coordination Console
   summaries that put the current action state, expansion gate, next real signal, and next safe action
   first. A Proposal Review section shows grouped active proposals before a package is queued and can
-  save, queue, or dismiss one proposal group at a time. It also shows recent group-history entries
-  so a refresh does not hide the last grouped action.
+  save, queue, mark as needing follow-up, or dismiss one proposal group at a time. It also shows
+  recent group-history entries so a refresh does not hide the last grouped action.
 - The review page can stage a local review package, list recent saved review packages, inspect
   package actions/evidence plus queue lineage, queue import handoff items, filter
   queued/promoted/pending/stale/resolved handoffs, mark queued items reviewed/rejected/snoozed/promoted,
@@ -230,6 +230,8 @@ tuning pass.
   mutations outside notification-hub.
 - Added durable Proposal Review group history so save, queue, and dismiss actions append local JSONL
   evidence and appear in CLI, JSON, and `/review` lifecycle summaries.
+- Added local Proposal Review group outcomes so grouped work can be marked `accepted`, `rejected`,
+  `snoozed`, `superseded`, or `needs_follow_up` without applying downstream work.
 - Added action proposal dismissal listing/undismiss commands and `/review` controls so temporarily
   hidden proposals can be audited or reactivated without deleting dismissal history.
 - Added operator daily-state and handoff-drill commands plus `/review` endpoints so local operators
@@ -258,6 +260,7 @@ uv run --frozen notification-hub coordination-readiness
 uv run --frozen notification-hub coordination-console
 uv run --frozen notification-hub personal-ops-actions
 uv run --frozen notification-hub action-proposal-dismiss DISMISSAL_KEY --reason "known repeated test signal"
+uv run --frozen notification-hub action-proposal-group-outcome GROUP_KEY --outcome needs_follow_up --reason "operator follow-up needed"
 uv run --frozen notification-hub personal-ops-actions --save-review-package
 uv run --frozen notification-hub validate-action-package path/to/actions.json
 uv run --frozen notification-hub personal-ops-import path/to/actions.json
@@ -367,6 +370,8 @@ Expected current outcome:
   applying downstream work
 - `POST /review/action-proposal/{dismissal_key}/undismiss`: reactivates one dismissed proposal while
   preserving dismissal history
+- `POST /review/action-proposal-group/outcome`: records a local grouped-review outcome without
+  applying downstream work
 - `/review/operator-daily-state`: returns a read-only operator state payload for the review surface
 - `POST /review/operator-handoff-drill`: runs the temporary handoff lifecycle from the review surface
   without touching the live queue
