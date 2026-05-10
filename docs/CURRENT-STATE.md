@@ -89,6 +89,9 @@ tuning pass.
 - Proposal Review now adds advisory mail routing recommendations for personal-ops mail approval
   groups, with promote, suppress, and follow-up counts. This helps split concrete reply candidates
   from repeated phase/workflow chatter without auto-promoting or auto-suppressing anything.
+- Proposal Review group controls are now route-aware for mixed mail batches: operators can save or
+  queue only the `promote` route, or locally dismiss only the `suppress` route, while leaving
+  follow-up candidates visible for separate inspection.
 - The review page can stage a local review package, list recent saved review packages, inspect
   package actions/evidence plus queue lineage, queue import handoff items, filter
   queued/promoted/pending/stale/resolved handoffs, mark queued items reviewed/rejected/snoozed/promoted,
@@ -239,6 +242,8 @@ tuning pass.
   `snoozed`, `superseded`, or `needs_follow_up` without applying downstream work.
 - Added advisory mail route recommendations to Proposal Review so mixed mail approval batches show
   whether they contain promote candidates, suppression candidates, or follow-up-only items.
+- Added route-aware Proposal Review actions so a mixed mail batch can be split into local promote,
+  suppress, and follow-up routes without sending mail or creating downstream personal-ops work.
 - Added action proposal dismissal listing/undismiss commands and `/review` controls so temporarily
   hidden proposals can be audited or reactivated without deleting dismissal history.
 - Added operator daily-state and handoff-drill commands plus `/review` endpoints so local operators

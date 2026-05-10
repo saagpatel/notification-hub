@@ -599,6 +599,9 @@ class CoordinationProposalRouteRecommendation(TypedDict):
     promote_candidate_count: int
     suppress_candidate_count: int
     follow_up_candidate_count: int
+    promote_candidate_action_ids: list[str]
+    suppress_candidate_action_ids: list[str]
+    follow_up_candidate_action_ids: list[str]
 
 
 class CoordinationProposalReviewGroup(TypedDict):
@@ -3042,6 +3045,7 @@ def _actions_for_group_key(
 def save_action_proposal_group_package(
     *,
     group_key: str,
+    route: str | None = None,
     hours: int = 2,
     limit: int = 25,
     enqueue: bool = False,
@@ -3068,12 +3072,8 @@ def save_action_proposal_group_package(
             "applied": False,
             "error": "group_key is required",
         }
-    export, actions = _actions_for_group_key(
-        group_key=safe_group_key,
-        hours=max(hours, 1),
-        limit=max(limit, 1),
-    )
-    if not actions:
+    route_key, route_error = _normalize_action_proposal_group_route(route)
+    if route_error is not None:
         return {
             "status": "degraded",
             "group_key": safe_group_key,
@@ -3082,18 +3082,43 @@ def save_action_proposal_group_package(
                 "requested": True,
                 "status": "degraded",
                 "path": str(review_dir) if review_dir is not None else None,
-                "error": "no active proposals matched this group",
+                "error": route_error,
             },
             "import_result": None,
             "group_history": None,
-            "next_action": "Refresh Proposal Review; this group is no longer active.",
+            "next_action": "Choose one of: all, promote, suppress, or follow_up.",
             "applied": False,
-            "error": "no active proposals matched this group",
+            "error": route_error,
+        }
+    export, actions = _actions_for_group_key(
+        group_key=safe_group_key,
+        hours=max(hours, 1),
+        limit=max(limit, 1),
+    )
+    actions = _filter_actions_for_group_route(actions, route_key)
+    if not actions:
+        route_label = f" for route {route_key}" if route_key is not None else ""
+        return {
+            "status": "degraded",
+            "group_key": safe_group_key,
+            "action_count": 0,
+            "review_package": {
+                "requested": True,
+                "status": "degraded",
+                "path": str(review_dir) if review_dir is not None else None,
+                "error": f"no active proposals matched this group{route_label}",
+            },
+            "import_result": None,
+            "group_history": None,
+            "next_action": "Refresh Proposal Review; this group or route is no longer active.",
+            "applied": False,
+            "error": f"no active proposals matched this group{route_label}",
         }
     payload = dict(export)
     payload["actions"] = actions
     payload["selected_group"] = {
         "group_key": safe_group_key,
+        "route": route_key or "all",
         "action_count": len(actions),
         "enqueue_requested": enqueue,
     }
@@ -3133,6 +3158,7 @@ def save_action_proposal_group_package(
             error = "review package path missing"
             next_action = "Save the group package again before queueing it."
             event_type = "queue_failed"
+    event_type = _route_event_type(event_type, route_key)
     group_history: ActionProposalGroupHistoryReport | None = None
     try:
         group_history = _record_action_proposal_group_history(
@@ -3166,6 +3192,7 @@ def dismiss_action_proposal_group(
     *,
     group_key: str,
     reason: str,
+    route: str | None = None,
     hours: int = 2,
     limit: int = 25,
     dismissals_path: Path | None = None,
@@ -3184,21 +3211,35 @@ def dismiss_action_proposal_group(
             "applied": False,
             "error": "group_key is required",
         }
-    _, actions = _actions_for_group_key(
-        group_key=safe_group_key,
-        hours=max(hours, 1),
-        limit=max(limit, 1),
-    )
-    if not actions:
+    route_key, route_error = _normalize_action_proposal_group_route(route)
+    if route_error is not None:
         return {
             "status": "degraded",
             "group_key": safe_group_key,
             "dismissed_count": 0,
             "dismissals": [],
             "group_history": None,
-            "next_action": "Refresh Proposal Review; this group is no longer active.",
+            "next_action": "Choose one of: all, promote, suppress, or follow_up.",
             "applied": False,
-            "error": "no active proposals matched this group",
+            "error": route_error,
+        }
+    _, actions = _actions_for_group_key(
+        group_key=safe_group_key,
+        hours=max(hours, 1),
+        limit=max(limit, 1),
+    )
+    actions = _filter_actions_for_group_route(actions, route_key)
+    if not actions:
+        route_label = f" for route {route_key}" if route_key is not None else ""
+        return {
+            "status": "degraded",
+            "group_key": safe_group_key,
+            "dismissed_count": 0,
+            "dismissals": [],
+            "group_history": None,
+            "next_action": "Refresh Proposal Review; this group or route is no longer active.",
+            "applied": False,
+            "error": f"no active proposals matched this group{route_label}",
         }
     dismissals: list[ActionProposalDismissalReport] = []
     error: str | None = None
@@ -3223,7 +3264,9 @@ def dismiss_action_proposal_group(
     try:
         group_history = _record_action_proposal_group_history(
             group_key=safe_group_key,
-            event_type="dismissed" if status == "ok" else "dismiss_failed",
+            event_type=_route_event_type("dismissed", route_key)
+            if status == "ok"
+            else _route_event_type("dismiss_failed", route_key),
             status=status,
             actions=actions,
             dismissed_count=len(dismissals),
@@ -3948,6 +3991,7 @@ MAIL_SUPPRESSION_CUES = (
     "secondary approval",
     "test draft",
 )
+ACTION_PROPOSAL_GROUP_ROUTES = {"promote", "suppress", "follow_up"}
 
 
 def _action_signal_body(action: PersonalOpsActionReport) -> str:
@@ -3955,65 +3999,112 @@ def _action_signal_body(action: PersonalOpsActionReport) -> str:
     return raw if isinstance(raw, str) else ""
 
 
+def _mail_route_category(action: PersonalOpsActionReport) -> str:
+    body = _action_signal_body(action).lower()
+    if any(cue in body for cue in MAIL_PROMOTION_CUES):
+        return "promote"
+    if any(cue in body for cue in MAIL_SUPPRESSION_CUES):
+        return "suppress"
+    return "follow_up"
+
+
+def _normalize_action_proposal_group_route(route: str | None) -> tuple[str | None, str | None]:
+    if route is None:
+        return None, None
+    normalized = route.strip().lower().replace("-", "_")
+    if normalized in {"", "all"}:
+        return None, None
+    normalized = normalized.removesuffix("_candidate")
+    if normalized in ACTION_PROPOSAL_GROUP_ROUTES:
+        return normalized, None
+    return None, f"invalid group route: {route}"
+
+
+def _filter_actions_for_group_route(
+    actions: list[PersonalOpsActionReport],
+    route: str | None,
+) -> list[PersonalOpsActionReport]:
+    if route is None:
+        return actions
+    return [action for action in actions if _mail_route_category(action) == route]
+
+
+def _route_event_type(base_event_type: str, route: str | None) -> str:
+    return f"{base_event_type}_{route}" if route is not None else base_event_type
+
+
 def _mail_route_recommendation(
     actions: list[CoordinationConsoleActionReport],
 ) -> CoordinationProposalRouteRecommendation:
-    promote_count = 0
-    suppress_count = 0
+    promote_action_ids: list[str] = []
+    suppress_action_ids: list[str] = []
+    follow_up_action_ids: list[str] = []
     for item in actions:
-        body = _action_signal_body(item["action"]).lower()
-        if any(cue in body for cue in MAIL_PROMOTION_CUES):
-            promote_count += 1
-        elif any(cue in body for cue in MAIL_SUPPRESSION_CUES):
-            suppress_count += 1
+        action = item["action"]
+        category = _mail_route_category(action)
+        if category == "promote":
+            promote_action_ids.append(action["action_id"])
+        elif category == "suppress":
+            suppress_action_ids.append(action["action_id"])
+        else:
+            follow_up_action_ids.append(action["action_id"])
 
-    follow_up_count = max(len(actions) - promote_count - suppress_count, 0)
-    if promote_count and suppress_count:
+    promote_count = len(promote_action_ids)
+    suppress_count = len(suppress_action_ids)
+    follow_up_count = len(follow_up_action_ids)
+
+    def recommendation(
+        *,
+        decision: str,
+        reason: str,
+        suggested_next_action: str,
+    ) -> CoordinationProposalRouteRecommendation:
         return {
-            "decision": "split_mail_batch",
-            "reason": "This group mixes concrete reply approvals with phase or workflow chatter.",
-            "suggested_next_action": (
-                "Save one review package, promote only the concrete reply candidate after inspection, "
-                "and dismiss the phase/workflow repeats if they are already covered."
-            ),
+            "decision": decision,
+            "reason": reason,
+            "suggested_next_action": suggested_next_action,
             "promote_candidate_count": promote_count,
             "suppress_candidate_count": suppress_count,
             "follow_up_candidate_count": follow_up_count,
+            "promote_candidate_action_ids": promote_action_ids,
+            "suppress_candidate_action_ids": suppress_action_ids,
+            "follow_up_candidate_action_ids": follow_up_action_ids,
         }
+
+    if promote_count and suppress_count:
+        return recommendation(
+            decision="split_mail_batch",
+            reason="This group mixes concrete reply approvals with phase or workflow chatter.",
+            suggested_next_action=(
+                "Save or queue only the concrete reply route after inspection, and dismiss only the "
+                "phase/workflow route if it is already covered."
+            ),
+        )
     if promote_count:
-        return {
-            "decision": "promote_candidate",
-            "reason": "This mail group looks like concrete reply approval work.",
-            "suggested_next_action": (
+        return recommendation(
+            decision="promote_candidate",
+            reason="This mail group looks like concrete reply approval work.",
+            suggested_next_action=(
                 "Save and inspect the package, then promote one reviewed handoff through personal-ops "
                 "only if it maps to a real outbound decision."
             ),
-            "promote_candidate_count": promote_count,
-            "suppress_candidate_count": suppress_count,
-            "follow_up_candidate_count": follow_up_count,
-        }
+        )
     if suppress_count == len(actions):
-        return {
-            "decision": "dismiss_or_suppress",
-            "reason": "This mail group looks like repeated phase or workflow chatter.",
-            "suggested_next_action": (
+        return recommendation(
+            decision="dismiss_or_suppress",
+            reason="This mail group looks like repeated phase or workflow chatter.",
+            suggested_next_action=(
                 "Dismiss the group locally if it is already handled, or add a policy rule in a separate "
                 "policy pass if this pattern should stay hidden."
             ),
-            "promote_candidate_count": promote_count,
-            "suppress_candidate_count": suppress_count,
-            "follow_up_candidate_count": follow_up_count,
-        }
-    return {
-        "decision": "review_mail_batch",
-        "reason": "This mail group needs operator inspection before choosing a route.",
-        "suggested_next_action": (
+        )
+    return recommendation(
+        decision="review_mail_batch",
+        reason="This mail group needs operator inspection before choosing a route.",
+        suggested_next_action=(
             "Save the group package, inspect evidence, then choose follow-up, dismissal, or promotion."
         ),
-        "promote_candidate_count": promote_count,
-        "suppress_candidate_count": suppress_count,
-        "follow_up_candidate_count": follow_up_count,
-    }
+    )
 
 
 def _group_route_recommendation(
