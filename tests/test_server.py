@@ -150,6 +150,7 @@ async def test_review_page_endpoint(client: AsyncClient) -> None:
     assert "Coordination Console" in resp.text
     assert "Burn-In Reports" in resp.text
     assert "Review Sessions" in resp.text
+    assert "Review Session Retention" in resp.text
 
 
 async def test_review_data_endpoint_is_read_only(client: AsyncClient) -> None:
@@ -1391,6 +1392,59 @@ async def test_review_operator_review_session_reports_endpoint_lists_saved_repor
     assert data["applied"] is False
     assert data["reports"][0]["group_history_count"] == 3
     mock_reports.assert_called_once_with(limit=4)
+
+
+async def test_review_operator_review_session_retention_endpoint_is_read_only(
+    client: AsyncClient,
+) -> None:
+    with patch(
+        "notification_hub.server.prune_operator_review_session_reports",
+        return_value={
+            "status": "ok",
+            "report_dir": "/tmp/operator-review-session-reports",
+            "keep": 5,
+            "dry_run": True,
+            "total_count": 7,
+            "kept_count": 5,
+            "candidate_count": 2,
+            "deleted_count": 0,
+            "candidate_reports": [
+                {
+                    "path": "/tmp/operator-review-session-old.json",
+                    "name": "operator-review-session-20260510-091508.json",
+                    "modified_at": "2026-05-10T09:15:08+00:00",
+                    "size_bytes": 200,
+                    "status": "ok",
+                    "generated_at": "2026-05-10T09:15:08+00:00",
+                    "hours": 2,
+                    "group_history_count": 0,
+                    "queue_item_count": 0,
+                    "saved_count": 0,
+                    "queued_count": 0,
+                    "dismissed_count": 0,
+                    "outcome_count": 0,
+                    "reviewed_count": 0,
+                    "active_queue_count": 0,
+                    "pending_promotion_count": 0,
+                    "next_action": "No recent review-session activity found in this window.",
+                }
+            ],
+            "deleted_reports": [],
+            "next_action": "Run again with --apply to delete older review-session reports.",
+            "applied": False,
+            "error": None,
+        },
+    ) as mock_retention:
+        resp = await client.get("/review/operator-review-session-retention?keep=5")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert data["dry_run"] is True
+    assert data["applied"] is False
+    assert data["candidate_count"] == 2
+    assert data["deleted_count"] == 0
+    mock_retention.assert_called_once_with(keep=5, dry_run=True)
 
 
 async def test_review_operator_review_session_report_detail_endpoint_inspects_saved_report(

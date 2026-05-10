@@ -28,6 +28,7 @@ from notification_hub.operations import (
     load_action_review_package_detail,
     load_operator_review_session_report_detail,
     load_personal_ops_queue_burn_in_report_detail,
+    prune_operator_review_session_reports,
     run_action_proposal_dismissal_list,
     run_coordination_console,
     run_coordination_readiness,
@@ -421,6 +422,10 @@ REVIEW_HTML = """<!doctype html>
         <ul id="reviewSessions"></ul>
       </section>
       <section>
+        <h2>Review Session Retention</h2>
+        <ul id="reviewSessionRetention"></ul>
+      </section>
+      <section>
         <h2>Review Session Detail</h2>
         <ul id="reviewSessionDetail"></ul>
       </section>
@@ -476,6 +481,7 @@ REVIEW_HTML = """<!doctype html>
     const dismissals = document.getElementById("dismissals");
     const operatorState = document.getElementById("operatorState");
     const reviewSessions = document.getElementById("reviewSessions");
+    const reviewSessionRetention = document.getElementById("reviewSessionRetention");
     const reviewSessionDetail = document.getElementById("reviewSessionDetail");
     const packageState = document.getElementById("package");
     const packages = document.getElementById("packages");
@@ -599,6 +605,7 @@ REVIEW_HTML = """<!doctype html>
       await loadDismissals();
       await loadOperatorDailyState();
       await loadReviewSessionReports();
+      await loadReviewSessionRetention();
     }
     async function loadCoordinationConsole() {
       const res = await fetch("/review/coordination-console?hours=2&limit=25");
@@ -879,6 +886,7 @@ REVIEW_HTML = """<!doctype html>
       const session = await sessionRes.json();
       renderOperatorState(daily, session);
       await loadReviewSessionReports();
+      await loadReviewSessionRetention();
     }
     async function loadReviewSessionReports() {
       const res = await fetch("/review/operator-review-session-reports?limit=6");
@@ -907,6 +915,20 @@ REVIEW_HTML = """<!doctype html>
       } else {
         empty(reviewSessionDetail, "No review-session report selected.");
       }
+    }
+    async function loadReviewSessionRetention() {
+      const res = await fetch("/review/operator-review-session-retention?keep=20");
+      const data = await res.json();
+      reviewSessionRetention.replaceChildren(
+        item(`<div class="line"><span class="title">Retention</span><span class="meta">${esc(data.status || "unknown")}</span></div>`),
+        item(`<div class="badge-row">
+          ${badge(`total ${data.total_count ?? 0}`)}
+          ${badge(`keep ${data.keep ?? 0}`)}
+          ${warnBadge(`cleanup ${data.candidate_count ?? 0}`, (data.candidate_count ?? 0) > 0)}
+          ${badge(`deleted ${data.deleted_count ?? 0}`)}
+        </div>`),
+        item(`<div class="next">${esc(data.next_action || data.error || "")}</div>`)
+      );
     }
     async function loadReviewSessionDetail(name) {
       if (!name) {
@@ -1683,6 +1705,17 @@ async def review_operator_review_session_reports(limit: int = 10) -> dict[str, o
         "reports": list_operator_review_session_reports(limit=max(limit, 1)),
         "applied": False,
     }
+
+
+@app.get("/review/operator-review-session-retention")
+async def review_operator_review_session_retention(keep: int = 20) -> dict[str, object]:
+    """Summarize saved review-session cleanup pressure without applying work."""
+    report = await asyncio.to_thread(
+        prune_operator_review_session_reports,
+        keep=max(keep, 1),
+        dry_run=True,
+    )
+    return dict(report)
 
 
 @app.get("/review/operator-review-session-report/{name}")

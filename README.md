@@ -148,7 +148,8 @@ the review-session summary shown in `/review`; pass `--save-report` when you wan
 audit report under `~/.local/share/notification-hub/operator-review-session-reports/`. Saved
 review-session reports can be listed and inspected from `/review` for a compact session timeline.
 The operator-review-session-retention command prunes old saved review-session reports; it defaults to
-a dry run and only deletes files when `--apply` is passed.
+a dry run and only deletes files when `--apply` is passed. The `/review` page also shows the same
+retention pressure as a read-only summary, so cleanup stays explicit.
 The operator-handoff-drill command runs the temporary queue lifecycle plus queue burn-in as a
 non-applying rehearsal before using the same review flow for a real handoff.
 Pass `--save-review-package` when you want notification-hub to stage a local review package under
@@ -436,6 +437,7 @@ uv run --frozen notification-hub logs
 curl http://127.0.0.1:9199/review
 curl http://127.0.0.1:9199/review/packages
 curl http://127.0.0.1:9199/review/package/personal-ops-actions-YYYYMMDD-HHMMSS.json
+curl http://127.0.0.1:9199/review/operator-review-session-retention
 curl -X POST http://127.0.0.1:9199/review/package/personal-ops-actions-YYYYMMDD-HHMMSS.json/queue
 curl http://127.0.0.1:9199/review/import-queue
 curl http://127.0.0.1:9199/review/coordination-readiness

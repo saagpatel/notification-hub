@@ -80,7 +80,8 @@ tuning pass.
   `--save-report` or `save_report=true` writes timestamped local JSON audit reports. Saved
   review-session reports can now be listed and inspected from `/review` as a compact session
   timeline, while `operator-review-session-retention` prunes old saved reports after an explicit
-  `--apply`.
+  `--apply`. `/review/operator-review-session-retention` exposes the same cleanup pressure as a
+  read-only dry-run summary.
 - An `operator-handoff-drill` command and `/review/operator-handoff-drill` endpoint now run the
   temporary handoff lifecycle plus queue burn-in as a non-applying rehearsal.
 - The sample policy now includes the repeated `personal-ops` daemon-start and `notion-os`
@@ -306,6 +307,7 @@ uv run --frozen notification-hub operator-review-session-retention --keep 20 --a
 uv run --frozen notification-hub logs
 curl http://127.0.0.1:9199/review
 curl http://127.0.0.1:9199/review/packages
+curl http://127.0.0.1:9199/review/operator-review-session-retention
 curl http://127.0.0.1:9199/review/package/personal-ops-actions-YYYYMMDD-HHMMSS.json
 curl -X POST http://127.0.0.1:9199/review/package/personal-ops-actions-YYYYMMDD-HHMMSS.json/queue
 curl http://127.0.0.1:9199/review/import-queue
@@ -378,6 +380,8 @@ Expected current outcome:
   useful
 - `notification-hub operator-review-session-retention`: shows or applies pruning for older saved
   review-session reports; default mode is dry-run, and deletion requires `--apply`
+- `/review/operator-review-session-retention`: shows saved review-session cleanup pressure without
+  deleting files
 - `notification-hub operator-handoff-drill`: runs the temporary queue lifecycle and queue burn-in
   together without touching the live operator queue
 - `/review/burn-in-reports` and `/review/burn-in-report/{name}`: list and inspect saved queue
