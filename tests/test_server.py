@@ -836,9 +836,7 @@ async def test_review_coordination_console_endpoint_is_read_only(
                     "queue_id": None,
                 }
             ],
-            "next_commands": [
-                "uv run notification-hub personal-ops-actions --save-review-package"
-            ],
+            "next_commands": ["uv run notification-hub personal-ops-actions --save-review-package"],
             "next_action": "Save and validate a review package.",
             "applied": False,
         },
@@ -930,6 +928,8 @@ async def test_review_action_proposal_dismiss_endpoint_persists_dismissal(
                 "dismissal": {
                     "dismissal_key": "proposal:personal-ops:mail:waiting-on-user:abc",
                     "dismissed_at": "2026-05-10T04:41:00+00:00",
+                    "deleted_at": None,
+                    "active": True,
                     "reason": "known test signal",
                     "source": "personal-ops",
                     "project": "mail",
@@ -963,6 +963,130 @@ async def test_review_action_proposal_dismiss_endpoint_persists_dismissal(
         body="Test draft",
         evidence_event_id="event-1",
     )
+
+
+async def test_review_action_proposal_dismissals_endpoint_lists_dismissals(
+    client: AsyncClient,
+) -> None:
+    with patch(
+        "notification_hub.server.run_action_proposal_dismissal_list",
+        return_value={
+            "status": "ok",
+            "path": "/tmp/dismissals.jsonl",
+            "dismissal_count": 1,
+            "dismissals": [
+                {
+                    "dismissal_key": "proposal:abc",
+                    "dismissed_at": "2026-05-10T04:41:00+00:00",
+                    "deleted_at": None,
+                    "active": True,
+                    "reason": "known noise",
+                    "source": "personal-ops",
+                    "project": "mail",
+                    "intent": "waiting_on_user",
+                    "title": "Approval Requested",
+                    "body": "Test draft",
+                    "evidence_event_id": "event-1",
+                }
+            ],
+            "applied": False,
+        },
+    ) as mock_list:
+        resp = await client.get(
+            "/review/action-proposal-dismissals?limit=3&dismissal_key=proposal%3Aabc&include_inactive=true"
+        )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert data["dismissals"][0]["dismissal_key"] == "proposal:abc"
+    assert data["applied"] is False
+    mock_list.assert_called_once_with(
+        limit=3,
+        dismissal_key="proposal:abc",
+        include_inactive=True,
+    )
+
+
+async def test_review_action_proposal_undismiss_endpoint_adds_tombstone(
+    client: AsyncClient,
+) -> None:
+    with patch(
+        "notification_hub.server.undismiss_action_proposal",
+        return_value={
+            "status": "ok",
+            "path": "/tmp/dismissals.jsonl",
+            "dismissal_key": "proposal:abc",
+            "removed": True,
+            "applied": False,
+            "error": None,
+        },
+    ) as mock_undismiss:
+        resp = await client.post(
+            "/review/action-proposal/proposal%3Aabc/undismiss",
+            json={"reason": "useful again"},
+        )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert data["removed"] is True
+    assert data["applied"] is False
+    mock_undismiss.assert_called_once_with(
+        dismissal_key="proposal:abc",
+        reason="useful again",
+    )
+
+
+async def test_review_operator_daily_state_endpoint_is_read_only(client: AsyncClient) -> None:
+    with patch(
+        "notification_hub.server.run_operator_daily_state",
+        return_value={
+            "status": "ok",
+            "generated_at": "2026-05-10T04:50:00+00:00",
+            "hours": 24,
+            "runtime": {"status": "ok"},
+            "queue_health": {"status": "ok", "health": {"queued_count": 0}},
+            "coordination_console": {
+                "status": "ok",
+                "next_signal": {"title": "Waiting for next real signal"},
+            },
+            "burn_in": {"status": "ok"},
+            "dismissals": [],
+            "next_action": "Monitor /review for the next real handoff signal.",
+            "report_file": {"requested": False},
+            "applied": False,
+        },
+    ) as mock_daily_state:
+        resp = await client.get("/review/operator-daily-state?hours=6&limit=3")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert data["applied"] is False
+    mock_daily_state.assert_called_once_with(hours=6, limit=3, save_report=False)
+
+
+async def test_review_operator_handoff_drill_endpoint_is_temporary(client: AsyncClient) -> None:
+    with patch(
+        "notification_hub.server.run_operator_handoff_drill",
+        return_value={
+            "status": "ok",
+            "generated_at": "2026-05-10T04:55:00+00:00",
+            "scenario": {"status": "ok", "queue_id": "queue123"},
+            "queue_burn_in": {"status": "ok", "ready_for_live_promotion": True},
+            "review_steps": ["Open /review and inspect an action proposal."],
+            "next_action": "Use the same operator-mediated lifecycle for the next real handoff.",
+            "applied": False,
+        },
+    ) as mock_drill:
+        resp = await client.post("/review/operator-handoff-drill?save_burn_in_report=true")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert data["applied"] is False
+    mock_drill.assert_called_once_with(save_burn_in_report=True)
 
 
 async def test_review_import_queue_patch_updates_lifecycle(client: AsyncClient) -> None:

@@ -13,10 +13,11 @@ notification-hub is a localhost-only coordination sidecar. It collects local wor
 - Queue-health reporting for queued age, pending promotion outcome sync, and stale pending outcomes.
 - Queue burn-in reporting that combines queue health, a temporary lifecycle scenario, and recent runtime noise without applying work.
 - Timestamped local burn-in report artifacts for operator-reviewed queue checks.
+- Timestamped local operator state reports for resume-ready daily snapshots.
 - Review access to saved burn-in report history so expansion decisions can be based on local evidence.
 - Coordination-readiness reporting that turns local runtime, queue, and saved burn-in evidence into a deterministic expansion decision.
-- A compact coordination console summary that keeps readiness, proposal lineage, queue state, outcome reminders, burn-in history, operator guide steps, and next action read-only.
-- Local review UI and API endpoints that inspect, queue, and mark handoff state without applying personal-ops work.
+- A compact coordination console summary that keeps readiness, proposal lineage, queue state, outcome reminders, burn-in history, operator guide steps, next signal, and next action read-only.
+- Local review UI and API endpoints that inspect, queue, mark handoff state, audit proposal dismissals, and run temporary handoff drills without applying personal-ops work.
 
 ## personal-ops Owns
 

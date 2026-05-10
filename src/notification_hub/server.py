@@ -25,14 +25,18 @@ from notification_hub.operations import (
     list_personal_ops_queue_burn_in_reports,
     load_action_review_package_detail,
     load_personal_ops_queue_burn_in_report_detail,
+    run_action_proposal_dismissal_list,
     run_coordination_console,
     run_coordination_readiness,
     run_inbox,
+    run_operator_daily_state,
+    run_operator_handoff_drill,
     run_personal_ops_action_export,
     run_personal_ops_import_queue_health_check,
     run_personal_ops_import_stub,
     run_personal_ops_outcome_sync_reminder,
     run_retention,
+    undismiss_action_proposal,
     update_personal_ops_import_queue_item,
     validate_action_package,
 )
@@ -355,6 +359,7 @@ REVIEW_HTML = """<!doctype html>
       <div class="actions">
         <button id="savePackage" type="button">Save package</button>
         <button id="validatePackage" type="button">Validate package</button>
+        <button id="runDrill" type="button">Run drill</button>
         <button id="refresh" type="button">Refresh</button>
       </div>
     </header>
@@ -370,6 +375,10 @@ REVIEW_HTML = """<!doctype html>
     <section class="focus">
       <h2>Coordination Console</h2>
       <ul id="coordinationConsole"></ul>
+    </section>
+    <section class="focus">
+      <h2>Next Signal</h2>
+      <ul id="nextSignal"></ul>
     </section>
     <div class="grid">
       <section>
@@ -387,6 +396,14 @@ REVIEW_HTML = """<!doctype html>
       <section class="trust">
         <h2>Trust Boundary</h2>
         <ul id="trust"></ul>
+      </section>
+      <section>
+        <h2>Dismissals</h2>
+        <ul id="dismissals"></ul>
+      </section>
+      <section>
+        <h2>Operator State</h2>
+        <ul id="operatorState"></ul>
       </section>
       <section>
         <h2>Review Package</h2>
@@ -431,10 +448,13 @@ REVIEW_HTML = """<!doctype html>
     const operatorFocus = document.getElementById("operatorFocus");
     const coordinationReadiness = document.getElementById("coordinationReadiness");
     const coordinationConsole = document.getElementById("coordinationConsole");
+    const nextSignal = document.getElementById("nextSignal");
     const actions = document.getElementById("actions");
     const rollups = document.getElementById("rollups");
     const attention = document.getElementById("attention");
     const trust = document.getElementById("trust");
+    const dismissals = document.getElementById("dismissals");
+    const operatorState = document.getElementById("operatorState");
     const packageState = document.getElementById("package");
     const packages = document.getElementById("packages");
     const packageDetail = document.getElementById("packageDetail");
@@ -554,6 +574,8 @@ REVIEW_HTML = """<!doctype html>
       await loadBurnInReports();
       await loadImportQueue();
       await loadCoordinationConsole();
+      await loadDismissals();
+      await loadOperatorDailyState();
     }
     async function loadCoordinationConsole() {
       const res = await fetch("/review/coordination-console?hours=2&limit=5");
@@ -561,6 +583,7 @@ REVIEW_HTML = """<!doctype html>
       const readiness = data.readiness || {};
       const queue = data.queue_health || {};
       const reminder = data.outcome_sync_reminder || {};
+      const signal = data.next_signal || {};
       const guideSteps = data.guide_steps || [];
       const guideRows = guideSteps.slice(0, 4).map(step => item(`
         <div class="line"><span class="title">${esc(step.step)}. ${esc(step.title)}</span><span class="meta">${esc(step.status)}</span></div>
@@ -583,6 +606,16 @@ REVIEW_HTML = """<!doctype html>
         <div class="next"><strong>Guide</strong>: ${esc(data.guide_stage || "unknown")}</div>
         <div class="next">${esc(data.next_action || "")}</div>
       `), ...(guideRows.length ? guideRows : [item(`<div class="next">No guide steps.</div>`)]));
+      nextSignal.replaceChildren(item(`
+        <div class="line"><span class="title">${esc(signal.title || "Next signal")}</span><span class="meta">${esc(signal.status || "unknown")}</span></div>
+        <div class="badge-row">
+          ${badge(`hidden ${signal.hidden_action_count ?? 0}`)}
+          ${badge(`dismissed ${signal.dismissed_count ?? 0}`)}
+          ${badge(`policy-covered ${signal.policy_covered_repeated_count ?? 0}`)}
+        </div>
+        <div class="next">${esc(signal.summary || "")}</div>
+        <div class="next">${esc(signal.next_action || "")}</div>
+      `));
     }
     async function dismissActionProposal(dismissalKey) {
       if (!dismissalKey) {
@@ -599,6 +632,65 @@ REVIEW_HTML = """<!doctype html>
         item(`<div class="next">${esc(data.next_action || data.error || "")}</div>`)
       );
       await load();
+    }
+    async function loadDismissals() {
+      const res = await fetch("/review/action-proposal-dismissals?limit=10");
+      const data = await res.json();
+      renderList(dismissals, data.dismissals, d => item(`
+        <div class="line"><span class="title">${esc(d.title || d.dismissal_key)}</span><span class="meta">${d.active ? "active" : "inactive"}</span></div>
+        <div class="next">${esc(d.reason || "")}</div>
+        <div class="next">${esc(d.dismissal_key)}</div>
+        <div class="button-row">
+          <button type="button" data-undismiss-key="${esc(d.dismissal_key)}">Undismiss</button>
+        </div>
+      `), "No active dismissals.");
+      dismissals.querySelectorAll("button[data-undismiss-key]").forEach(button => {
+        button.addEventListener("click", () => undismissActionProposal(button.dataset.undismissKey));
+      });
+    }
+    async function undismissActionProposal(dismissalKey) {
+      if (!dismissalKey) {
+        return;
+      }
+      const res = await fetch(`/review/action-proposal/${encodeURIComponent(dismissalKey)}/undismiss`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: "Review UI reactivated this proposal." })
+      });
+      const data = await res.json();
+      packageDetail.replaceChildren(
+        item(`<div class="line"><span class="title">Undismiss proposal</span><span class="meta">${esc(data.status)}</span></div>`),
+        item(`<div class="next">${esc(data.next_action || data.error || "")}</div>`)
+      );
+      await load();
+    }
+    async function loadOperatorDailyState() {
+      const res = await fetch("/review/operator-daily-state?hours=24&limit=5");
+      const data = await res.json();
+      const queue = (data.queue_health || {}).health || {};
+      const signal = ((data.coordination_console || {}).next_signal) || {};
+      operatorState.replaceChildren(
+        item(`<div class="line"><span class="title">Daily state</span><span class="meta">${esc(data.status)}</span></div>`),
+        item(`<div class="badge-row">
+          ${badge(`runtime ${(data.runtime || {}).status || "unknown"}`)}
+          ${warnBadge(`queued ${queue.queued_count ?? 0}`, (queue.queued_count ?? 0) > 0)}
+          ${warnBadge(`pending ${queue.promoted_pending_count ?? 0}`, (queue.promoted_pending_count ?? 0) > 0)}
+          ${badge(`dismissals ${(data.dismissals || []).length}`)}
+        </div>`),
+        item(`<div class="next"><strong>Next signal</strong>: ${esc(signal.title || "unknown")}</div>`),
+        item(`<div class="next">${esc(data.next_action || "")}</div>`)
+      );
+    }
+    async function runHandoffDrill() {
+      const res = await fetch("/review/operator-handoff-drill", { method: "POST" });
+      const data = await res.json();
+      operatorState.replaceChildren(
+        item(`<div class="line"><span class="title">Handoff drill</span><span class="meta">${esc(data.status)}</span></div>`),
+        item(`<div class="next">Scenario: ${esc((data.scenario || {}).status || "unknown")}</div>`),
+        item(`<div class="next">Burn-in: ${esc((data.queue_burn_in || {}).status || "unknown")}</div>`),
+        item(`<div class="next">${esc(data.next_action || "")}</div>`)
+      );
+      await loadCoordinationConsole();
     }
     function renderPackage(state) {
       packageState.replaceChildren(
@@ -848,6 +940,7 @@ REVIEW_HTML = """<!doctype html>
     importQueueFilter.addEventListener("change", loadImportQueue);
     document.getElementById("savePackage").addEventListener("click", () => post("/review/save-package"));
     document.getElementById("validatePackage").addEventListener("click", () => post("/review/validate-package"));
+    document.getElementById("runDrill").addEventListener("click", runHandoffDrill);
     load().catch(err => {
       summary.replaceChildren(item(`<span class="empty">Unable to load review data: ${err}</span>`));
     });
@@ -1131,11 +1224,7 @@ async def review_dismiss_action_proposal(dismissal_key: str, request: Request) -
         include_dismissed=True,
     )
     matched = next(
-        (
-            action
-            for action in actions["actions"]
-            if action["dismissal_key"] == dismissal_key
-        ),
+        (action for action in actions["actions"] if action["dismissal_key"] == dismissal_key),
         None,
     )
     report = dismiss_action_proposal(
@@ -1152,6 +1241,72 @@ async def review_dismiss_action_proposal(dismissal_key: str, request: Request) -
         **dict(report),
         "next_action": "Proposal dismissed from the local console. Future matching proposals stay hidden until the dismissal file is edited.",
     }
+
+
+@app.get("/review/action-proposal-dismissals")
+async def review_action_proposal_dismissals(
+    limit: int = 25,
+    dismissal_key: str | None = None,
+    include_inactive: bool = False,
+) -> dict[str, object]:
+    """List local action proposal dismissals without applying work."""
+    report = await asyncio.to_thread(
+        run_action_proposal_dismissal_list,
+        limit=max(limit, 1),
+        dismissal_key=dismissal_key,
+        include_inactive=include_inactive,
+    )
+    return dict(report)
+
+
+@app.post("/review/action-proposal/{dismissal_key}/undismiss")
+async def review_undismiss_action_proposal(
+    dismissal_key: str,
+    request: Request,
+) -> dict[str, object]:
+    """Reactivate one dismissed proposal without deleting dismissal history."""
+    try:
+        raw_body = await request.json()
+    except ValueError:
+        raw_body = {}
+    body = cast(dict[str, object], raw_body) if isinstance(raw_body, dict) else {}
+    reason_value = body.get("reason")
+    reason = (
+        reason_value
+        if isinstance(reason_value, str) and reason_value.strip()
+        else "Review UI reactivated this proposal."
+    )
+    report = undismiss_action_proposal(dismissal_key=dismissal_key, reason=reason)
+    return {
+        **dict(report),
+        "next_action": "Proposal reactivated. Matching future proposals can appear in the local console again.",
+    }
+
+
+@app.get("/review/operator-daily-state")
+async def review_operator_daily_state(
+    hours: int = 24,
+    limit: int = 10,
+    save_report: bool = False,
+) -> dict[str, object]:
+    """Build a resume-ready operator state snapshot without applying work."""
+    report = await asyncio.to_thread(
+        run_operator_daily_state,
+        hours=max(hours, 1),
+        limit=max(limit, 1),
+        save_report=save_report,
+    )
+    return dict(report)
+
+
+@app.post("/review/operator-handoff-drill")
+async def review_operator_handoff_drill(save_burn_in_report: bool = False) -> dict[str, object]:
+    """Run a temporary handoff lifecycle drill without touching the live queue."""
+    report = await asyncio.to_thread(
+        run_operator_handoff_drill,
+        save_burn_in_report=save_burn_in_report,
+    )
+    return dict(report)
 
 
 @app.get("/review/outcome-sync-reminder")

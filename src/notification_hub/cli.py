@@ -887,7 +887,9 @@ def _print_personal_ops_action_export_report(report: PersonalOpsActionExportRepo
             f"{action['source']}{project}: {action['title']} x{action['count']}"
         )
         print(f"    next: {action['suggested_next_action']}")
-        print(f"    dismiss: uv run notification-hub action-proposal-dismiss {action['dismissal_key']}")
+        print(
+            f"    dismiss: uv run notification-hub action-proposal-dismiss {action['dismissal_key']}"
+        )
 
 
 def _print_action_proposal_dismiss_report(report: ActionProposalDismissReport) -> None:
@@ -936,7 +938,9 @@ def _print_operator_daily_state_report(report: OperatorDailyStateReport) -> None
     print(f"- window: {report['hours']} hours")
     print(f"- runtime: {report['runtime']['status']}")
     print(f"- queue: {queue['status']}")
-    print(f"- queued/pending/stale: {queue['queued_count']}/{queue['promoted_pending_count']}/{queue['promoted_pending_stale_count']}")
+    print(
+        f"- queued/pending/stale: {queue['queued_count']}/{queue['promoted_pending_count']}/{queue['promoted_pending_stale_count']}"
+    )
     print(f"- next signal: {console['next_signal']['title']} ({console['next_signal']['status']})")
     print(f"- active actions: {console['active_action_count']}")
     print(f"- dismissals: {len(report['dismissals'])}")
