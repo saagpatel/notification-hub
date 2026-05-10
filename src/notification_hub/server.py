@@ -706,6 +706,7 @@ REVIEW_HTML = """<!doctype html>
           ${warnBadge(`queued ${review.queued_count ?? 0}`, (review.queued_count ?? 0) > 0)}
           ${warnBadge(`promoted ${review.promoted_count ?? 0}`, (review.promoted_count ?? 0) > 0)}
           ${badge(`reviewed-only ${review.reviewed_only_count ?? 0}`)}
+          ${badge(`follow-up ${review.follow_up_count ?? 0}`)}
           ${badge(`resolved ${review.resolved_count ?? 0}`)}
           ${badge(`closed ${review.ignored_count ?? 0}`)}
           ${badge(`handled ${review.handled_count ?? 0}`)}

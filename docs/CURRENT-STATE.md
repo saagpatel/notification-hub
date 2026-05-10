@@ -37,11 +37,11 @@ tuning pass.
   applied changes.
 - Queued personal-ops handoffs now have explicit lifecycle states: queued, reviewed, rejected,
   snoozed, superseded, and promoted. Queue health is visible in status and runtime verification.
-- The Coordination Console now treats reviewed and snoozed handoffs as handled history instead of
-  active lifecycle blockers once queue health is clean.
-- Proposal Review now splits handled history into reviewed-only, resolved, closed, and snoozed
-  counts, so intentionally reviewed-but-not-promoted handoffs are visible without looking like
-  unfinished promotion work.
+- The Coordination Console now treats reviewed, follow-up, and snoozed handoffs as handled history
+  instead of active lifecycle blockers once queue health is clean.
+- Proposal Review now splits handled history into reviewed-only, follow-up, resolved, closed, and
+  snoozed counts, so intentionally reviewed-but-not-promoted or follow-up-only handoffs are visible
+  without looking like unfinished promotion work.
 - The first real operator-mediated promotion proof has completed, and the current live queue has no
   queued, pending, or stale promoted handoff outcomes.
 - Queue maintenance now has dedicated `personal-ops-queue-health` and `personal-ops-queue-review`
@@ -73,6 +73,11 @@ tuning pass.
   state after a save, queue, dismiss, or explicit local outcome decision. Queued or promoted-pending
   handoffs now remain the console's next action until their local queue lifecycle is resolved, even
   when the readiness gate is also warning.
+- Proposal groups with a latest `needs_follow_up` outcome now remain visible as handled follow-up
+  history instead of resurfacing as fresh active proposals. Save-only package inspection does not
+  reopen those groups; stable proposal keys keep repeated rollups in follow-up even when their
+  newest event IDs rotate. Queueing, promotion, dismissal, or a different proposal key can still
+  move the lifecycle.
 - Action proposal export now scans a deeper candidate set than the display limit, so dismissed or
   policy-covered rollups cannot crowd out real lower-ranked operator signals from the default view.
 - Action proposal dismissals can now be listed, inspected, and undismissed through CLI and `/review`
@@ -273,6 +278,9 @@ tuning pass.
   evidence and appear in CLI, JSON, and `/review` lifecycle summaries.
 - Added local Proposal Review group outcomes so grouped work can be marked `accepted`, `rejected`,
   `snoozed`, `superseded`, or `needs_follow_up` without applying downstream work.
+- Added first-class follow-up lineage in Coordination Console so `needs_follow_up` outcomes are
+  counted as handled follow-up history rather than new active proposal work, including repeated
+  rollups whose newest event IDs rotate under the same stable proposal key.
 - Added advisory mail route recommendations to Proposal Review so mixed mail approval batches show
   whether they contain promote candidates, suppression candidates, or follow-up-only items.
 - Added route-aware Proposal Review actions so a mixed mail batch can be split into local promote,
