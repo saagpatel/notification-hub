@@ -64,6 +64,8 @@ uv run notification-hub action-proposal-group-outcome GROUP_KEY --outcome needs_
 uv run notification-hub operator-daily-state
 uv run notification-hub operator-review-session
 uv run notification-hub operator-review-session --save-report
+uv run notification-hub operator-review-session-retention --keep 20
+uv run notification-hub operator-review-session-retention --keep 20 --apply
 uv run notification-hub operator-handoff-drill
 uv run notification-hub personal-ops-actions --save-review-package
 uv run notification-hub validate-action-package path/to/actions.json
@@ -145,6 +147,8 @@ proposal saves, queues, dismissals, outcomes, and queue follow-through. It is re
 the review-session summary shown in `/review`; pass `--save-report` when you want a timestamped JSON
 audit report under `~/.local/share/notification-hub/operator-review-session-reports/`. Saved
 review-session reports can be listed and inspected from `/review` for a compact session timeline.
+The operator-review-session-retention command prunes old saved review-session reports; it defaults to
+a dry run and only deletes files when `--apply` is passed.
 The operator-handoff-drill command runs the temporary queue lifecycle plus queue burn-in as a
 non-applying rehearsal before using the same review flow for a real handoff.
 Pass `--save-review-package` when you want notification-hub to stage a local review package under
@@ -425,6 +429,8 @@ uv run --frozen notification-hub personal-ops-queue-scenario
 uv run --frozen notification-hub operator-daily-state
 uv run --frozen notification-hub operator-review-session
 uv run --frozen notification-hub operator-review-session --save-report
+uv run --frozen notification-hub operator-review-session-retention --keep 20
+uv run --frozen notification-hub operator-review-session-retention --keep 20 --apply
 uv run --frozen notification-hub operator-handoff-drill
 uv run --frozen notification-hub logs
 curl http://127.0.0.1:9199/review

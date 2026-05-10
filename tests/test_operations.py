@@ -38,6 +38,7 @@ from notification_hub.operations import (
     load_action_review_package_detail,
     load_operator_review_session_report_detail,
     load_personal_ops_queue_burn_in_report_detail,
+    prune_operator_review_session_reports,
     run_action_proposal_dismissal_list,
     run_burn_in,
     run_coordination_console,
@@ -1572,6 +1573,55 @@ def test_list_and_load_operator_review_session_reports(tmp_path: Path) -> None:
     assert detail["report"]["applied"] is False
     assert invalid["status"] == "degraded"
     assert invalid["error"] == "invalid review-session report name"
+
+
+def test_prune_operator_review_session_reports_keeps_newest(tmp_path: Path) -> None:
+    report_dir = tmp_path / "reports"
+    report_dir.mkdir()
+    payload: dict[str, object] = {
+        "schema_version": "notification-hub.operator_review_session.v1",
+        "generated_at": "2026-05-10T09:15:08+00:00",
+        "report": {
+            "status": "ok",
+            "hours": 2,
+            "group_history_count": 0,
+            "queue_item_count": 0,
+            "saved_count": 0,
+            "queued_count": 0,
+            "dismissed_count": 0,
+            "outcome_count": 0,
+            "reviewed_count": 0,
+            "active_queue_count": 0,
+            "pending_promotion_count": 0,
+            "next_action": "No recent review-session activity found in this window.",
+            "applied": False,
+        },
+    }
+    paths = [
+        report_dir / "operator-review-session-20260510-091508.json",
+        report_dir / "operator-review-session-20260510-091608.json",
+        report_dir / "operator-review-session-20260510-091708.json",
+    ]
+    for index, path in enumerate(paths):
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        os.utime(path, (100 + index, 100 + index))
+
+    dry_run = prune_operator_review_session_reports(report_dir=report_dir, keep=2)
+
+    assert dry_run["status"] == "ok"
+    assert dry_run["dry_run"] is True
+    assert dry_run["applied"] is False
+    assert dry_run["candidate_count"] == 1
+    assert dry_run["deleted_count"] == 0
+    assert paths[0].exists()
+    applied = prune_operator_review_session_reports(report_dir=report_dir, keep=2, dry_run=False)
+    assert applied["status"] == "ok"
+    assert applied["applied"] is True
+    assert applied["candidate_count"] == 1
+    assert applied["deleted_count"] == 1
+    assert not paths[0].exists()
+    assert paths[1].exists()
+    assert paths[2].exists()
 
 
 def test_action_proposal_group_dismisses_each_current_match(tmp_path: Path) -> None:

@@ -284,6 +284,22 @@ class OperatorReviewSessionReportDetail(TypedDict):
     error: str | None
 
 
+class OperatorReviewSessionRetentionReport(TypedDict):
+    status: str
+    report_dir: str
+    keep: int
+    dry_run: bool
+    total_count: int
+    kept_count: int
+    candidate_count: int
+    deleted_count: int
+    candidate_reports: list[OperatorReviewSessionReportSummary]
+    deleted_reports: list[OperatorReviewSessionReportSummary]
+    next_action: str
+    applied: bool
+    error: str | None
+
+
 class PersonalOpsActionExportReport(TypedDict):
     status: str
     schema_version: str
@@ -2069,6 +2085,66 @@ def load_operator_review_session_report_detail(
             "applied": False,
             "error": str(exc),
         }
+
+
+def prune_operator_review_session_reports(
+    *,
+    report_dir: Path | None = None,
+    keep: int = 20,
+    dry_run: bool = True,
+) -> OperatorReviewSessionRetentionReport:
+    """Prune older saved review-session reports after the newest kept set."""
+    target_dir = report_dir or OPERATOR_REVIEW_SESSION_REPORT_DIR
+    safe_keep = max(keep, 1)
+    reports = list_operator_review_session_reports(report_dir=target_dir, limit=10_000)
+    candidate_reports = reports[safe_keep:]
+    deleted_reports: list[OperatorReviewSessionReportSummary] = []
+    error: str | None = None
+    status = "ok"
+
+    if not dry_run:
+        for report in candidate_reports:
+            path = Path(report["path"])
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                continue
+            except OSError as exc:
+                status = "degraded"
+                error = str(exc)
+                break
+            deleted_reports.append(report)
+
+    if dry_run:
+        next_action = (
+            "Run again with --apply to delete older review-session reports."
+            if candidate_reports
+            else "No review-session reports need pruning."
+        )
+    elif status == "ok":
+        next_action = (
+            "Older review-session reports were pruned."
+            if deleted_reports
+            else "No review-session reports needed pruning."
+        )
+    else:
+        next_action = "Fix the report deletion error, then rerun retention."
+
+    return {
+        "status": status,
+        "report_dir": str(target_dir),
+        "keep": safe_keep,
+        "dry_run": dry_run,
+        "total_count": len(reports),
+        "kept_count": min(len(reports), safe_keep),
+        "candidate_count": len(candidate_reports),
+        "deleted_count": len(deleted_reports),
+        "candidate_reports": candidate_reports,
+        "deleted_reports": deleted_reports,
+        "next_action": next_action,
+        "applied": not dry_run,
+        "error": error,
+    }
 
 
 def summarize_personal_ops_import_queue(

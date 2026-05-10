@@ -79,7 +79,8 @@ tuning pass.
   queue follow-through. The `/review` Operator State panel shows this alongside the daily state, and
   `--save-report` or `save_report=true` writes timestamped local JSON audit reports. Saved
   review-session reports can now be listed and inspected from `/review` as a compact session
-  timeline.
+  timeline, while `operator-review-session-retention` prunes old saved reports after an explicit
+  `--apply`.
 - An `operator-handoff-drill` command and `/review/operator-handoff-drill` endpoint now run the
   temporary handoff lifecycle plus queue burn-in as a non-applying rehearsal.
 - The sample policy now includes the repeated `personal-ops` daemon-start and `notion-os`
@@ -300,6 +301,8 @@ uv run --frozen notification-hub personal-ops-queue-burn-in --save-report
 uv run --frozen notification-hub personal-ops-queue-scenario
 uv run --frozen notification-hub operator-review-session
 uv run --frozen notification-hub operator-review-session --save-report
+uv run --frozen notification-hub operator-review-session-retention --keep 20
+uv run --frozen notification-hub operator-review-session-retention --keep 20 --apply
 uv run --frozen notification-hub logs
 curl http://127.0.0.1:9199/review
 curl http://127.0.0.1:9199/review/packages
@@ -325,7 +328,7 @@ uv run --frozen notification-hub retention --max-events 2000
 
 Expected current outcome:
 
-- `pytest`: 345 passed
+- `pytest`: 346 passed
 - `ruff`: clean
 - `pyright`: 0 errors
 - `/health/details`: `status: ok`, watcher active, push available, Slack configured
@@ -373,6 +376,8 @@ Expected current outcome:
 - `notification-hub operator-review-session`: summarizes recent local review-session activity
   without applying work; `--save-report` writes a local JSON audit report when durable evidence is
   useful
+- `notification-hub operator-review-session-retention`: shows or applies pruning for older saved
+  review-session reports; default mode is dry-run, and deletion requires `--apply`
 - `notification-hub operator-handoff-drill`: runs the temporary queue lifecycle and queue burn-in
   together without touching the live operator queue
 - `/review/burn-in-reports` and `/review/burn-in-report/{name}`: list and inspect saved queue

@@ -40,6 +40,7 @@ notification-hub-action-proposal-dismissals = "notification_hub.cli:action_propo
 notification-hub-action-proposal-undismiss = "notification_hub.cli:action_proposal_undismiss_main"
 notification-hub-operator-daily-state = "notification_hub.cli:operator_daily_state_main"
 notification-hub-operator-review-session = "notification_hub.cli:operator_review_session_main"
+notification-hub-operator-review-session-retention = "notification_hub.cli:operator_review_session_retention_main"
 notification-hub-operator-handoff-drill = "notification_hub.cli:operator_handoff_drill_main"
 notification-hub-personal-ops-import = "notification_hub.cli:personal_ops_import_main"
 notification-hub-personal-ops-queue-health = "notification_hub.cli:personal_ops_queue_health_main"
