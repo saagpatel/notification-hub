@@ -358,6 +358,50 @@ def _build_parser(prog: str = "notification-hub") -> argparse.ArgumentParser:
         help="Emit the dismissal report as JSON.",
     )
 
+    action_proposal_dismissals = subparsers.add_parser(
+        "action-proposal-dismissals",
+        help="List or inspect local action proposal dismissals.",
+    )
+    action_proposal_dismissals.add_argument(
+        "--limit",
+        type=int,
+        default=25,
+        help="Maximum dismissals to show.",
+    )
+    action_proposal_dismissals.add_argument(
+        "--dismissal-key",
+        help="Inspect one dismissal key.",
+    )
+    action_proposal_dismissals.add_argument(
+        "--include-inactive",
+        action="store_true",
+        help="Include undismissed dismissal history.",
+    )
+    action_proposal_dismissals.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the dismissal list report as JSON.",
+    )
+
+    action_proposal_undismiss = subparsers.add_parser(
+        "action-proposal-undismiss",
+        help="Reactivate a repeated action proposal by adding an undismiss tombstone.",
+    )
+    action_proposal_undismiss.add_argument(
+        "dismissal_key",
+        help="Stable dismissal key to remove from active dismissals.",
+    )
+    action_proposal_undismiss.add_argument(
+        "--reason",
+        default="undismissed by operator",
+        help="Operator note explaining why this dismissal should be removed.",
+    )
+    action_proposal_undismiss.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the undismiss report as JSON.",
+    )
+
     personal_ops_import = subparsers.add_parser(
         "personal-ops-import",
         help="Validate a personal-ops action package and stop before mutation.",

@@ -133,6 +133,8 @@ class PersonalOpsActionReport(TypedDict):
 class ActionProposalDismissalReport(TypedDict):
     dismissal_key: str
     dismissed_at: str
+    deleted_at: str | None
+    active: bool
     reason: str
     source: str | None
     project: str | None
@@ -146,6 +148,23 @@ class ActionProposalDismissReport(TypedDict):
     status: str
     path: str
     dismissal: ActionProposalDismissalReport | None
+    applied: bool
+    error: str | None
+
+
+class ActionProposalDismissalListReport(TypedDict):
+    status: str
+    path: str
+    dismissal_count: int
+    dismissals: list[ActionProposalDismissalReport]
+    applied: bool
+
+
+class ActionProposalUndismissReport(TypedDict):
+    status: str
+    path: str
+    dismissal_key: str
+    removed: bool
     applied: bool
     error: str | None
 
@@ -535,6 +554,19 @@ class CoordinationConsoleGuideStep(TypedDict):
     queue_id: str | None
 
 
+class CoordinationNextSignalReport(TypedDict):
+    status: str
+    title: str
+    summary: str
+    qualifying_intents: list[str]
+    hidden_action_count: int
+    dismissed_count: int
+    policy_covered_repeated_count: int
+    policy_covered_signatures: list[RepeatedSignatureReport]
+    dismissed_proposals: list[ActionProposalDismissalReport]
+    next_action: str
+
+
 class CoordinationConsoleReport(TypedDict):
     status: str
     readiness: CoordinationReadinessReport
@@ -545,6 +577,7 @@ class CoordinationConsoleReport(TypedDict):
     actions: list[CoordinationConsoleActionReport]
     handled_actions: list[CoordinationConsoleActionReport]
     dismissals: list[ActionProposalDismissalReport]
+    next_signal: CoordinationNextSignalReport
     queue_health: PersonalOpsImportQueueHealthReport
     queued_items: list[PersonalOpsImportQueueItemReport]
     pending_promotion_items: list[PersonalOpsImportQueueItemReport]
@@ -557,10 +590,35 @@ class CoordinationConsoleReport(TypedDict):
     applied: bool
 
 
+class OperatorDailyStateReport(TypedDict):
+    status: str
+    generated_at: str
+    hours: int
+    runtime: StatusReport
+    queue_health: PersonalOpsImportQueueHealthCheckReport
+    coordination_console: CoordinationConsoleReport
+    burn_in: BurnInReport
+    dismissals: list[ActionProposalDismissalReport]
+    next_action: str
+    report_file: dict[str, object]
+    applied: bool
+
+
+class OperatorHandoffDrillReport(TypedDict):
+    status: str
+    generated_at: str
+    scenario: PersonalOpsQueueScenarioReport
+    queue_burn_in: PersonalOpsQueueBurnInReport
+    review_steps: list[str]
+    next_action: str
+    applied: bool
+
+
 DEFAULT_BRIDGE_DB_PATH = Path.home() / ".local" / "share" / "bridge-db" / "bridge.db"
 BRIDGE_SNAPSHOT_RETENTION_PER_SYSTEM = 10
 ACTION_EXPORT_DIR = EVENTS_DIR / "action-exports"
 BURN_IN_REPORT_DIR = EVENTS_DIR / "burn-in-reports"
+OPERATOR_STATE_REPORT_DIR = EVENTS_DIR / "operator-state-reports"
 PERSONAL_OPS_IMPORT_QUEUE = EVENTS_DIR / "personal-ops-import-queue.jsonl"
 ACTION_PROPOSAL_DISMISSALS = EVENTS_DIR / "action-proposal-dismissals.jsonl"
 ACTION_EXPORT_SCHEMA_VERSION = "notification-hub.personal_ops_action_export.v1"
@@ -637,12 +695,15 @@ def _jsonl_append(path: Path, record: dict[str, object]) -> None:
 
 def _dismissal_report(raw: dict[str, object]) -> ActionProposalDismissalReport | None:
     dismissal_key = _as_str(raw.get("dismissal_key"))
-    dismissed_at = _as_str(raw.get("dismissed_at"))
+    deleted_at = _as_str(raw.get("deleted_at"))
+    dismissed_at = _as_str(raw.get("dismissed_at")) or deleted_at
     if dismissal_key is None or dismissed_at is None:
         return None
     return {
         "dismissal_key": dismissal_key,
         "dismissed_at": dismissed_at,
+        "deleted_at": deleted_at,
+        "active": deleted_at is None,
         "reason": _as_str(raw.get("reason")) or "",
         "source": _as_str(raw.get("source")),
         "project": _as_str(raw.get("project")),
@@ -654,7 +715,10 @@ def _dismissal_report(raw: dict[str, object]) -> ActionProposalDismissalReport |
 
 
 def list_action_proposal_dismissals(
-    *, limit: int = 25, dismissals_path: Path | None = None
+    *,
+    limit: int = 25,
+    dismissals_path: Path | None = None,
+    include_inactive: bool = False,
 ) -> list[ActionProposalDismissalReport]:
     """Return latest proposal dismissals first."""
     path = dismissals_path or ACTION_PROPOSAL_DISMISSALS
@@ -665,10 +729,37 @@ def list_action_proposal_dismissals(
         if report is None or report["dismissal_key"] in seen:
             continue
         seen.add(report["dismissal_key"])
+        if not include_inactive and not report["active"]:
+            continue
         records.append(report)
         if len(records) >= max(limit, 1):
             break
     return records
+
+
+def run_action_proposal_dismissal_list(
+    *,
+    limit: int = 25,
+    dismissal_key: str | None = None,
+    include_inactive: bool = False,
+    dismissals_path: Path | None = None,
+) -> ActionProposalDismissalListReport:
+    """List or inspect local proposal dismissals without applying work."""
+    path = dismissals_path or ACTION_PROPOSAL_DISMISSALS
+    dismissals = list_action_proposal_dismissals(
+        limit=10_000 if dismissal_key else max(limit, 1),
+        dismissals_path=dismissals_path,
+        include_inactive=include_inactive,
+    )
+    if dismissal_key:
+        dismissals = [item for item in dismissals if item["dismissal_key"] == dismissal_key]
+    return {
+        "status": "ok",
+        "path": str(path),
+        "dismissal_count": len(dismissals),
+        "dismissals": dismissals[: max(limit, 1)],
+        "applied": False,
+    }
 
 
 def _active_action_proposal_dismissals(
@@ -709,6 +800,8 @@ def dismiss_action_proposal(
     dismissal: ActionProposalDismissalReport = {
         "dismissal_key": key,
         "dismissed_at": dismissed_at,
+        "deleted_at": None,
+        "active": True,
         "reason": reason.strip() or "dismissed as known repeated noise",
         "source": source,
         "project": project,
@@ -731,6 +824,68 @@ def dismiss_action_proposal(
         "status": "ok",
         "path": str(path),
         "dismissal": dismissal,
+        "applied": False,
+        "error": None,
+    }
+
+
+def undismiss_action_proposal(
+    *,
+    dismissal_key: str,
+    reason: str,
+    dismissals_path: Path | None = None,
+) -> ActionProposalUndismissReport:
+    """Add an undismiss tombstone without deleting dismissal history."""
+    key = dismissal_key.strip()
+    path = dismissals_path or ACTION_PROPOSAL_DISMISSALS
+    if not key:
+        return {
+            "status": "degraded",
+            "path": str(path),
+            "dismissal_key": dismissal_key,
+            "removed": False,
+            "applied": False,
+            "error": "dismissal_key is required",
+        }
+    active = _active_action_proposal_dismissals(dismissals_path).get(key)
+    if active is None:
+        return {
+            "status": "degraded",
+            "path": str(path),
+            "dismissal_key": key,
+            "removed": False,
+            "applied": False,
+            "error": "dismissal not found",
+        }
+    deleted_at = datetime.now(timezone.utc).isoformat()
+    tombstone: dict[str, object] = {
+        "dismissal_key": key,
+        "dismissed_at": active["dismissed_at"],
+        "deleted_at": deleted_at,
+        "reason": reason.strip() or "undismissed by operator",
+        "source": active["source"],
+        "project": active["project"],
+        "intent": active["intent"],
+        "title": active["title"],
+        "body": active["body"],
+        "evidence_event_id": active["evidence_event_id"],
+    }
+    try:
+        _jsonl_append(path, tombstone)
+    except OSError as exc:
+        return {
+            "status": "degraded",
+            "path": str(path),
+            "dismissal_key": key,
+            "removed": False,
+            "applied": False,
+            "error": str(exc),
+        }
+    return {
+        "status": "ok",
+        "path": str(path),
+        "dismissal_key": key,
+        "removed": True,
         "applied": False,
         "error": None,
     }
@@ -1625,6 +1780,42 @@ def _write_personal_ops_queue_burn_in_report(
     }
 
 
+def write_operator_daily_state_report(
+    report: OperatorDailyStateReport,
+    *,
+    output_dir: Path | None = None,
+) -> dict[str, object]:
+    target_dir = output_dir or OPERATOR_STATE_REPORT_DIR
+    generated_at = datetime.now(timezone.utc)
+    target_path = target_dir / (
+        f"operator-daily-state-{generated_at.strftime('%Y%m%d-%H%M%S')}.json"
+    )
+    payload = {
+        "schema_version": "notification-hub.operator_daily_state.v1",
+        "generated_at": generated_at.isoformat(),
+        "report": {key: value for key, value in report.items() if key != "report_file"},
+    }
+    try:
+        target_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        fd = os.open(str(target_path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+    except OSError as exc:
+        return {
+            "requested": True,
+            "status": "degraded",
+            "path": str(target_path),
+            "error": str(exc),
+        }
+    return {
+        "requested": True,
+        "status": "ok",
+        "path": str(target_path),
+        "error": None,
+    }
+
+
 def _is_safe_burn_in_report_name(name: str) -> bool:
     return (
         Path(name).name == name
@@ -2463,15 +2654,7 @@ def run_personal_ops_action_export(
     proposed_actions = [
         _action_from_rollup(rollup)
         for rollup in inbox["rollups"]
-        if rollup["intent"]
-        in {
-            "needs_attention",
-            "blocked",
-            "waiting_on_user",
-            "ready_to_review",
-            "ready_to_merge",
-            "automation_failed",
-        }
+        if rollup["intent"] in ACTION_PROPOSAL_INTENTS
     ]
     dismissals = _active_action_proposal_dismissals(dismissals_path)
     active_actions = [
@@ -3108,6 +3291,86 @@ def run_coordination_readiness(*, limit: int = 5) -> CoordinationReadinessReport
     }
 
 
+ACTION_PROPOSAL_INTENTS = {
+    "needs_attention",
+    "blocked",
+    "waiting_on_user",
+    "ready_to_review",
+    "ready_to_merge",
+    "automation_failed",
+}
+
+
+def _rollup_repeated_signature(rollup: InboxRollupReport) -> RepeatedSignatureReport:
+    return {
+        "count": rollup["count"],
+        "source": rollup["source"],
+        "project": rollup["project"],
+        "level": rollup["level"],
+        "title": rollup["title"],
+        "body": rollup["body"],
+    }
+
+
+def _policy_covered_rollups(rollups: list[InboxRollupReport]) -> list[RepeatedSignatureReport]:
+    rules = get_policy_config().noise.rules
+    if not rules:
+        return []
+    signatures: list[RepeatedSignatureReport] = []
+    for rollup in rollups:
+        signature = _rollup_repeated_signature(rollup)
+        if any(_noise_rule_matches_signature(rule, signature) for rule in rules):
+            signatures.append(signature)
+    return signatures
+
+
+def _build_next_signal_report(
+    *,
+    readiness: CoordinationReadinessReport,
+    actions: PersonalOpsActionExportReport,
+    active_actions: list[CoordinationConsoleActionReport],
+    queue_health: PersonalOpsImportQueueHealthReport,
+    dismissals: list[ActionProposalDismissalReport],
+    limit: int,
+) -> CoordinationNextSignalReport:
+    policy_covered = _policy_covered_rollups(actions["inbox"].get("rollups", []))[:limit]
+    if active_actions:
+        title = "Active proposal waiting"
+        summary = "The next real signal is already visible as an action proposal."
+        status = "ready"
+        next_action = "Save and validate a review package, then queue one handoff for operator review."
+    elif queue_health["queued_count"] > 0 or queue_health["promoted_pending_count"] > 0:
+        title = "Queue lifecycle in progress"
+        summary = "The next real signal is already in the queue lifecycle."
+        status = "busy"
+        next_action = queue_health["next_action"]
+    elif readiness["decision"] != "ready_to_expand":
+        title = "Readiness gate first"
+        summary = readiness["summary"]
+        status = "blocked"
+        next_action = readiness["next_action"]
+    else:
+        title = "Waiting for next real signal"
+        summary = (
+            "A signal qualifies when repeated recent events have a coordination intent "
+            "and are not already dismissed or covered by policy noise rules."
+        )
+        status = "monitor"
+        next_action = "Monitor /review; use dismissal management if a hidden proposal should return."
+    return {
+        "status": status,
+        "title": title,
+        "summary": summary,
+        "qualifying_intents": sorted(ACTION_PROPOSAL_INTENTS),
+        "hidden_action_count": int(actions.get("dismissed_action_count", 0)),
+        "dismissed_count": len(dismissals),
+        "policy_covered_repeated_count": len(policy_covered),
+        "policy_covered_signatures": policy_covered,
+        "dismissed_proposals": dismissals[:limit],
+        "next_action": next_action,
+    }
+
+
 def _proposal_lineage_status(queue_item: PersonalOpsImportQueueItemReport | None) -> str:
     if queue_item is None:
         return "new"
@@ -3367,6 +3630,14 @@ def run_coordination_console(*, hours: int = 2, limit: int = 5) -> CoordinationC
     ]
 
     queue_health = queue["health"]
+    next_signal = _build_next_signal_report(
+        readiness=readiness,
+        actions=actions,
+        active_actions=active_actions,
+        queue_health=queue_health,
+        dismissals=action_dismissals,
+        limit=safe_limit,
+    )
     guide_stage, guide_steps = _build_coordination_console_guide(
         readiness=readiness,
         active_actions=active_actions,
@@ -3411,6 +3682,7 @@ def run_coordination_console(*, hours: int = 2, limit: int = 5) -> CoordinationC
         "actions": active_actions[:safe_limit],
         "handled_actions": handled_actions[:safe_limit],
         "dismissals": action_dismissals[:safe_limit],
+        "next_signal": next_signal,
         "queue_health": queue_health,
         "queued_items": queue["queued_items"][:safe_limit],
         "pending_promotion_items": queue["pending_promotion_items"][:safe_limit],
@@ -3419,6 +3691,92 @@ def run_coordination_console(*, hours: int = 2, limit: int = 5) -> CoordinationC
         "guide_stage": guide_stage,
         "guide_steps": guide_steps,
         "next_commands": next_commands,
+        "next_action": next_action,
+        "applied": False,
+    }
+
+
+def run_operator_daily_state(
+    *,
+    hours: int = 24,
+    limit: int = 10,
+    save_report: bool = False,
+    report_dir: Path | None = None,
+) -> OperatorDailyStateReport:
+    """Build a resume-ready operator state snapshot without applying work."""
+    safe_hours = max(hours, 1)
+    safe_limit = max(limit, 1)
+    generated_at = datetime.now(timezone.utc).isoformat()
+    runtime = run_status()
+    queue_health = run_personal_ops_import_queue_health_check(limit=safe_limit)
+    coordination_console = run_coordination_console(hours=safe_hours, limit=safe_limit)
+    burn_in = run_burn_in(minutes=min(safe_hours * 60, 24 * 60), lines=200)
+    dismissals = list_action_proposal_dismissals(limit=safe_limit)
+    status = (
+        "ok"
+        if runtime["status"] == "ok"
+        and queue_health["status"] == "ok"
+        and coordination_console["status"] == "ok"
+        and burn_in["status"] == "ok"
+        else "warn"
+    )
+    next_action = coordination_console["next_action"]
+    report: OperatorDailyStateReport = {
+        "status": status,
+        "generated_at": generated_at,
+        "hours": safe_hours,
+        "runtime": runtime,
+        "queue_health": queue_health,
+        "coordination_console": coordination_console,
+        "burn_in": burn_in,
+        "dismissals": dismissals,
+        "next_action": next_action,
+        "report_file": {
+            "requested": False,
+            "status": "not_requested",
+            "path": str(report_dir) if report_dir is not None else None,
+            "error": None,
+        },
+        "applied": False,
+    }
+    if save_report:
+        report_file = write_operator_daily_state_report(report, output_dir=report_dir)
+        report["report_file"] = report_file
+        if report_file["status"] != "ok":
+            report["status"] = "warn"
+    return report
+
+
+def run_operator_handoff_drill(
+    *,
+    save_burn_in_report: bool = False,
+    report_dir: Path | None = None,
+) -> OperatorHandoffDrillReport:
+    """Run a temporary handoff lifecycle drill without touching the live import queue."""
+    generated_at = datetime.now(timezone.utc).isoformat()
+    scenario = run_personal_ops_queue_scenario()
+    queue_burn_in = run_personal_ops_queue_burn_in(
+        save_report=save_burn_in_report,
+        report_dir=report_dir,
+    )
+    status = "ok" if scenario["status"] == "ok" and queue_burn_in["status"] == "ok" else "warn"
+    review_steps = [
+        "Open /review and inspect an action proposal before saving a package.",
+        "Save and validate the package; queue only evidence-backed handoffs.",
+        "Promote externally through personal-ops, then record the suggestion id and outcome.",
+        "Rerun queue health and burn-in before expanding the apply boundary.",
+    ]
+    next_action = (
+        "Use the same operator-mediated lifecycle for the next real handoff."
+        if status == "ok"
+        else "Fix the drill or burn-in warning before using the lifecycle for real handoffs."
+    )
+    return {
+        "status": status,
+        "generated_at": generated_at,
+        "scenario": scenario,
+        "queue_burn_in": queue_burn_in,
+        "review_steps": review_steps,
         "next_action": next_action,
         "applied": False,
     }
