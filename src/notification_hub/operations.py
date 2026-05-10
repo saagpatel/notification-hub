@@ -773,6 +773,10 @@ class CoordinationProposalReviewReport(TypedDict):
     resolved_count: int
     ignored_count: int
     handled_count: int
+    handled_mail_count: int
+    handled_mail_rich_count: int
+    handled_mail_thin_count: int
+    handled_history_summary: str | None
     group_count: int
     primary_action_id: str | None
     groups: list[CoordinationProposalReviewGroup]
@@ -794,12 +798,34 @@ class CoordinationNextSignalReport(TypedDict):
     status: str
     title: str
     summary: str
+    watch_posture: str
+    notify_on: list[str]
+    quiet_reason: str | None
     qualifying_intents: list[str]
     hidden_action_count: int
     dismissed_count: int
     policy_covered_repeated_count: int
     policy_covered_signatures: list[RepeatedSignatureReport]
     dismissed_proposals: list[ActionProposalDismissalReport]
+    next_action: str
+
+
+class HandoffOutcomeQualityBucket(TypedDict):
+    total: int
+    pending: int
+    accepted: int
+    rejected: int
+    ignored: int
+    resolved: int
+    acceptance_rate: float | None
+
+
+class HandoffOutcomeQualityReport(TypedDict):
+    status: str
+    summary: str
+    rich: HandoffOutcomeQualityBucket
+    thin: HandoffOutcomeQualityBucket
+    unknown: HandoffOutcomeQualityBucket
     next_action: str
 
 
@@ -815,6 +841,7 @@ class CoordinationConsoleReport(TypedDict):
     proposal_review: CoordinationProposalReviewReport
     dismissals: list[ActionProposalDismissalReport]
     next_signal: CoordinationNextSignalReport
+    outcome_quality: HandoffOutcomeQualityReport
     queue_health: PersonalOpsImportQueueHealthReport
     queued_items: list[PersonalOpsImportQueueItemReport]
     pending_promotion_items: list[PersonalOpsImportQueueItemReport]
@@ -4752,10 +4779,19 @@ def _build_next_signal_report(
     raw_rollups = raw_inbox.get("rollups")
     rollups = cast(list[InboxRollupReport], raw_rollups) if isinstance(raw_rollups, list) else []
     policy_covered = _policy_covered_rollups(rollups)[:limit]
+    notify_on = [
+        "active_proposals",
+        "queued_handoffs",
+        "pending_promoted_outcomes",
+        "runtime_degradation",
+        "repeated_personal_ops_diagnostic_echo",
+    ]
     if active_actions:
         title = "Active proposal waiting"
         summary = "The next real signal is already visible as an action proposal."
         status = "ready"
+        watch_posture = "notify_now"
+        quiet_reason = None
         next_action = (
             "Save and validate a review package, then queue one handoff for operator review."
         )
@@ -4763,11 +4799,15 @@ def _build_next_signal_report(
         title = "Queue lifecycle in progress"
         summary = "The next real signal is already in the queue lifecycle."
         status = "busy"
+        watch_posture = "notify_now"
+        quiet_reason = None
         next_action = queue_health["next_action"]
     elif readiness["decision"] != "ready_to_expand":
         title = "Readiness gate first"
         summary = readiness["summary"]
         status = "blocked"
+        watch_posture = "notify_now"
+        quiet_reason = None
         next_action = readiness["next_action"]
     else:
         title = "Waiting for next real signal"
@@ -4776,6 +4816,11 @@ def _build_next_signal_report(
             "and are not already dismissed or covered by policy noise rules."
         )
         status = "monitor"
+        watch_posture = "notify_only_on_active_work"
+        quiet_reason = (
+            "No active proposal, queued handoff, pending promoted outcome, runtime degradation, "
+            "or repeated diagnostic echo is present."
+        )
         next_action = (
             "Monitor /review; use dismissal management if a hidden proposal should return."
         )
@@ -4783,6 +4828,9 @@ def _build_next_signal_report(
         "status": status,
         "title": title,
         "summary": summary,
+        "watch_posture": watch_posture,
+        "notify_on": notify_on,
+        "quiet_reason": quiet_reason,
         "qualifying_intents": sorted(ACTION_PROPOSAL_INTENTS),
         "hidden_action_count": int(actions.get("dismissed_action_count", 0)),
         "dismissed_count": len(dismissals),
@@ -4920,6 +4968,100 @@ def _evidence_quality(context: dict[str, object] | None) -> str:
         keys & {"draft_id", "approval_id", "provider_draft_id", "review_id", "queue_id"}
     )
     return "rich" if has_anchor and has_work_item else "thin"
+
+
+def _action_evidence_quality(action: PersonalOpsActionReport) -> str:
+    quality = _as_str(cast(dict[str, object], action).get("evidence_quality"))
+    if quality in {"rich", "thin"}:
+        return quality
+    return _evidence_quality(action.get("evidence_context"))
+
+
+def _raw_queue_item_evidence_quality(item: dict[str, object]) -> str:
+    action = _as_dict(item.get("action"))
+    quality = _as_str(action.get("evidence_quality"))
+    if quality in {"rich", "thin"}:
+        return quality
+    return _evidence_quality(_as_dict(action.get("evidence_context")))
+
+
+def _empty_outcome_quality_bucket() -> HandoffOutcomeQualityBucket:
+    return {
+        "total": 0,
+        "pending": 0,
+        "accepted": 0,
+        "rejected": 0,
+        "ignored": 0,
+        "resolved": 0,
+        "acceptance_rate": None,
+    }
+
+
+def _finalize_outcome_quality_bucket(
+    bucket: HandoffOutcomeQualityBucket,
+) -> HandoffOutcomeQualityBucket:
+    resolved = bucket["accepted"] + bucket["rejected"] + bucket["ignored"]
+    bucket["resolved"] = resolved
+    bucket["acceptance_rate"] = (
+        round(bucket["accepted"] / resolved, 2) if resolved > 0 else None
+    )
+    return bucket
+
+
+def _build_handoff_outcome_quality(
+    raw_items: list[dict[str, object]],
+) -> HandoffOutcomeQualityReport:
+    buckets: dict[str, HandoffOutcomeQualityBucket] = {
+        "rich": _empty_outcome_quality_bucket(),
+        "thin": _empty_outcome_quality_bucket(),
+        "unknown": _empty_outcome_quality_bucket(),
+    }
+    for item in raw_items:
+        if _as_str(item.get("status")) != "promoted":
+            continue
+        quality = _raw_queue_item_evidence_quality(item)
+        bucket_key = quality if quality in {"rich", "thin"} else "unknown"
+        outcome = _as_str(item.get("promotion_outcome")) or "pending"
+        if outcome not in PERSONAL_OPS_PROMOTION_OUTCOMES:
+            outcome = "pending"
+        bucket = buckets[bucket_key]
+        bucket["total"] += 1
+        if outcome == "accepted":
+            bucket["accepted"] += 1
+        elif outcome == "rejected":
+            bucket["rejected"] += 1
+        elif outcome == "ignored":
+            bucket["ignored"] += 1
+        else:
+            bucket["pending"] += 1
+
+    rich = _finalize_outcome_quality_bucket(buckets["rich"])
+    thin = _finalize_outcome_quality_bucket(buckets["thin"])
+    unknown = _finalize_outcome_quality_bucket(buckets["unknown"])
+    total = rich["total"] + thin["total"] + unknown["total"]
+    pending = rich["pending"] + thin["pending"] + unknown["pending"]
+    if total == 0:
+        summary = "No promoted handoff outcomes are recorded yet."
+        next_action = "Promote the next reviewed handoff only after the evidence is rich enough."
+    else:
+        summary = (
+            f"Outcome quality: rich {rich['resolved']}/{rich['total']} resolved "
+            f"({rich['accepted']} accepted), thin {thin['resolved']}/{thin['total']} resolved "
+            f"({thin['accepted']} accepted)."
+        )
+        next_action = (
+            f"Record {pending} pending promoted outcome(s)."
+            if pending
+            else "Keep comparing rich and thin outcomes as promoted handoffs resolve."
+        )
+    return {
+        "status": "ok",
+        "summary": summary,
+        "rich": rich,
+        "thin": thin,
+        "unknown": unknown,
+        "next_action": next_action,
+    }
 
 
 def _action_group_label(key: tuple[str, str | None, str, str, str]) -> str:
@@ -5145,6 +5287,34 @@ def _build_proposal_review_group(
     return group
 
 
+def _handled_mail_actions(
+    handled_actions: list[CoordinationConsoleActionReport],
+) -> list[CoordinationConsoleActionReport]:
+    return [
+        item
+        for item in handled_actions
+        if item["action"]["source"] == "personal-ops" and item["action"]["project"] == "mail"
+    ]
+
+
+def _handled_history_summary(
+    handled_actions: list[CoordinationConsoleActionReport],
+) -> str | None:
+    if not handled_actions:
+        return None
+    mail_actions = _handled_mail_actions(handled_actions)
+    if mail_actions:
+        rich_count = sum(
+            1 for item in mail_actions if _action_evidence_quality(item["action"]) == "rich"
+        )
+        thin_count = len(mail_actions) - rich_count
+        return (
+            f"{len(mail_actions)} handled mail follow-up item(s) are history "
+            f"({rich_count} rich / {thin_count} thin); no active proposal is waiting."
+        )
+    return f"{len(handled_actions)} handled proposal(s) are visible as history."
+
+
 def _build_proposal_review(
     *,
     active_actions: list[CoordinationConsoleActionReport],
@@ -5161,6 +5331,11 @@ def _build_proposal_review(
     snoozed_count = sum(1 for item in handled_actions if item["lineage_status"] == "snoozed")
     resolved_count = sum(1 for item in handled_actions if item["lineage_status"] == "resolved")
     ignored_count = sum(1 for item in handled_actions if item["lineage_status"] == "ignored")
+    handled_mail = _handled_mail_actions(handled_actions)
+    handled_mail_rich_count = sum(
+        1 for item in handled_mail if _action_evidence_quality(item["action"]) == "rich"
+    )
+    handled_history_summary = _handled_history_summary(handled_actions)
     grouped: dict[tuple[str, str | None, str, str, str], list[CoordinationConsoleActionReport]] = {}
     for item in active_actions:
         grouped.setdefault(_action_group_key(item["action"]), []).append(item)
@@ -5213,7 +5388,10 @@ def _build_proposal_review(
             if snoozed_count:
                 details.append(f"{snoozed_count} snoozed")
             suffix = f" ({', '.join(details)})" if details else ""
-            summary = f"{len(handled_actions)} handled proposal(s) are visible as history{suffix}."
+            if handled_history_summary is not None and handled_mail:
+                summary = f"{handled_history_summary}{suffix}"
+            else:
+                summary = f"{len(handled_actions)} handled proposal(s) are visible as history{suffix}."
         else:
             summary = "No active proposals are waiting."
         next_action = "Monitor for the next real proposal."
@@ -5230,6 +5408,10 @@ def _build_proposal_review(
         "resolved_count": resolved_count,
         "ignored_count": ignored_count,
         "handled_count": len(handled_actions),
+        "handled_mail_count": len(handled_mail),
+        "handled_mail_rich_count": handled_mail_rich_count,
+        "handled_mail_thin_count": len(handled_mail) - handled_mail_rich_count,
+        "handled_history_summary": handled_history_summary,
         "group_count": len(groups),
         "primary_action_id": primary_action_id,
         "groups": groups[:5],
@@ -5411,11 +5593,7 @@ def _build_coordination_console_guide(
             ],
         )
 
-    handled_summary = (
-        f"{len(handled_actions)} handled proposal(s) are visible as history."
-        if handled_actions
-        else "No active proposals are waiting."
-    )
+    handled_summary = _handled_history_summary(handled_actions) or "No active proposals are waiting."
     return (
         "monitor",
         [
@@ -5467,6 +5645,9 @@ def run_coordination_console(
         active_actions=active_actions,
         handled_actions=handled_actions,
         group_history=group_history,
+    )
+    outcome_quality = _build_handoff_outcome_quality(
+        _read_import_queue_items(PERSONAL_OPS_IMPORT_QUEUE)
     )
 
     queue_health = queue["health"]
@@ -5526,6 +5707,7 @@ def run_coordination_console(
         "proposal_review": proposal_review,
         "dismissals": action_dismissals[:safe_limit],
         "next_signal": next_signal,
+        "outcome_quality": outcome_quality,
         "queue_health": queue_health,
         "queued_items": queue["queued_items"][:safe_limit],
         "pending_promotion_items": queue["pending_promotion_items"][:safe_limit],

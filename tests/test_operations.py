@@ -397,6 +397,10 @@ def test_coordination_console_summarizes_ready_expansion(tmp_path: Path) -> None
     )
     assert report["next_signal"]["status"] == "ready"
     assert report["next_signal"]["title"] == "Active proposal waiting"
+    assert report["next_signal"]["watch_posture"] == "notify_now"
+    assert report["outcome_quality"]["summary"] == (
+        "No promoted handoff outcomes are recorded yet."
+    )
     assert report["guide_stage"] == "package_review"
     assert report["guide_steps"][0]["title"] == "Save review package"
     assert report["guide_steps"][0]["action_id"] == "action-1"
@@ -650,7 +654,7 @@ def test_coordination_console_marks_handled_actions_as_history() -> None:
     assert report["proposal_review"]["reviewed_only_count"] == 0
     assert report["handled_actions"][0]["queue_id"] == "queue-resolved"
     assert report["guide_stage"] == "monitor"
-    assert report["guide_steps"][0]["summary"].startswith("1 handled proposal")
+    assert report["guide_steps"][0]["summary"].startswith("1 handled mail follow-up")
     assert report["next_commands"] == [
         "uv run notification-hub coordination-console",
         "uv run notification-hub personal-ops-queue-health",
@@ -894,9 +898,56 @@ def test_coordination_console_treats_follow_up_outcome_as_history(tmp_path: Path
     assert report["handled_actions"][0]["lineage_label"] == "Needs follow-up"
     assert report["proposal_review"]["mode"] == "monitor"
     assert report["proposal_review"]["follow_up_count"] == 1
+    assert report["proposal_review"]["handled_mail_count"] == 1
+    assert report["proposal_review"]["handled_mail_thin_count"] == 1
+    assert "handled mail follow-up" in report["proposal_review"]["summary"]
     assert "follow-up" in report["proposal_review"]["summary"]
     assert report["next_signal"]["status"] == "monitor"
+    assert report["next_signal"]["watch_posture"] == "notify_only_on_active_work"
+    assert report["next_signal"]["quiet_reason"] is not None
     assert report["next_action"] == "Monitor /review for the next real handoff signal."
+
+
+def test_handoff_outcome_quality_splits_rich_and_thin_results() -> None:
+    build_outcome_quality = getattr(ops_mod, "_build_handoff_outcome_quality")
+    report = build_outcome_quality(
+        [
+            {
+                "status": "promoted",
+                "promotion_outcome": "accepted",
+                "action": {
+                    "evidence_context": {
+                        "thread_id": "thread-rich",
+                        "draft_id": "draft-rich",
+                    },
+                },
+            },
+            {
+                "status": "promoted",
+                "promotion_outcome": "rejected",
+                "action": {"evidence_context": {"thread_id": "thread-thin"}},
+            },
+            {
+                "status": "promoted",
+                "promotion_outcome": "pending",
+                "action": {"evidence_quality": "rich"},
+            },
+            {
+                "status": "queued",
+                "promotion_outcome": "accepted",
+                "action": {"evidence_quality": "rich"},
+            },
+        ]
+    )
+
+    assert report["rich"]["total"] == 2
+    assert report["rich"]["accepted"] == 1
+    assert report["rich"]["pending"] == 1
+    assert report["rich"]["acceptance_rate"] == 1.0
+    assert report["thin"]["total"] == 1
+    assert report["thin"]["rejected"] == 1
+    assert "rich 1/2 resolved" in report["summary"]
+    assert report["next_action"] == "Record 1 pending promoted outcome(s)."
 
 
 def test_coordination_console_keeps_follow_up_history_when_action_id_rotates(
