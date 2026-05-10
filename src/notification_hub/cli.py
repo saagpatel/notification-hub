@@ -1003,6 +1003,13 @@ def _print_coordination_console_report(report: CoordinationConsoleReport) -> Non
                 f"{group['intent']} / {group['priority']}: "
                 f"{', '.join(group['titles'])}"
             )
+            print(
+                "    evidence: "
+                f"rich {group['rich_evidence_count']} / thin {group['thin_evidence_count']}"
+            )
+            routing = group.get("routing_recommendation")
+            if isinstance(routing, dict):
+                print(f"    route: {routing.get('decision')} - {routing.get('reason')}")
             latest_history = group.get("latest_history")
             if isinstance(latest_history, dict):
                 print(

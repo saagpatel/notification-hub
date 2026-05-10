@@ -248,6 +248,8 @@ rollups and review packages, but does not use it to send, approve, or mutate ext
 Action proposals also include an `evidence_quality` value. `rich` means the latest event has both a
 mail/thread anchor and a concrete work-item ID; `thin` means the proposal still needs more operator
 inspection before promotion.
+For mail proposal routing, promotion-looking signals only enter the promote lane when evidence is
+rich. Thin promotion-looking signals stay in follow-up until the source emits enough context.
 The inbox report also includes `rollups` for repeated source/project/title/body patterns, so repeated
 approval drafts and completion pings can be reviewed as one grouped signal.
 Personal-ops action exports are proposal-only: they include priority, state, suggested next action,

@@ -414,6 +414,124 @@ def test_coordination_console_summarizes_ready_expansion(tmp_path: Path) -> None
     mock_reports.assert_called_once_with(limit=3)
 
 
+def test_coordination_console_keeps_thin_mail_promote_cues_in_follow_up(
+    tmp_path: Path,
+) -> None:
+    with (
+        patch(
+            "notification_hub.operations.run_coordination_readiness",
+            return_value={
+                "status": "ok",
+                "decision": "ready_to_expand",
+                "summary": "ready",
+                "queue_status": "ok",
+                "queued_count": 0,
+                "pending_count": 0,
+                "stale_count": 0,
+                "saved_burn_in_reports": 1,
+                "latest_burn_in_ready": True,
+                "latest_burn_in_noise_candidates": 0,
+                "runtime_status": "ok",
+                "policy_warning_count": 0,
+                "next_action": "Review proposals.",
+                "evidence": [],
+                "applied": False,
+            },
+        ),
+        patch(
+            "notification_hub.operations.run_personal_ops_action_export",
+            return_value={
+                "status": "ok",
+                "schema_version": "notification-hub.personal_ops_action_export.v1",
+                "generated_at": "2026-05-10T04:40:00+00:00",
+                "hours": 2,
+                "actions": [
+                    {
+                        "action_id": "rich-action",
+                        "source": "personal-ops",
+                        "project": "mail",
+                        "intent": "waiting_on_user",
+                        "priority": "high",
+                        "state": "waiting",
+                        "title": "Approval Requested",
+                        "summary": "Context-rich reply.",
+                        "signal_body": "Initial reply needed",
+                        "suggested_next_action": "Review the waiting item.",
+                        "evidence_event_id": "rich-event",
+                        "evidence_timestamp": "2026-05-10T04:40:00+00:00",
+                        "evidence_context": {"thread_id": "thread-1", "draft_id": "draft-1"},
+                        "evidence_quality": "rich",
+                        "count": 2,
+                    },
+                    {
+                        "action_id": "thin-action",
+                        "source": "personal-ops",
+                        "project": "mail",
+                        "intent": "waiting_on_user",
+                        "priority": "high",
+                        "state": "waiting",
+                        "title": "Approval Requested",
+                        "summary": "Thin reply.",
+                        "signal_body": "Send this reply",
+                        "suggested_next_action": "Review the waiting item.",
+                        "evidence_event_id": "thin-event",
+                        "evidence_timestamp": "2026-05-10T04:41:00+00:00",
+                        "evidence_context": {"draft_id": "draft-2"},
+                        "evidence_quality": "thin",
+                        "count": 2,
+                    },
+                ],
+                "review_package": {"status": "not_requested"},
+                "inbox": {},
+                "error": None,
+            },
+        ),
+        patch(
+            "notification_hub.operations.run_personal_ops_import_queue_health_check",
+            return_value={
+                "status": "ok",
+                "health": _coordination_status()["import_queue"],
+                "queued_items": [],
+                "pending_promotion_items": [],
+                "next_commands": ["uv run notification-hub personal-ops-queue-health"],
+                "applied": False,
+            },
+        ),
+        patch(
+            "notification_hub.operations.run_personal_ops_outcome_sync_reminder",
+            return_value={
+                "status": "ok",
+                "should_remind": False,
+                "pending_count": 0,
+                "stale_count": 0,
+                "reminders": [],
+                "next_commands": ["uv run notification-hub personal-ops-queue-health"],
+                "next_action": "No pending promoted personal-ops handoff outcomes.",
+                "applied": False,
+            },
+        ),
+        patch(
+            "notification_hub.operations.list_personal_ops_queue_burn_in_reports",
+            return_value=[_coordination_burn_in_report()],
+        ),
+        patch("notification_hub.operations._read_import_queue_items", return_value=[]),
+    ):
+        report = run_coordination_console(
+            hours=2,
+            limit=3,
+            group_history_path=tmp_path / "history.jsonl",
+        )
+
+    group = report["proposal_review"]["groups"][0]
+    routing = group["routing_recommendation"]
+    assert routing is not None
+    assert group["rich_evidence_count"] == 1
+    assert group["thin_evidence_count"] == 1
+    assert routing["decision"] == "promote_rich_evidence"
+    assert routing["promote_candidate_action_ids"] == ["rich-action"]
+    assert routing["follow_up_candidate_action_ids"] == ["thin-action"]
+
+
 def test_coordination_console_marks_handled_actions_as_history() -> None:
     with (
         patch(
@@ -1641,6 +1759,11 @@ def test_personal_ops_action_export_keeps_repeated_titles_unique() -> None:
                 "body": "Outbound workflow reply",
                 "latest_timestamp": "2026-05-09T00:00:00+00:00",
                 "latest_event_id": "abc123",
+                "latest_context": {
+                    "thread_id": "thread-abc123",
+                    "draft_id": "draft-abc123",
+                    "approval_id": "approval-abc123",
+                },
             },
             {
                 "count": 2,
@@ -1689,6 +1812,11 @@ def test_action_proposal_group_package_can_save_selected_group(tmp_path: Path) -
                 "body": "Outbound workflow reply",
                 "latest_timestamp": "2026-05-09T00:00:00+00:00",
                 "latest_event_id": "abc123",
+                "latest_context": {
+                    "thread_id": "thread-abc123",
+                    "draft_id": "draft-abc123",
+                    "approval_id": "approval-abc123",
+                },
             },
             {
                 "count": 2,
@@ -1758,6 +1886,11 @@ def test_action_proposal_group_package_can_save_promote_route(tmp_path: Path) ->
                 "body": "Outbound workflow reply",
                 "latest_timestamp": "2026-05-09T00:00:00+00:00",
                 "latest_event_id": "abc123",
+                "latest_context": {
+                    "thread_id": "thread-abc123",
+                    "draft_id": "draft-abc123",
+                    "approval_id": "approval-abc123",
+                },
             },
             {
                 "count": 2,

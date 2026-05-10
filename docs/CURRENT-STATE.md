@@ -135,6 +135,9 @@ tuning pass.
   send or approval authority.
 - Action proposals now include deterministic `evidence_quality` so review surfaces can distinguish
   context-rich mail handoffs from thin repeated signals before queueing or promotion.
+- Mail proposal routing now uses evidence quality: rich promotion-looking signals can be routed to
+  the promote lane, while thin promotion-looking signals remain follow-up work until more context is
+  present.
 - The review page can stage a local review package, list recent saved review packages, inspect
   package actions/evidence plus queue lineage, queue import handoff items, filter
   queued/promoted/pending/stale/resolved handoffs, mark queued items reviewed/rejected/snoozed/promoted,

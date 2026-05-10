@@ -4947,9 +4947,13 @@ def _action_signal_body(action: PersonalOpsActionReport) -> str:
     return raw if isinstance(raw, str) else ""
 
 
+def _action_has_rich_evidence(action: PersonalOpsActionReport) -> bool:
+    return action.get("evidence_quality") == "rich"
+
+
 def _mail_route_category(action: PersonalOpsActionReport) -> str:
     body = _action_signal_body(action).lower()
-    if any(cue in body for cue in MAIL_PROMOTION_CUES):
+    if any(cue in body for cue in MAIL_PROMOTION_CUES) and _action_has_rich_evidence(action):
         return "promote"
     if any(cue in body for cue in MAIL_SUPPRESSION_CUES):
         return "suppress"
@@ -5041,10 +5045,19 @@ def _mail_route_recommendation(
                 "phase/workflow route if it is already covered."
             ),
         )
+    if promote_count and follow_up_count:
+        return recommendation(
+            decision="promote_rich_evidence",
+            reason="This mail group has context-rich approval work plus thinner signals.",
+            suggested_next_action=(
+                "Save or queue the rich-evidence promote route first, and mark the thin remainder as "
+                "needs follow-up until it has enough context."
+            ),
+        )
     if promote_count:
         return recommendation(
             decision="promote_candidate",
-            reason="This mail group looks like concrete reply approval work.",
+            reason="This mail group has context-rich concrete reply approval work.",
             suggested_next_action=(
                 "Save and inspect the package, then promote one reviewed handoff through personal-ops "
                 "only if it maps to a real outbound decision."

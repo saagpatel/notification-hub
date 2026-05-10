@@ -680,6 +680,8 @@ REVIEW_HTML = """<!doctype html>
           ${badge(group.priority)}
           ${badge(group.state)}
           ${badge(`events ${group.total_event_count ?? 0}`)}
+          ${warnBadge(`rich ${group.rich_evidence_count ?? 0}`, (group.rich_evidence_count ?? 0) > 0)}
+          ${warnBadge(`thin ${group.thin_evidence_count ?? 0}`, (group.thin_evidence_count ?? 0) > 0)}
           ${badge(`titles ${(group.titles || []).length}`)}
           ${badge(`history ${group.history_count ?? 0}`)}
           ${group.routing_recommendation ? badge(group.routing_recommendation.decision) : ""}
