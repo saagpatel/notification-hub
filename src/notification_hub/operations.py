@@ -3866,8 +3866,10 @@ def _build_next_signal_report(
 def _proposal_lineage_status(queue_item: PersonalOpsImportQueueItemReport | None) -> str:
     if queue_item is None:
         return "new"
-    if queue_item["status"] in {"queued", "reviewed", "snoozed"}:
+    if queue_item["status"] == "queued":
         return "queued"
+    if queue_item["status"] in {"reviewed", "snoozed"}:
+        return queue_item["status"]
     if queue_item["status"] == "promoted":
         outcome = queue_item["promotion_outcome"] or "pending"
         return "promoted" if outcome == "pending" else "resolved"
@@ -4256,7 +4258,9 @@ def run_coordination_console(
         if action["lineage_status"] in {"new", "queued", "promoted"}
     ]
     handled_actions = [
-        action for action in proposal_lineage if action["lineage_status"] in {"resolved", "ignored"}
+        action
+        for action in proposal_lineage
+        if action["lineage_status"] in {"reviewed", "snoozed", "resolved", "ignored"}
     ]
     proposal_review = _build_proposal_review(
         active_actions=active_actions,

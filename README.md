@@ -150,6 +150,8 @@ The personal-ops-queue command lists and updates queued handoffs through explici
 `promoted` records that an operator-mediated personal-ops task suggestion was created; it does not
 create that suggestion by itself. Promotion records can also store the personal-ops suggestion id
 and final `pending`, `accepted`, `rejected`, or `ignored` outcome.
+The Coordination Console treats reviewed and snoozed handoffs as handled history, so they do not
+block readiness once queue health is clean.
 The personal-ops-queue-health command is the normal maintenance check for this queue. It reports
 queued item age, promoted handoffs still waiting on downstream outcome sync, stale pending
 promotions, and the next safe operator commands without applying work.

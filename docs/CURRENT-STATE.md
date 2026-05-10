@@ -35,6 +35,8 @@ tuning pass.
   applied changes.
 - Queued personal-ops handoffs now have explicit lifecycle states: queued, reviewed, rejected,
   snoozed, superseded, and promoted. Queue health is visible in status and runtime verification.
+- The Coordination Console now treats reviewed and snoozed handoffs as handled history instead of
+  active lifecycle blockers once queue health is clean.
 - The first real operator-mediated promotion proof has completed, and the current live queue has no
   queued, pending, or stale promoted handoff outcomes.
 - Queue maintenance now has a dedicated `personal-ops-queue-health` command that reports queued
