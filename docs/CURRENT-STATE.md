@@ -129,6 +129,10 @@ tuning pass.
   operator gate while still surfacing narrow policy candidates. The approval lane now has its own
   route so approval-titled mail items that are not known phase/workflow chatter can be packaged
   together even when they are not concrete reply-promotion candidates.
+- Events now accept optional scalar `context` values, and repeated-event rollups carry the latest
+  context into personal-ops action proposals as `evidence_context`. Mail producers can use this for
+  source-side identifiers such as thread, draft, message, or approval IDs without giving the hub any
+  send or approval authority.
 - The review page can stage a local review package, list recent saved review packages, inspect
   package actions/evidence plus queue lineage, queue import handoff items, filter
   queued/promoted/pending/stale/resolved handoffs, mark queued items reviewed/rejected/snoozed/promoted,
@@ -289,6 +293,8 @@ tuning pass.
   whether they contain promote candidates, suppression candidates, or follow-up-only items.
 - Added route-aware Proposal Review actions so a mixed mail batch can be split into local promote,
   suppress, and follow-up routes without sending mail or creating downstream personal-ops work.
+- Added optional event `context` propagation into inbox rollups and personal-ops review packages so
+  source-side mail identifiers can travel with evidence-backed proposals.
 - Added action proposal dismissal listing/undismiss commands and `/review` controls so temporarily
   hidden proposals can be audited or reactivated without deleting dismissal history.
 - Added operator daily-state and handoff-drill commands plus `/review` endpoints so local operators

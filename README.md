@@ -242,15 +242,18 @@ Events may optionally include an `intent` value for coordination semantics. Supp
 `needs_attention`, `blocked`, `waiting_on_user`, `ready_to_review`, `ready_to_merge`,
 `handoff_created`, `automation_failed`, `completed`, and `informational`. When omitted, the inbox
 uses deterministic title/body/source-level rules to infer intent.
+Events may also include optional scalar `context` values for operator evidence, such as mail
+`thread_id`, `draft_id`, `message_id`, or `approval_id`. The hub stores and displays this context in
+rollups and review packages, but does not use it to send, approve, or mutate external systems.
 The inbox report also includes `rollups` for repeated source/project/title/body patterns, so repeated
 approval drafts and completion pings can be reviewed as one grouped signal.
 Personal-ops action exports are proposal-only: they include priority, state, suggested next action,
-and evidence IDs, but they do not create tasks, send messages, approve drafts, or mutate external
-systems.
+evidence IDs, and optional evidence context, but they do not create tasks, send messages, approve
+drafts, or mutate external systems.
 Review packages are local JSON files for an operator-mediated import step. They are intentionally
 separate from any future personal-ops apply command.
 Validation checks the schema version, required action fields, duplicate action IDs, priority/state
-values, and action counts without mutating personal-ops.
+values, action counts, and optional scalar evidence context without mutating personal-ops.
 The import stub reports `applied: false` even when validation passes, so no personal-ops task,
 approval, or send path is touched.
 The local review surface is available at `http://127.0.0.1:9199/review` while the daemon is running.

@@ -1165,6 +1165,7 @@ REVIEW_HTML = """<!doctype html>
         <div class="next">${esc(a.suggested_next_action)}</div>
         <div class="next">Action ID: ${esc(a.action_id)}</div>
         <div class="next">Evidence: ${esc(a.evidence_event_id)} / ${esc(a.evidence_timestamp)}</div>
+        ${Object.keys(a.evidence_context || {}).length ? `<div class="next">Context: ${esc(Object.entries(a.evidence_context).map(([key, value]) => `${key}=${value}`).join(" / "))}</div>` : ""}
       `));
       const queueItems = data.queue_items || [];
       const queueRows = queueItems.slice(0, 6).map(q => item(`

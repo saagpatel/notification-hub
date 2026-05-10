@@ -1098,6 +1098,69 @@ def test_inbox_groups_recent_events_by_coordination_intent() -> None:
     assert report["rollups"][0]["title"] == "Codex finished a turn"
 
 
+def test_inbox_rollup_carries_latest_event_context() -> None:
+    older = StoredEvent(
+        source="personal-ops",
+        level="urgent",
+        title="Approval Requested",
+        body="Real reply needed",
+        project="mail",
+        context={"thread_id": "thread-old", "draft_id": "draft-old"},
+        timestamp=datetime(2026, 5, 10, 14, 0, tzinfo=timezone.utc),
+    )
+    newer = StoredEvent(
+        source="personal-ops",
+        level="urgent",
+        title="Approval Requested",
+        body="Real reply needed",
+        project="mail",
+        context={"thread_id": "thread-new", "draft_id": "draft-new"},
+        timestamp=datetime(2026, 5, 10, 14, 5, tzinfo=timezone.utc),
+    )
+
+    with (
+        patch("notification_hub.operations.read_jsonl", return_value=[older, newer]),
+        patch(
+            "notification_hub.operations.run_burn_in",
+            return_value={
+                "status": "ok",
+                "minutes": 1440,
+                "events_seen": 2,
+                "accepted_event_posts": 2,
+                "rejected_event_posts": 0,
+                "validation_error_count": 0,
+                "health": {
+                    "accepted_event_posts": 2,
+                    "rejected_event_posts": 0,
+                    "validation_error_count": 0,
+                    "slack_delivery_failure_count": 0,
+                    "status": "ok",
+                },
+                "noise_candidates": [],
+                "repeated_signatures": [],
+                "slack_eligible_events": 0,
+                "slack_volume": [],
+                "daemon_summary": {
+                    "access_status_counts": {},
+                    "accepted_event_posts": 0,
+                    "rejected_event_posts": 0,
+                    "validation_error_count": 0,
+                    "recent_validation_errors": [],
+                    "slack_delivery_failure_count": 0,
+                    "recent_slack_delivery_failures": [],
+                },
+                "error": None,
+            },
+        ),
+    ):
+        report = run_inbox(hours=24, limit=5)
+
+    assert report["rollups"][0].get("latest_context") == {
+        "thread_id": "thread-new",
+        "draft_id": "draft-new",
+    }
+
+
 def test_coordination_snapshot_wraps_inbox_and_runtime_for_bridge_db() -> None:
     inbox_report: dict[str, object] = {
         "status": "ok",
@@ -1346,6 +1409,47 @@ def test_personal_ops_action_export_filters_phase_34_mail_echoes() -> None:
 
     assert [action["signal_body"] for action in report["actions"]] == ["Real reply needed"]
     assert report["dismissed_action_count"] == 2
+
+
+def test_personal_ops_action_export_preserves_mail_evidence_context() -> None:
+    inbox_report: dict[str, object] = {
+        "status": "ok",
+        "hours": 2,
+        "events_seen": 2,
+        "needs_attention": [],
+        "waiting_or_blocked": [],
+        "ready": [],
+        "completed": [],
+        "rollups": [
+            {
+                "count": 2,
+                "source": "personal-ops",
+                "project": "mail",
+                "intent": "waiting_on_user",
+                "level": "urgent",
+                "title": "Approval Requested",
+                "body": "Real reply needed",
+                "latest_timestamp": "2026-05-10T15:02:00+00:00",
+                "latest_event_id": "active123",
+                "latest_context": {
+                    "thread_id": "thread-123",
+                    "draft_id": "draft-456",
+                    "approval_id": "approval-789",
+                },
+            }
+        ],
+        "noise_candidates": [],
+        "error": None,
+    }
+
+    with patch("notification_hub.operations.run_inbox", return_value=inbox_report):
+        report = run_personal_ops_action_export(hours=2, limit=5)
+
+    assert report["actions"][0].get("evidence_context") == {
+        "thread_id": "thread-123",
+        "draft_id": "draft-456",
+        "approval_id": "approval-789",
+    }
 
 
 def test_personal_ops_action_export_scans_past_policy_covered_candidates() -> None:
@@ -2300,6 +2404,10 @@ def test_validate_action_package_accepts_saved_review_package(tmp_path: Path) ->
                         "suggested_next_action": "Review the waiting item.",
                         "evidence_event_id": "abc123",
                         "evidence_timestamp": "2026-05-09T00:00:00+00:00",
+                        "evidence_context": {
+                            "thread_id": "thread-123",
+                            "draft_id": "draft-456",
+                        },
                         "count": 2,
                     }
                 ],
@@ -2472,6 +2580,41 @@ def test_validate_action_package_rejects_invalid_action(tmp_path: Path) -> None:
     assert report["action_count"] == 1
     assert report["valid_action_count"] == 0
     assert report["error_count"] > 0
+
+
+def test_validate_action_package_rejects_non_scalar_evidence_context(tmp_path: Path) -> None:
+    package_path = tmp_path / "actions.json"
+    package_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "notification-hub.personal_ops_action_export.v1",
+                "actions": [
+                    {
+                        "action_id": "notification-hub:personal-ops:mail:waiting_on_user:approval-requested",
+                        "source": "personal-ops",
+                        "project": "mail",
+                        "intent": "waiting_on_user",
+                        "priority": "high",
+                        "state": "waiting",
+                        "title": "Approval Requested",
+                        "summary": "2 repeated personal-ops events",
+                        "suggested_next_action": "Review the waiting item.",
+                        "evidence_event_id": "abc123",
+                        "evidence_timestamp": "2026-05-09T00:00:00+00:00",
+                        "evidence_context": {"thread_id": {"nested": "nope"}},
+                        "count": 2,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    report = validate_action_package(package_path)
+
+    assert report["status"] == "degraded"
+    assert report["error_count"] == 1
+    assert "evidence_context.thread_id must be a scalar value" in report["errors"][0]
 
 
 def test_personal_ops_import_stub_validates_without_applying(tmp_path: Path) -> None:

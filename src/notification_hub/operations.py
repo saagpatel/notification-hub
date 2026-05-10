@@ -11,7 +11,7 @@ import sqlite3
 import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import TypedDict, cast
+from typing import NotRequired, TypedDict, cast
 
 import httpx
 
@@ -99,6 +99,7 @@ class InboxRollupReport(TypedDict):
     body: str
     latest_timestamp: str
     latest_event_id: str
+    latest_context: NotRequired[dict[str, object]]
 
 
 class InboxReport(TypedDict):
@@ -129,6 +130,7 @@ class PersonalOpsActionReport(TypedDict):
     suggested_next_action: str
     evidence_event_id: str
     evidence_timestamp: str
+    evidence_context: NotRequired[dict[str, object]]
     count: int
 
 
@@ -389,6 +391,7 @@ class PersonalOpsImportQueueItemReport(TypedDict):
     priority: str
     state: str
     evidence_event_id: str
+    evidence_context: dict[str, object]
     applied: bool
     snoozed_until: str | None
     outcome_reason: str | None
@@ -1445,6 +1448,7 @@ def _build_inbox_rollups(events: list[StoredEvent]) -> list[InboxRollupReport]:
                 "body": body,
                 "latest_timestamp": latest.timestamp.isoformat(),
                 "latest_event_id": latest.event_id,
+                "latest_context": dict(latest.context),
             }
         )
 
@@ -1534,6 +1538,7 @@ def _action_from_rollup(rollup: InboxRollupReport) -> PersonalOpsActionReport:
         "suggested_next_action": _suggested_action(rollup["intent"], rollup["title"]),
         "evidence_event_id": rollup["latest_event_id"],
         "evidence_timestamp": rollup["latest_timestamp"],
+        "evidence_context": dict(rollup.get("latest_context", {})),
         "count": rollup["count"],
     }
 
@@ -1827,6 +1832,7 @@ def _import_queue_item_report(item: dict[str, object]) -> PersonalOpsImportQueue
         "priority": _as_str(action.get("priority")) or "",
         "state": _as_str(action.get("state")) or "",
         "evidence_event_id": _as_str(action.get("evidence_event_id")) or "",
+        "evidence_context": _as_dict(action.get("evidence_context")),
         "applied": bool(item.get("applied")),
         "snoozed_until": _as_str(item.get("snoozed_until")),
         "outcome_reason": _as_str(item.get("outcome_reason")),
@@ -3135,6 +3141,20 @@ def _validate_action_record(action: object, *, index: int) -> list[str]:
     count = record.get("count")
     if not isinstance(count, int) or count < 1:
         errors.append(f"actions[{index}].count must be a positive integer")
+    context = record.get("evidence_context")
+    if context is not None:
+        if not isinstance(context, dict):
+            errors.append(f"actions[{index}].evidence_context must be an object when present")
+        else:
+            for key, value in cast(dict[object, object], context).items():
+                if not isinstance(key, str):
+                    errors.append(f"actions[{index}].evidence_context keys must be strings")
+                    break
+                if not isinstance(value, (str, int, float, bool)) and value is not None:
+                    errors.append(
+                        f"actions[{index}].evidence_context.{key} must be a scalar value"
+                    )
+                    break
     return errors
 
 

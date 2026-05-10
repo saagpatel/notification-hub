@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import uuid
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Literal, TypeAlias
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -23,6 +23,7 @@ Intent = Literal[
     "completed",
     "informational",
 ]
+EventContextValue: TypeAlias = str | int | float | bool | None
 
 _CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\r\n]")
 
@@ -36,6 +37,7 @@ class Event(BaseModel):
     body: str = Field(min_length=1, max_length=2000)
     project: str | None = Field(default=None, max_length=100)
     intent: Intent | None = None
+    context: dict[str, EventContextValue] = Field(default_factory=dict)
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     @field_validator("level", mode="before")
@@ -58,6 +60,20 @@ class Event(BaseModel):
         if v is not None:
             v = _CONTROL_CHARS.sub("", v)
         return v
+
+    @field_validator("context")
+    @classmethod
+    def sanitize_context(cls, v: dict[str, EventContextValue]) -> dict[str, EventContextValue]:
+        clean: dict[str, EventContextValue] = {}
+        for raw_key, raw_value in v.items():
+            key = _CONTROL_CHARS.sub("", str(raw_key)).strip()
+            if not key:
+                continue
+            value = raw_value
+            if isinstance(value, str):
+                value = _CONTROL_CHARS.sub("", value)
+            clean[key[:100]] = value
+        return clean
 
 
 class StoredEvent(Event):
