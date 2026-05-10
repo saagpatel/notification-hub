@@ -544,6 +544,35 @@ class CoordinationConsoleActionReport(TypedDict):
     promotion_target_id: str | None
 
 
+class CoordinationProposalReviewGroup(TypedDict):
+    group_key: str
+    source: str
+    project: str | None
+    intent: str
+    priority: str
+    state: str
+    action_count: int
+    total_event_count: int
+    newest_evidence_timestamp: str | None
+    titles: list[str]
+    action_ids: list[str]
+    next_action: str
+
+
+class CoordinationProposalReviewReport(TypedDict):
+    mode: str
+    summary: str
+    active_count: int
+    new_count: int
+    queued_count: int
+    promoted_count: int
+    handled_count: int
+    group_count: int
+    primary_action_id: str | None
+    groups: list[CoordinationProposalReviewGroup]
+    next_action: str
+
+
 class CoordinationConsoleGuideStep(TypedDict):
     step: int
     title: str
@@ -576,6 +605,7 @@ class CoordinationConsoleReport(TypedDict):
     dismissal_count: int
     actions: list[CoordinationConsoleActionReport]
     handled_actions: list[CoordinationConsoleActionReport]
+    proposal_review: CoordinationProposalReviewReport
     dismissals: list[ActionProposalDismissalReport]
     next_signal: CoordinationNextSignalReport
     queue_health: PersonalOpsImportQueueHealthReport
@@ -3434,6 +3464,112 @@ def _build_proposal_lineage(
     return reports
 
 
+def _action_group_key(action: PersonalOpsActionReport) -> tuple[str, str | None, str, str, str]:
+    return (
+        action["source"],
+        action["project"],
+        action["intent"],
+        action["priority"],
+        action["state"],
+    )
+
+
+def _build_proposal_review_group(
+    *,
+    key: tuple[str, str | None, str, str, str],
+    actions: list[CoordinationConsoleActionReport],
+) -> CoordinationProposalReviewGroup:
+    source, project, intent, priority, state = key
+    titles: list[str] = []
+    for item in actions:
+        title = item["action"]["title"]
+        if title not in titles:
+            titles.append(title)
+    newest = max((item["action"]["evidence_timestamp"] for item in actions), default=None)
+    total_count = sum(item["action"]["count"] for item in actions)
+    group_label = f"{source}:{project or 'none'}:{intent}:{priority}:{state}"
+    next_action = (
+        "Review this group as one package when the evidence points to the same operator decision."
+        if len(actions) > 1
+        else "Review this proposal on its own before queueing or dismissing it."
+    )
+    return {
+        "group_key": group_label,
+        "source": source,
+        "project": project,
+        "intent": intent,
+        "priority": priority,
+        "state": state,
+        "action_count": len(actions),
+        "total_event_count": total_count,
+        "newest_evidence_timestamp": newest,
+        "titles": titles[:5],
+        "action_ids": [item["action"]["action_id"] for item in actions],
+        "next_action": next_action,
+    }
+
+
+def _build_proposal_review(
+    *,
+    active_actions: list[CoordinationConsoleActionReport],
+    handled_actions: list[CoordinationConsoleActionReport],
+) -> CoordinationProposalReviewReport:
+    new_count = sum(1 for item in active_actions if item["lineage_status"] == "new")
+    queued_count = sum(1 for item in active_actions if item["lineage_status"] == "queued")
+    promoted_count = sum(1 for item in active_actions if item["lineage_status"] == "promoted")
+    grouped: dict[tuple[str, str | None, str, str, str], list[CoordinationConsoleActionReport]] = {}
+    for item in active_actions:
+        grouped.setdefault(_action_group_key(item["action"]), []).append(item)
+    groups = [
+        _build_proposal_review_group(key=key, actions=items)
+        for key, items in sorted(
+            grouped.items(),
+            key=lambda pair: (
+                -len(pair[1]),
+                pair[0][0],
+                pair[0][1] or "",
+                pair[0][2],
+                pair[0][3],
+                pair[0][4],
+            ),
+        )
+    ]
+    primary_action_id = active_actions[0]["action"]["action_id"] if active_actions else None
+    if new_count > 1:
+        mode = "batch_review"
+        summary = f"{new_count} new proposal(s) can be reviewed as grouped operator work."
+        next_action = "Save one review package, inspect grouped evidence, then queue only the right handoff(s)."
+    elif new_count == 1:
+        mode = "single_review"
+        summary = "One new proposal is ready for operator review."
+        next_action = "Save and validate a review package, then queue the handoff if the evidence is right."
+    elif queued_count or promoted_count:
+        mode = "lifecycle"
+        summary = "A proposal is already in the queue or promotion lifecycle."
+        next_action = "Finish the queued or promoted handoff before staging more work."
+    else:
+        mode = "monitor"
+        summary = (
+            f"{len(handled_actions)} handled proposal(s) are visible as history."
+            if handled_actions
+            else "No active proposals are waiting."
+        )
+        next_action = "Monitor for the next real proposal."
+    return {
+        "mode": mode,
+        "summary": summary,
+        "active_count": len(active_actions),
+        "new_count": new_count,
+        "queued_count": queued_count,
+        "promoted_count": promoted_count,
+        "handled_count": len(handled_actions),
+        "group_count": len(groups),
+        "primary_action_id": primary_action_id,
+        "groups": groups[:5],
+        "next_action": next_action,
+    }
+
+
 def _console_guide_step(
     *,
     step: int,
@@ -3648,6 +3784,10 @@ def run_coordination_console(*, hours: int = 2, limit: int = 5) -> CoordinationC
     handled_actions = [
         action for action in proposal_lineage if action["lineage_status"] in {"resolved", "ignored"}
     ]
+    proposal_review = _build_proposal_review(
+        active_actions=active_actions,
+        handled_actions=handled_actions,
+    )
 
     queue_health = queue["health"]
     next_signal = _build_next_signal_report(
@@ -3703,6 +3843,7 @@ def run_coordination_console(*, hours: int = 2, limit: int = 5) -> CoordinationC
         "dismissal_count": len(action_dismissals),
         "actions": active_actions[:safe_limit],
         "handled_actions": handled_actions[:safe_limit],
+        "proposal_review": proposal_review,
         "dismissals": action_dismissals[:safe_limit],
         "next_signal": next_signal,
         "queue_health": queue_health,

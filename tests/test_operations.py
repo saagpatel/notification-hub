@@ -252,6 +252,20 @@ def test_coordination_console_summarizes_ready_expansion() -> None:
                         "evidence_event_id": "event-1",
                         "evidence_timestamp": "2026-05-10T04:40:00+00:00",
                         "count": 3,
+                    },
+                    {
+                        "action_id": "action-2",
+                        "source": "personal-ops",
+                        "project": "mail",
+                        "intent": "waiting_on_user",
+                        "priority": "high",
+                        "state": "waiting",
+                        "title": "Approval Requested",
+                        "summary": "Second repeated mail approval.",
+                        "suggested_next_action": "Review the waiting item.",
+                        "evidence_event_id": "event-2",
+                        "evidence_timestamp": "2026-05-10T04:42:00+00:00",
+                        "count": 2,
                     }
                 ],
                 "review_package": {"status": "not_requested"},
@@ -293,10 +307,18 @@ def test_coordination_console_summarizes_ready_expansion() -> None:
 
     assert report["status"] == "ok"
     assert report["readiness"]["decision"] == "ready_to_expand"
-    assert report["action_count"] == 1
-    assert report["active_action_count"] == 1
+    assert report["action_count"] == 2
+    assert report["active_action_count"] == 2
     assert report["handled_action_count"] == 0
     assert report["actions"][0]["lineage_status"] == "new"
+    assert report["proposal_review"]["mode"] == "batch_review"
+    assert report["proposal_review"]["new_count"] == 2
+    assert report["proposal_review"]["group_count"] == 1
+    assert report["proposal_review"]["groups"][0]["action_count"] == 2
+    assert report["proposal_review"]["groups"][0]["total_event_count"] == 5
+    assert report["proposal_review"]["groups"][0]["newest_evidence_timestamp"] == (
+        "2026-05-10T04:42:00+00:00"
+    )
     assert report["next_signal"]["status"] == "ready"
     assert report["next_signal"]["title"] == "Active proposal waiting"
     assert report["guide_stage"] == "package_review"

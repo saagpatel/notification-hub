@@ -114,6 +114,9 @@ lineage as new, queued, promoted, resolved, or ignored so already-handled propos
 history without being treated as fresh work. Its operator guide names the current stage and exact
 safe commands for saving, validating, queueing, promoting, or outcome-syncing handoffs while keeping
 apply behavior outside notification-hub.
+The console also includes a proposal-review summary that groups active proposals by source, project,
+intent, priority, and state, so the operator can tell when to review one proposal alone versus
+staging a small batch package for inspection.
 The personal-ops-actions command turns inbox rollups into action proposals for review. It does not
 write to personal-ops; pass `--output path/to/actions.json` when you want a handoff file.
 It scans a deeper candidate set than the display limit, so dismissed or policy-covered rollups do not
@@ -215,8 +218,8 @@ queued/promoted/pending/stale/resolved handoffs, mark queued items reviewed/reje
 show pending outcome-sync reminders, list and inspect saved burn-in reports, list/undismiss action
 proposal dismissals, show the Coordination Console next signal, run the temporary operator handoff
 drill, delete saved review packages, validate the latest staged or saved package, and show the
-Coordination Console operator guide. These controls still do not apply, approve, send, or mutate
-personal-ops.
+Coordination Console operator guide plus proposal-review grouping. These controls still do not apply,
+approve, send, or mutate personal-ops.
 Coordination snapshots target bridge-db's `codex` snapshot shape: the emitted
 `bridge_snapshot` object can be passed as snapshot data after operator review, or saved directly
 with the explicit `--save-bridge-db` flag.

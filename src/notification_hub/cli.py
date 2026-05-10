@@ -861,8 +861,21 @@ def _print_coordination_console_report(report: CoordinationConsoleReport) -> Non
     print(f"- promoted pending: {queue['promoted_pending_count']}")
     print(f"- promoted stale: {queue['promoted_pending_stale_count']}")
     print(f"- burn-in reports: {len(report['burn_in_reports'])}")
+    proposal_review = report["proposal_review"]
+    print(f"- review mode: {proposal_review['mode']}")
+    print(f"- proposal groups: {proposal_review['group_count']}")
     print(f"- guide stage: {report['guide_stage']}")
     print(f"- next action: {report['next_action']}")
+    if proposal_review["groups"]:
+        print("- proposal groups:")
+        for group in proposal_review["groups"]:
+            project = f" ({group['project']})" if group["project"] else ""
+            print(
+                "  - "
+                f"x{group['action_count']} {group['source']}{project} "
+                f"{group['intent']} / {group['priority']}: "
+                f"{', '.join(group['titles'])}"
+            )
     if report["next_commands"]:
         print("- next commands:")
         for command in report["next_commands"]:

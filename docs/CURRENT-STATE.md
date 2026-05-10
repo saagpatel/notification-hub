@@ -58,7 +58,9 @@ tuning pass.
   the next safe action in one read-only view. The console separates active proposal lineage from
   handled history so resolved or ignored handoffs stop reappearing as fresh work, includes the next
   real signal lane, and includes a guided operator stage with exact safe commands for the current
-  handoff state.
+  handoff state. It now also includes a proposal-review summary that groups active proposals by
+  source, project, intent, priority, and state so the operator can distinguish single-proposal review
+  from a small batch package.
 - Action proposal export now scans a deeper candidate set than the display limit, so dismissed or
   policy-covered rollups cannot crowd out real lower-ranked operator signals from the default view.
 - Action proposal dismissals can now be listed, inspected, and undismissed through CLI and `/review`
@@ -76,7 +78,7 @@ tuning pass.
   inbox rollups, action proposals, and trust state without applying anything.
 - The review page now includes Operator Focus, Coordination Readiness, and Coordination Console
   summaries that put the current action state, expansion gate, next real signal, and next safe action
-  first.
+  first. A Proposal Review section shows grouped active proposals before a package is queued.
 - The review page can stage a local review package, list recent saved review packages, inspect
   package actions/evidence plus queue lineage, queue import handoff items, filter
   queued/promoted/pending/stale/resolved handoffs, mark queued items reviewed/rejected/snoozed/promoted,
@@ -216,6 +218,8 @@ tuning pass.
   history are visible separately in CLI, JSON, and `/review`.
 - Added a read-only Coordination Console operator guide so package review, queue review, promotion,
   outcome sync, and monitor states expose the current stage and safe next commands.
+- Added Coordination Console proposal-review grouping in CLI, JSON, and `/review` so multiple active
+  proposals can be reviewed as one operator batch without applying personal-ops work.
 - Added action proposal dismissal listing/undismiss commands and `/review` controls so temporarily
   hidden proposals can be audited or reactivated without deleting dismissal history.
 - Added operator daily-state and handoff-drill commands plus `/review` endpoints so local operators
@@ -420,10 +424,10 @@ It is not part of normal day-to-day work.
 
 Start future work from `main`, keep using the frozen verification commands, and treat the repo-owned
 runtime templates as the source of truth for live launcher and hook wiring.
-The next work here should keep `coordination-console` as the first expansion surface, run the
-operator guide through real handoff use, and watch whether proposal dismissals plus policy noise rules
-keep repeated mail/test signals quiet enough for broader coordination work. Keep apply behavior
-operator-mediated until the compact console proves it should own a broader workflow.
+The next work here should keep `coordination-console` as the first expansion surface, use proposal
+groups during real handoff review, and watch whether dismissals plus policy noise rules keep repeated
+mail/test signals quiet enough for broader coordination work. Keep apply behavior operator-mediated
+until the compact console proves it should own a broader workflow.
 
 ## Optional Follow-Up
 
