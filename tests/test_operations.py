@@ -693,7 +693,7 @@ def test_coordination_console_guides_queued_handoff_lifecycle() -> None:
                 "latest_burn_in_noise_candidates": 0,
                 "runtime_status": "degraded",
                 "policy_warning_count": 0,
-                "next_action": "Review queued personal-ops handoff items.",
+                "next_action": "Clear readiness noise before expanding coordination.",
                 "evidence": ["runtime=degraded", "queue=warn queued=1 pending=0 stale=0"],
                 "applied": False,
             },
