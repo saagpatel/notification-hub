@@ -513,6 +513,9 @@ def test_coordination_console_marks_handled_actions_as_history() -> None:
     assert report["handled_action_count"] == 1
     assert report["actions"] == []
     assert report["handled_actions"][0]["lineage_status"] == "resolved"
+    assert report["handled_actions"][0]["lineage_label"] == "Resolved"
+    assert report["proposal_review"]["resolved_count"] == 1
+    assert report["proposal_review"]["reviewed_only_count"] == 0
     assert report["handled_actions"][0]["queue_id"] == "queue-resolved"
     assert report["guide_stage"] == "monitor"
     assert report["guide_steps"][0]["summary"].startswith("1 handled proposal")
@@ -631,7 +634,14 @@ def test_coordination_console_treats_reviewed_handoff_as_history() -> None:
     assert report["active_action_count"] == 0
     assert report["handled_action_count"] == 1
     assert report["handled_actions"][0]["lineage_status"] == "reviewed"
+    assert report["handled_actions"][0]["lineage_label"] == "Reviewed only"
+    assert report["handled_actions"][0]["lineage_next_action"] == (
+        "Evidence was reviewed and no downstream promotion is required."
+    )
+    assert report["proposal_review"]["reviewed_only_count"] == 1
+    assert report["proposal_review"]["resolved_count"] == 0
     assert report["proposal_review"]["mode"] == "monitor"
+    assert "reviewed-only" in report["proposal_review"]["summary"]
     assert report["guide_stage"] == "monitor"
     assert report["next_action"] == "Monitor /review for the next real handoff signal."
 
@@ -1014,6 +1024,65 @@ def test_personal_ops_action_export_scans_past_dismissed_candidates(tmp_path: Pa
 
     assert [action["signal_body"] for action in second_report["actions"]] == ["Real reply needed"]
     assert second_report["dismissed_action_count"] == 1
+    mock_inbox.assert_called_once_with(hours=2, limit=25)
+
+
+def test_personal_ops_action_export_scans_past_policy_covered_candidates() -> None:
+    policy = PolicyConfig(
+        noise=NoisePolicy(
+            rules=(
+                NoiseRule(
+                    source="personal-ops",
+                    project="personal-ops",
+                    title_contains="system needs attention",
+                    body_contains="run personal-ops doctor",
+                ),
+            )
+        )
+    )
+    doctor_echo_rollup = {
+        "count": 3,
+        "source": "personal-ops",
+        "project": "personal-ops",
+        "intent": "needs_attention",
+        "level": "urgent",
+        "title": "System needs attention",
+        "body": "System needs attention: run personal-ops doctor",
+        "latest_timestamp": "2026-05-09T00:00:00+00:00",
+        "latest_event_id": "doctor123",
+    }
+    active_rollup = {
+        "count": 2,
+        "source": "personal-ops",
+        "project": "mail",
+        "intent": "waiting_on_user",
+        "level": "urgent",
+        "title": "Approval Requested",
+        "body": "Real reply needed",
+        "latest_timestamp": "2026-05-09T00:01:00+00:00",
+        "latest_event_id": "active123",
+    }
+    inbox_report: dict[str, object] = {
+        "status": "ok",
+        "hours": 2,
+        "events_seen": 5,
+        "needs_attention": [],
+        "waiting_or_blocked": [],
+        "ready": [],
+        "completed": [],
+        "rollups": [doctor_echo_rollup, active_rollup],
+        "noise_candidates": [],
+        "error": None,
+    }
+
+    with (
+        patch("notification_hub.operations.get_policy_config", return_value=policy),
+        patch("notification_hub.operations.run_inbox", return_value=inbox_report) as mock_inbox,
+    ):
+        report = run_personal_ops_action_export(hours=2, limit=1)
+
+    assert [action["signal_body"] for action in report["actions"]] == ["Real reply needed"]
+    assert report["dismissed_action_count"] == 1
     mock_inbox.assert_called_once_with(hours=2, limit=25)
 
 

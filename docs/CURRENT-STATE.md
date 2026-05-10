@@ -37,6 +37,9 @@ tuning pass.
   snoozed, superseded, and promoted. Queue health is visible in status and runtime verification.
 - The Coordination Console now treats reviewed and snoozed handoffs as handled history instead of
   active lifecycle blockers once queue health is clean.
+- Proposal Review now splits handled history into reviewed-only, resolved, closed, and snoozed
+  counts, so intentionally reviewed-but-not-promoted handoffs are visible without looking like
+  unfinished promotion work.
 - The first real operator-mediated promotion proof has completed, and the current live queue has no
   queued, pending, or stale promoted handoff outcomes.
 - Queue maintenance now has a dedicated `personal-ops-queue-health` command that reports queued
@@ -90,6 +93,9 @@ tuning pass.
 - The sample and live policy now also cover repeated personal-ops mail `Send Succeeded` events for
   `Console reply needed`, after a real-use route-aware review pass showed them as success chatter
   rather than operator work.
+- The sample policy now also covers the repeated personal-ops `System needs attention: run
+  personal-ops doctor` diagnostic echo, keeping already-satisfied doctor prompts from resurfacing as
+  fresh proposal work when the active policy includes the sample rule.
 - A localhost-only review page is available at `/review` on the daemon. It shows runtime health,
   inbox rollups, action proposals, and trust state without applying anything.
 - The review page now includes Operator Focus, Coordination Readiness, and Coordination Console
@@ -97,6 +103,9 @@ tuning pass.
   first. A Proposal Review section shows grouped active proposals before a package is queued and can
   save, queue, mark as needing follow-up, or dismiss one proposal group at a time. It also shows
   recent group-history entries so a refresh does not hide the last grouped action.
+- Codex now has an active `notification-hub-signal-watch` heartbeat that should stay report-only and
+  use the read-only Coordination Console, queue health, and runtime verification surfaces to decide
+  whether there is an active operator handoff or only a monitor posture.
 - Proposal Review now adds advisory mail routing recommendations for personal-ops mail approval
   groups, with promote, suppress, and follow-up counts. This helps split concrete reply candidates
   from repeated phase/workflow chatter without auto-promoting or auto-suppressing anything.
@@ -357,7 +366,8 @@ Expected current outcome:
 - `notification-hub personal-ops-import`: validates a package and stops before mutation; `--enqueue`
   adds valid action proposals to the local import queue while keeping `applied: false`
 - `notification-hub personal-ops-queue`: lists and updates queued handoff lifecycle state without
-  creating personal-ops tasks, approvals, or sends
+  creating personal-ops tasks, approvals, or sends; `reviewed` is the reviewed-only lane for
+  evidence-checked items that do not need downstream personal-ops promotion
 - `notification-hub personal-ops-queue-health`: reports routine import queue maintenance state,
   stale pending promoted outcomes, and next safe commands without applying work
 - `notification-hub-personal-ops-queue-health`: script shortcut for the same queue-health report
