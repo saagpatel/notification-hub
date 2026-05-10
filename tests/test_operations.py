@@ -1501,6 +1501,27 @@ def test_operator_review_session_summarizes_recent_group_and_queue_activity(
     assert report["route_counts"] == {"promote": 2, "suppress": 1}
     assert len(report["group_summaries"]) == 2
     assert report["recent_queue_items"][0]["queue_id"] == "queue-active"
+    assert report["report_file"]["status"] == "not_requested"
+
+
+def test_operator_review_session_can_save_report(tmp_path: Path) -> None:
+    report = run_operator_review_session(
+        hours=2,
+        limit=10,
+        queue_path=tmp_path / "missing-queue.jsonl",
+        group_history_path=tmp_path / "missing-history.jsonl",
+        save_report=True,
+        report_dir=tmp_path / "reports",
+    )
+
+    assert report["status"] == "ok"
+    report_file = report["report_file"]
+    assert report_file["status"] == "ok"
+    report_path = Path(str(report_file["path"]))
+    payload = json.loads(report_path.read_text(encoding="utf-8"))
+    assert payload["schema_version"] == "notification-hub.operator_review_session.v1"
+    assert payload["report"]["applied"] is False
+    assert payload["report"]["group_history_count"] == 0
 
 
 def test_action_proposal_group_dismisses_each_current_match(tmp_path: Path) -> None:

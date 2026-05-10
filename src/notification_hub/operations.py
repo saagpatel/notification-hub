@@ -248,6 +248,7 @@ class OperatorReviewSessionReport(TypedDict):
     recent_group_history: list[ActionProposalGroupHistoryReport]
     recent_queue_items: list[PersonalOpsImportQueueItemReport]
     next_action: str
+    report_file: dict[str, object]
     applied: bool
 
 
@@ -748,6 +749,7 @@ BRIDGE_SNAPSHOT_RETENTION_PER_SYSTEM = 10
 ACTION_EXPORT_DIR = EVENTS_DIR / "action-exports"
 BURN_IN_REPORT_DIR = EVENTS_DIR / "burn-in-reports"
 OPERATOR_STATE_REPORT_DIR = EVENTS_DIR / "operator-state-reports"
+OPERATOR_REVIEW_SESSION_REPORT_DIR = EVENTS_DIR / "operator-review-session-reports"
 PERSONAL_OPS_IMPORT_QUEUE = EVENTS_DIR / "personal-ops-import-queue.jsonl"
 ACTION_PROPOSAL_DISMISSALS = EVENTS_DIR / "action-proposal-dismissals.jsonl"
 ACTION_PROPOSAL_GROUP_HISTORY = EVENTS_DIR / "action-proposal-group-history.jsonl"
@@ -1763,6 +1765,8 @@ def run_operator_review_session(
     *,
     hours: int = 2,
     limit: int = 25,
+    save_report: bool = False,
+    report_dir: Path | None = None,
     queue_path: Path | None = None,
     group_history_path: Path | None = None,
 ) -> OperatorReviewSessionReport:
@@ -1844,7 +1848,7 @@ def run_operator_review_session(
     else:
         next_action = "No recent review-session activity found in this window."
 
-    return {
+    report: OperatorReviewSessionReport = {
         "status": status,
         "generated_at": now.isoformat(),
         "hours": bounded_hours,
@@ -1863,7 +1867,55 @@ def run_operator_review_session(
         "recent_group_history": recent_group_history,
         "recent_queue_items": recent_queue_items,
         "next_action": next_action,
+        "report_file": {
+            "requested": save_report,
+            "status": "not_requested",
+            "path": str(report_dir) if report_dir is not None else None,
+            "error": None,
+        },
         "applied": False,
+    }
+    if save_report:
+        report_file = write_operator_review_session_report(report, output_dir=report_dir)
+        report["report_file"] = report_file
+        if report_file["status"] != "ok":
+            report["status"] = "warn"
+    return report
+
+
+def write_operator_review_session_report(
+    report: OperatorReviewSessionReport,
+    *,
+    output_dir: Path | None = None,
+) -> dict[str, object]:
+    target_dir = output_dir or OPERATOR_REVIEW_SESSION_REPORT_DIR
+    generated_at = datetime.now(timezone.utc)
+    target_path = target_dir / (
+        f"operator-review-session-{generated_at.strftime('%Y%m%d-%H%M%S')}.json"
+    )
+    payload = {
+        "schema_version": "notification-hub.operator_review_session.v1",
+        "generated_at": generated_at.isoformat(),
+        "report": {key: value for key, value in report.items() if key != "report_file"},
+    }
+    try:
+        target_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        fd = os.open(str(target_path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+    except OSError as exc:
+        return {
+            "requested": True,
+            "status": "degraded",
+            "path": str(target_path),
+            "error": str(exc),
+        }
+    return {
+        "requested": True,
+        "status": "ok",
+        "path": str(target_path),
+        "error": None,
     }
 
 

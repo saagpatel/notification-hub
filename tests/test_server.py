@@ -1300,6 +1300,7 @@ async def test_review_operator_review_session_endpoint_is_read_only(client: Asyn
             "recent_group_history": [],
             "recent_queue_items": [],
             "next_action": "Recent review activity is summarized.",
+            "report_file": {"requested": False, "status": "not_requested"},
             "applied": False,
         },
     ) as mock_review_session:
@@ -1310,7 +1311,48 @@ async def test_review_operator_review_session_endpoint_is_read_only(client: Asyn
     assert data["status"] == "ok"
     assert data["applied"] is False
     assert data["route_counts"] == {"promote": 1}
-    mock_review_session.assert_called_once_with(hours=4, limit=7)
+    mock_review_session.assert_called_once_with(hours=4, limit=7, save_report=False)
+
+
+async def test_review_operator_review_session_endpoint_can_save_report(
+    client: AsyncClient,
+) -> None:
+    with patch(
+        "notification_hub.server.run_operator_review_session",
+        return_value={
+            "status": "ok",
+            "generated_at": "2026-05-10T04:52:00+00:00",
+            "hours": 2,
+            "since": "2026-05-10T02:52:00+00:00",
+            "group_history_count": 0,
+            "queue_item_count": 0,
+            "saved_count": 0,
+            "queued_count": 0,
+            "dismissed_count": 0,
+            "outcome_count": 0,
+            "reviewed_count": 0,
+            "active_queue_count": 0,
+            "pending_promotion_count": 0,
+            "route_counts": {},
+            "group_summaries": [],
+            "recent_group_history": [],
+            "recent_queue_items": [],
+            "next_action": "No recent review-session activity found in this window.",
+            "report_file": {
+                "requested": True,
+                "status": "ok",
+                "path": "/tmp/operator-review-session.json",
+                "error": None,
+            },
+            "applied": False,
+        },
+    ) as mock_review_session:
+        resp = await client.get("/review/operator-review-session?save_report=true")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["report_file"]["status"] == "ok"
+    mock_review_session.assert_called_once_with(hours=2, limit=25, save_report=True)
 
 
 async def test_review_operator_handoff_drill_endpoint_is_temporary(client: AsyncClient) -> None:

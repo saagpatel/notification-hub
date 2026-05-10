@@ -76,7 +76,8 @@ tuning pass.
   notification-hub runtime state.
 - An `operator-review-session` command and `/review/operator-review-session` endpoint now summarize
   recent local review activity across grouped proposal saves, queues, dismissals, outcomes, and
-  queue follow-through. The `/review` Operator State panel shows this alongside the daily state.
+  queue follow-through. The `/review` Operator State panel shows this alongside the daily state, and
+  `--save-report` or `save_report=true` writes timestamped local JSON audit reports.
 - An `operator-handoff-drill` command and `/review/operator-handoff-drill` endpoint now run the
   temporary handoff lifecycle plus queue burn-in as a non-applying rehearsal.
 - The sample policy now includes the repeated `personal-ops` daemon-start and `notion-os`
@@ -362,7 +363,8 @@ Expected current outcome:
 - `notification-hub operator-daily-state`: builds a read-only, resume-ready operator state payload;
   `--save-report` writes a local JSON report when durable evidence is useful
 - `notification-hub operator-review-session`: summarizes recent local review-session activity
-  without applying work
+  without applying work; `--save-report` writes a local JSON audit report when durable evidence is
+  useful
 - `notification-hub operator-handoff-drill`: runs the temporary queue lifecycle and queue burn-in
   together without touching the live operator queue
 - `/review/burn-in-reports` and `/review/burn-in-report/{name}`: list and inspect saved queue
@@ -396,7 +398,7 @@ Expected current outcome:
   applying downstream work
 - `/review/operator-daily-state`: returns a read-only operator state payload for the review surface
 - `/review/operator-review-session`: returns a read-only summary of recent grouped-review and queue
-  follow-through activity
+  follow-through activity; `save_report=true` writes the same summary to local runtime state
 - `POST /review/operator-handoff-drill`: runs the temporary handoff lifecycle from the review surface
   without touching the live queue
 - `PATCH /review/import-queue/{queue_id}`: marks a queued handoff reviewed, rejected, snoozed,

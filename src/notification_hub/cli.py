@@ -499,6 +499,15 @@ def _build_parser(prog: str = "notification-hub") -> argparse.ArgumentParser:
         help="Maximum group-history and queue items to include.",
     )
     operator_review_session.add_argument(
+        "--save-report",
+        action="store_true",
+        help="Save a timestamped review-session JSON report under local runtime state.",
+    )
+    operator_review_session.add_argument(
+        "--report-dir",
+        help="Optional directory for saved review-session reports.",
+    )
+    operator_review_session.add_argument(
         "--json",
         action="store_true",
         help="Emit the operator review-session report as JSON.",
@@ -1086,6 +1095,11 @@ def _print_operator_review_session_report(report: OperatorReviewSessionReport) -
             f"{route}={count}" for route, count in sorted(report["route_counts"].items())
         )
         print(f"- routes: {routes}")
+    report_file = report["report_file"]
+    if report_file.get("requested"):
+        print(f"- report file: {report_file.get('status')}")
+        if report_file.get("path") is not None:
+            print(f"- report path: {report_file.get('path')}")
     print(f"- next action: {report['next_action']}")
 
 
@@ -1603,7 +1617,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0 if report["status"] == "ok" else 1
 
     if args.command == "operator-review-session":
-        report = run_operator_review_session(hours=args.hours, limit=args.limit)
+        report = run_operator_review_session(
+            hours=args.hours,
+            limit=args.limit,
+            save_report=args.save_report,
+            report_dir=Path(args.report_dir).expanduser() if args.report_dir else None,
+        )
         if args.json:
             print(json.dumps(report, indent=2, sort_keys=True))
         else:

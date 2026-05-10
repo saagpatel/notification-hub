@@ -362,6 +362,7 @@ REVIEW_HTML = """<!doctype html>
       </div>
       <div class="actions">
         <button id="savePackage" type="button">Save package</button>
+        <button id="saveSession" type="button">Save session</button>
         <button id="validatePackage" type="button">Validate package</button>
         <button id="runDrill" type="button">Run drill</button>
         <button id="refresh" type="button">Refresh</button>
@@ -828,8 +829,12 @@ REVIEW_HTML = """<!doctype html>
       const data = await res.json();
       const sessionRes = await fetch("/review/operator-review-session?hours=2&limit=10");
       const session = await sessionRes.json();
+      renderOperatorState(data, session);
+    }
+    function renderOperatorState(data, session) {
       const queue = (data.queue_health || {}).health || {};
       const signal = ((data.coordination_console || {}).next_signal) || {};
+      const reportFile = session.report_file || {};
       operatorState.replaceChildren(
         item(`<div class="line"><span class="title">Daily state</span><span class="meta">${esc(data.status)}</span></div>`),
         item(`<div class="badge-row">
@@ -850,8 +855,16 @@ REVIEW_HTML = """<!doctype html>
           ${warnBadge(`active ${session.active_queue_count ?? 0}`, (session.active_queue_count ?? 0) > 0)}
           ${warnBadge(`pending ${session.pending_promotion_count ?? 0}`, (session.pending_promotion_count ?? 0) > 0)}
         </div>`),
+        reportFile.requested ? item(`<div class="next"><strong>Saved report</strong>: ${esc(reportFile.status || "unknown")}${reportFile.path ? " / " + esc(reportFile.path) : ""}</div>`) : item(`<div class="next">No review-session report saved in this refresh.</div>`),
         item(`<div class="next">${esc(session.next_action || "")}</div>`)
       );
+    }
+    async function saveReviewSession() {
+      const dailyRes = await fetch("/review/operator-daily-state?hours=24&limit=5");
+      const daily = await dailyRes.json();
+      const sessionRes = await fetch("/review/operator-review-session?hours=2&limit=25&save_report=true");
+      const session = await sessionRes.json();
+      renderOperatorState(daily, session);
     }
     async function runHandoffDrill() {
       const res = await fetch("/review/operator-handoff-drill", { method: "POST" });
@@ -1111,6 +1124,7 @@ REVIEW_HTML = """<!doctype html>
     document.getElementById("refresh").addEventListener("click", load);
     importQueueFilter.addEventListener("change", loadImportQueue);
     document.getElementById("savePackage").addEventListener("click", () => post("/review/save-package"));
+    document.getElementById("saveSession").addEventListener("click", saveReviewSession);
     document.getElementById("validatePackage").addEventListener("click", () => post("/review/validate-package"));
     document.getElementById("runDrill").addEventListener("click", runHandoffDrill);
     load().catch(err => {
@@ -1565,12 +1579,14 @@ async def review_operator_daily_state(
 async def review_operator_review_session(
     hours: int = 2,
     limit: int = 25,
+    save_report: bool = False,
 ) -> dict[str, object]:
     """Summarize recent review-session activity without applying work."""
     report = await asyncio.to_thread(
         run_operator_review_session,
         hours=max(hours, 1),
         limit=max(limit, 1),
+        save_report=save_report,
     )
     return dict(report)
 
