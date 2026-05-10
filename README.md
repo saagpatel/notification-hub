@@ -186,7 +186,11 @@ records can also store the personal-ops suggestion id and final `pending`, `acce
 The Coordination Console treats reviewed, follow-up, and snoozed handoffs as handled history, so
 they do not block readiness once queue health is clean. Proposal Review also breaks handled history
 into reviewed-only, follow-up, resolved, closed, and snoozed counts so reviewed-but-not-promoted work
-is visible.
+is visible. Handled mail follow-ups are summarized separately with rich/thin evidence counts, so
+repeated handled mail echoes remain reviewable history without looking like fresh operator work.
+The console also reports promoted handoff outcome quality by rich versus thin evidence and narrows
+the monitor posture to notify only on active proposals, queued handoffs, pending promoted outcomes,
+runtime degradation, or repeated diagnostic echoes.
 The personal-ops-queue-health command is the normal maintenance check for this queue. It reports
 queued item age, promoted handoffs still waiting on downstream outcome sync, stale pending
 promotions, and the next safe operator commands without applying work.

@@ -42,6 +42,11 @@ tuning pass.
 - Proposal Review now splits handled history into reviewed-only, follow-up, resolved, closed, and
   snoozed counts, so intentionally reviewed-but-not-promoted or follow-up-only handoffs are visible
   without looking like unfinished promotion work.
+- Handled mail follow-ups now get their own calm history summary with rich/thin evidence counts, so
+  repeated handled mail echoes do not read as new active operator work.
+- The Coordination Console now reports promoted handoff outcome quality by rich versus thin
+  evidence and narrows the monitor posture to notify only on active proposals, queued handoffs,
+  pending promoted outcomes, runtime degradation, or repeated diagnostic echoes.
 - The first real operator-mediated promotion proof has completed, and the current live queue has no
   queued, pending, or stale promoted handoff outcomes.
 - Queue maintenance now has dedicated `personal-ops-queue-health` and `personal-ops-queue-review`
@@ -117,7 +122,7 @@ tuning pass.
   the latest saved review-session report are also visible from the review surface.
 - Codex now has an active `notification-hub-signal-watch` heartbeat that should stay report-only and
   use the read-only Coordination Console, queue health, and runtime verification surfaces to decide
-  whether there is an active operator handoff or only a monitor posture.
+  whether there is an active operator handoff or only the narrowed monitor posture.
 - Proposal Review now adds advisory mail routing recommendations for personal-ops mail approval
   groups, with promote, suppress, and follow-up counts. This helps split concrete reply candidates
   from repeated phase/workflow chatter without auto-promoting or auto-suppressing anything.

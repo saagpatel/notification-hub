@@ -989,8 +989,13 @@ def _print_coordination_console_report(report: CoordinationConsoleReport) -> Non
     print(f"- promoted stale: {queue['promoted_pending_stale_count']}")
     print(f"- burn-in reports: {len(report['burn_in_reports'])}")
     proposal_review = report["proposal_review"]
+    outcome_quality = report["outcome_quality"]
+    next_signal = report["next_signal"]
     print(f"- review mode: {proposal_review['mode']}")
     print(f"- proposal groups: {proposal_review['group_count']}")
+    print(f"- handled mail: {proposal_review['handled_mail_count']}")
+    print(f"- outcome quality: {outcome_quality['summary']}")
+    print(f"- watch posture: {next_signal['watch_posture']}")
     print(f"- guide stage: {report['guide_stage']}")
     print(f"- next action: {report['next_action']}")
     if proposal_review["groups"]:

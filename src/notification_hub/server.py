@@ -650,6 +650,7 @@ REVIEW_HTML = """<!doctype html>
       const queue = data.queue_health || {};
       const reminder = data.outcome_sync_reminder || {};
       const signal = data.next_signal || {};
+      const outcomeQuality = data.outcome_quality || {};
       const review = data.proposal_review || {};
       const guideSteps = data.guide_steps || [];
       const guideRows = guideSteps.slice(0, 4).map(step => item(`
@@ -669,8 +670,11 @@ REVIEW_HTML = """<!doctype html>
           ${warnBadge(`stale ${queue.promoted_pending_stale_count ?? 0}`, (queue.promoted_pending_stale_count ?? 0) > 0)}
           ${warnBadge(`reminders ${reminder.pending_count ?? 0}`, (reminder.pending_count ?? 0) > 0)}
           ${badge(`reports ${(data.burn_in_reports || []).length}`)}
+          ${badge(signal.watch_posture || "monitor")}
         </div>
         <div class="next"><strong>Guide</strong>: ${esc(data.guide_stage || "unknown")}</div>
+        <div class="next"><strong>Outcome quality</strong>: ${esc(outcomeQuality.summary || "No promoted handoff outcomes are recorded yet.")}</div>
+        ${signal.quiet_reason ? `<div class="next"><strong>Quiet reason</strong>: ${esc(signal.quiet_reason)}</div>` : ""}
         <div class="next">${esc(data.next_action || "")}</div>
       `), ...(guideRows.length ? guideRows : [item(`<div class="next">No guide steps.</div>`)]));
       const reviewGroups = review.groups || [];
@@ -712,8 +716,10 @@ REVIEW_HTML = """<!doctype html>
           ${badge(`resolved ${review.resolved_count ?? 0}`)}
           ${badge(`closed ${review.ignored_count ?? 0}`)}
           ${badge(`handled ${review.handled_count ?? 0}`)}
+          ${badge(`mail ${review.handled_mail_count ?? 0}`)}
         </div>
         <div class="next">${esc(review.summary || "")}</div>
+        ${review.handled_history_summary ? `<div class="next">${esc(review.handled_history_summary)}</div>` : ""}
         <div class="next">${esc(review.next_action || "")}</div>
         ${(review.group_history || []).slice(0, 3).map(entry => `<div class="next"><strong>Recent group action</strong>: ${esc(entry.event_type)} ${esc(entry.group_key)} (${esc(entry.status)})</div>`).join("")}
       `), ...(groupRows.length ? groupRows : [item(`<div class="next">No active proposal groups.</div>`)]));
