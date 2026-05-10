@@ -24,6 +24,7 @@ from notification_hub.operations import (
     list_personal_ops_queue_burn_in_reports,
     load_action_review_package_detail,
     load_personal_ops_queue_burn_in_report_detail,
+    run_coordination_readiness,
     run_inbox,
     run_personal_ops_action_export,
     run_personal_ops_import_queue_health_check,
@@ -360,6 +361,10 @@ REVIEW_HTML = """<!doctype html>
       <h2>Operator Focus</h2>
       <ul id="operatorFocus"></ul>
     </section>
+    <section class="focus">
+      <h2>Coordination Readiness</h2>
+      <ul id="coordinationReadiness"></ul>
+    </section>
     <div class="grid">
       <section>
         <h2>Action Proposals</h2>
@@ -418,6 +423,7 @@ REVIEW_HTML = """<!doctype html>
   <script>
     const summary = document.getElementById("summary");
     const operatorFocus = document.getElementById("operatorFocus");
+    const coordinationReadiness = document.getElementById("coordinationReadiness");
     const actions = document.getElementById("actions");
     const rollups = document.getElementById("rollups");
     const attention = document.getElementById("attention");
@@ -496,6 +502,21 @@ REVIEW_HTML = """<!doctype html>
           ${badge(`actions ${focus.action_count ?? 0}`)}
         </div>
         <div class="next">${esc(focus.next_action || "")}</div>
+      `));
+      const readiness = data.coordination_readiness || {};
+      coordinationReadiness.replaceChildren(item(`
+        <div class="line"><span class="title">${esc(readiness.decision || "unknown")}</span><span class="meta">${esc(readiness.status || "unknown")}</span></div>
+        <div class="badge-row">
+          ${badge(`runtime ${readiness.runtime_status || "unknown"}`)}
+          ${warnBadge(`policy ${readiness.policy_warning_count ?? 0}`, (readiness.policy_warning_count ?? 0) > 0)}
+          ${warnBadge(`queued ${readiness.queued_count ?? 0}`, (readiness.queued_count ?? 0) > 0)}
+          ${warnBadge(`pending ${readiness.pending_count ?? 0}`, (readiness.pending_count ?? 0) > 0)}
+          ${warnBadge(`stale ${readiness.stale_count ?? 0}`, (readiness.stale_count ?? 0) > 0)}
+          ${warnBadge(`noise ${readiness.latest_burn_in_noise_candidates ?? 0}`, (readiness.latest_burn_in_noise_candidates ?? 0) > 0)}
+          ${badge(`reports ${readiness.saved_burn_in_reports ?? 0}`)}
+        </div>
+        <div class="next">${esc(readiness.summary || "")}</div>
+        <div class="next">${esc(readiness.next_action || "")}</div>
       `));
       renderList(actions, data.actions.actions, a => item(`
         <div class="line"><span class="title">${esc(a.title)}</span><span class="meta">${esc(a.priority)}/${esc(a.state)} x${esc(a.count)}</span></div>
@@ -882,6 +903,10 @@ async def review_data(hours: int = 2, limit: int = 6) -> dict[str, object]:
     runtime = await _review_runtime_status()
     queue_health = run_personal_ops_import_queue_health_check(limit=safe_limit)
     outcome_sync_reminder = run_personal_ops_outcome_sync_reminder(limit=safe_limit)
+    coordination_readiness = await asyncio.to_thread(
+        run_coordination_readiness,
+        limit=safe_limit,
+    )
     operator_focus = _review_operator_focus(
         runtime=runtime,
         action_count=len(actions["actions"]),
@@ -904,6 +929,7 @@ async def review_data(hours: int = 2, limit: int = 6) -> dict[str, object]:
             and runtime["status"] == "ok"
             and queue_health["status"] == "ok"
             and outcome_sync_reminder["status"] == "ok"
+            and coordination_readiness["status"] == "ok"
         )
         else "degraded",
         "hours": safe_hours,
@@ -912,6 +938,7 @@ async def review_data(hours: int = 2, limit: int = 6) -> dict[str, object]:
         "inbox": inbox,
         "actions": actions,
         "operator_focus": operator_focus,
+        "coordination_readiness": coordination_readiness,
         "queue_health": queue_health["health"],
         "outcome_sync_reminder": outcome_sync_reminder,
         "trust": {
@@ -1004,6 +1031,13 @@ async def review_burn_in_reports(limit: int = 10) -> dict[str, object]:
 async def review_burn_in_report_detail(name: str) -> dict[str, object]:
     """Inspect one saved queue burn-in report without applying work."""
     return dict(load_personal_ops_queue_burn_in_report_detail(name=name))
+
+
+@app.get("/review/coordination-readiness")
+async def review_coordination_readiness(limit: int = 5) -> dict[str, object]:
+    """Summarize coordination expansion readiness without applying work."""
+    report = await asyncio.to_thread(run_coordination_readiness, limit=max(limit, 1))
+    return dict(report)
 
 
 @app.get("/review/outcome-sync-reminder")

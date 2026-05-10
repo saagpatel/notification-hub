@@ -13,6 +13,7 @@ from pytest import MonkeyPatch
 from notification_hub.cli import (
     burn_in_main,
     bootstrap_config_main,
+    coordination_readiness_main,
     coordination_snapshot_main,
     delivery_check_main,
     doctor_main,
@@ -217,6 +218,26 @@ def _import_queue_health(
         "oldest_promoted_pending_age_seconds": 7200.0 if promoted_pending_count else None,
         "stale_after_hours": 4.0,
         "next_action": next_action,
+    }
+
+
+def _coordination_readiness_report(status: str = "ok") -> dict[str, object]:
+    return {
+        "status": status,
+        "decision": "ready_to_expand" if status == "ok" else "fix_noise_first",
+        "summary": "Runtime, queue, and saved burn-in evidence are ready.",
+        "queue_status": "ok",
+        "queued_count": 0,
+        "pending_count": 0,
+        "stale_count": 0,
+        "saved_burn_in_reports": 1,
+        "latest_burn_in_ready": True,
+        "latest_burn_in_noise_candidates": 0,
+        "runtime_status": "ok",
+        "policy_warning_count": 0,
+        "next_action": "Plan the next compact coordination console slice.",
+        "evidence": ["runtime=ok"],
+        "applied": False,
     }
 
 
@@ -1192,6 +1213,19 @@ def test_cli_coordination_snapshot_json_output(capsys: CaptureFixture[str]) -> N
     )
 
 
+def test_cli_coordination_readiness_json_output(capsys: CaptureFixture[str]) -> None:
+    with patch(
+        "notification_hub.cli.run_coordination_readiness",
+        return_value=_coordination_readiness_report(),
+    ) as mock_readiness:
+        exit_code = main(["coordination-readiness", "--json", "--limit", "3"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert '"decision": "ready_to_expand"' in captured.out
+    mock_readiness.assert_called_once_with(limit=3)
+
+
 def test_cli_coordination_snapshot_writes_output(
     tmp_path: Path, capsys: CaptureFixture[str]
 ) -> None:
@@ -1927,6 +1961,19 @@ def test_coordination_snapshot_wrapper_forwards_flags(capsys: CaptureFixture[str
         save_bridge_db=False,
         bridge_db_path=None,
     )
+
+
+def test_coordination_readiness_wrapper_forwards_flags(capsys: CaptureFixture[str]) -> None:
+    with patch(
+        "notification_hub.cli.run_coordination_readiness",
+        return_value=_coordination_readiness_report(),
+    ) as mock_readiness:
+        exit_code = coordination_readiness_main(["--json", "--limit", "2"])
+
+    output = capsys.readouterr()
+    assert exit_code == 0
+    assert '"saved_burn_in_reports": 1' in output.out
+    mock_readiness.assert_called_once_with(limit=2)
 
 
 def test_personal_ops_actions_wrapper_forwards_flags(capsys: CaptureFixture[str]) -> None:

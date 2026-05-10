@@ -52,6 +52,8 @@ uv run notification-hub-inbox --json
 uv run notification-hub coordination-snapshot
 uv run notification-hub-coordination-snapshot --json
 uv run notification-hub coordination-snapshot --save-bridge-db
+uv run notification-hub coordination-readiness
+uv run notification-hub-coordination-readiness --json
 uv run notification-hub personal-ops-actions
 uv run notification-hub-personal-ops-actions --json
 uv run notification-hub personal-ops-actions --save-review-package
@@ -96,6 +98,9 @@ By default it only prints the snapshot; pass `--output path/to/snapshot.json` wh
 durable file for a bridge-db import step.
 Pass `--save-bridge-db` when you intentionally want to insert the snapshot into bridge-db as a Codex
 system snapshot. Use `--bridge-db-path` to target a non-default database during testing.
+The coordination-readiness command combines runtime status, queue state, and saved queue burn-in
+report history into one compact expansion gate. It returns `fix_noise_first`, `keep_burning_in`, or
+`ready_to_expand` without applying work.
 The personal-ops-actions command turns inbox rollups into action proposals for review. It does not
 write to personal-ops; pass `--output path/to/actions.json` when you want a handoff file.
 Pass `--save-review-package` when you want notification-hub to stage a local review package under
@@ -334,6 +339,7 @@ uv run --frozen notification-hub status
 uv run --frozen notification-hub inbox
 uv run --frozen notification-hub coordination-snapshot
 uv run --frozen notification-hub coordination-snapshot --save-bridge-db
+uv run --frozen notification-hub coordination-readiness
 uv run --frozen notification-hub personal-ops-actions
 uv run --frozen notification-hub personal-ops-actions --save-review-package
 uv run --frozen notification-hub validate-action-package path/to/actions.json
@@ -355,6 +361,7 @@ curl http://127.0.0.1:9199/review/packages
 curl http://127.0.0.1:9199/review/package/personal-ops-actions-YYYYMMDD-HHMMSS.json
 curl -X POST http://127.0.0.1:9199/review/package/personal-ops-actions-YYYYMMDD-HHMMSS.json/queue
 curl http://127.0.0.1:9199/review/import-queue
+curl http://127.0.0.1:9199/review/coordination-readiness
 curl http://127.0.0.1:9199/review/outcome-sync-reminder
 curl -X PATCH http://127.0.0.1:9199/review/import-queue/QUEUE_ID \
   -H 'Content-Type: application/json' \

@@ -472,6 +472,24 @@ class StatusReport(TypedDict):
     next_action: str
 
 
+class CoordinationReadinessReport(TypedDict):
+    status: str
+    decision: str
+    summary: str
+    queue_status: str
+    queued_count: int
+    pending_count: int
+    stale_count: int
+    saved_burn_in_reports: int
+    latest_burn_in_ready: bool | None
+    latest_burn_in_noise_candidates: int | None
+    runtime_status: str
+    policy_warning_count: int
+    next_action: str
+    evidence: list[str]
+    applied: bool
+
+
 DEFAULT_BRIDGE_DB_PATH = Path.home() / ".local" / "share" / "bridge-db" / "bridge.db"
 BRIDGE_SNAPSHOT_RETENTION_PER_SYSTEM = 10
 ACTION_EXPORT_DIR = EVENTS_DIR / "action-exports"
@@ -2748,4 +2766,80 @@ def run_status() -> StatusReport:
         "slack_delivery_failures": slack_delivery_failures,
         "import_queue": import_queue,
         "next_action": next_action,
+    }
+
+
+def run_coordination_readiness(*, limit: int = 5) -> CoordinationReadinessReport:
+    """Summarize whether the operator loop is ready for broader coordination work."""
+    runtime_status = run_status()
+    queue = runtime_status["import_queue"]
+    reports = list_personal_ops_queue_burn_in_reports(limit=max(limit, 1))
+    latest_report = reports[0] if reports else None
+    queued_count = queue["queued_count"]
+    pending_count = queue["promoted_pending_count"]
+    stale_count = queue["promoted_pending_stale_count"]
+    latest_ready = (
+        latest_report["ready_for_live_promotion"] if latest_report is not None else None
+    )
+    latest_noise = latest_report["noise_candidate_count"] if latest_report is not None else None
+
+    evidence = [
+        f"runtime={runtime_status['status']}",
+        f"queue={queue['status']} queued={queued_count} pending={pending_count} stale={stale_count}",
+        f"saved_burn_in_reports={len(reports)}",
+    ]
+    if latest_report is not None:
+        evidence.append(
+            "latest_burn_in="
+            f"{latest_report['status']} ready={latest_report['ready_for_live_promotion']} "
+            f"noise={latest_report['noise_candidate_count']}"
+        )
+
+    if runtime_status["status"] != "ok" or runtime_status["policy_warning_count"] > 0:
+        decision = "fix_noise_first"
+        status = "warn"
+        summary = "Runtime or policy needs attention before expanding coordination."
+        next_action = runtime_status["next_action"]
+    elif queued_count > 0 or pending_count > 0 or stale_count > 0:
+        decision = "keep_burning_in"
+        status = "warn" if stale_count > 0 else "ok"
+        summary = "Operator queue has active handoff state; finish the loop before expanding."
+        next_action = queue["next_action"]
+    elif latest_report is None:
+        decision = "keep_burning_in"
+        status = "ok"
+        summary = "Runtime is healthy, but there is not enough saved burn-in evidence yet."
+        next_action = "Run personal-ops-queue-burn-in --save-report around real operator use."
+    elif latest_report["noise_candidate_count"] > 0:
+        decision = "fix_noise_first"
+        status = "warn"
+        summary = "Saved burn-in evidence still has repeated noise candidates."
+        next_action = "Review the latest burn-in report noise candidates before expanding."
+    elif queue["promoted_count"] < 3:
+        decision = "keep_burning_in"
+        status = "ok"
+        summary = "The loop is healthy, but real promotion volume is still low."
+        next_action = "Keep collecting burn-in reports around real handoff promotions."
+    else:
+        decision = "ready_to_expand"
+        status = "ok"
+        summary = "Runtime, queue, and saved burn-in evidence are ready for a small coordination expansion."
+        next_action = "Plan the next compact coordination console slice."
+
+    return {
+        "status": status,
+        "decision": decision,
+        "summary": summary,
+        "queue_status": queue["status"],
+        "queued_count": queued_count,
+        "pending_count": pending_count,
+        "stale_count": stale_count,
+        "saved_burn_in_reports": len(reports),
+        "latest_burn_in_ready": latest_ready,
+        "latest_burn_in_noise_candidates": latest_noise,
+        "runtime_status": runtime_status["status"],
+        "policy_warning_count": runtime_status["policy_warning_count"],
+        "next_action": next_action,
+        "evidence": evidence,
+        "applied": False,
     }

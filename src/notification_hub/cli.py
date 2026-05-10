@@ -14,6 +14,7 @@ from notification_hub.models import Event
 from notification_hub.operations import (
     BootstrapConfigReport,
     BurnInReport,
+    CoordinationReadinessReport,
     CoordinationSnapshotReport,
     DeliveryCheckReport,
     InboxReport,
@@ -35,6 +36,7 @@ from notification_hub.operations import (
     VerifyRuntimeReport,
     bootstrap_policy_config,
     run_burn_in,
+    run_coordination_readiness,
     run_coordination_snapshot,
     run_delivery_check,
     run_inbox,
@@ -244,6 +246,22 @@ def _build_parser(prog: str = "notification-hub") -> argparse.ArgumentParser:
         "--json",
         action="store_true",
         help="Emit the full snapshot report as JSON.",
+    )
+
+    coordination_readiness = subparsers.add_parser(
+        "coordination-readiness",
+        help="Summarize whether the operator loop is ready for broader coordination work.",
+    )
+    coordination_readiness.add_argument(
+        "--limit",
+        type=int,
+        default=5,
+        help="Saved queue burn-in reports to inspect.",
+    )
+    coordination_readiness.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the coordination readiness report as JSON.",
     )
 
     personal_ops_actions = subparsers.add_parser(
@@ -665,6 +683,26 @@ def _print_coordination_snapshot_report(report: CoordinationSnapshotReport) -> N
         print(f"- error: {report['error']}")
 
 
+def _print_coordination_readiness_report(report: CoordinationReadinessReport) -> None:
+    print(f"notification-hub coordination-readiness: {report['status']}")
+    print(f"- decision: {report['decision']}")
+    print(f"- summary: {report['summary']}")
+    print(f"- runtime: {report['runtime_status']}")
+    print(f"- policy warnings: {report['policy_warning_count']}")
+    print(f"- queue: {report['queue_status']}")
+    print(
+        "- queued/pending/stale: "
+        f"{report['queued_count']}/{report['pending_count']}/{report['stale_count']}"
+    )
+    print(f"- saved burn-in reports: {report['saved_burn_in_reports']}")
+    print(f"- latest burn-in ready: {report['latest_burn_in_ready']}")
+    print(f"- latest noise candidates: {report['latest_burn_in_noise_candidates']}")
+    print(f"- next action: {report['next_action']}")
+    print("- evidence:")
+    for item in report["evidence"]:
+        print(f"  - {item}")
+
+
 def _print_personal_ops_action_export_report(report: PersonalOpsActionExportReport) -> None:
     print(f"notification-hub personal-ops-actions: {report['status']}")
     print(f"- schema: {report['schema_version']}")
@@ -1082,6 +1120,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             _print_coordination_snapshot_report(report)
         return 0 if report["status"] == "ok" else 1
 
+    if args.command == "coordination-readiness":
+        report = run_coordination_readiness(limit=args.limit)
+        if args.json:
+            print(json.dumps(report, indent=2, sort_keys=True))
+        else:
+            _print_coordination_readiness_report(report)
+        return 0 if report["status"] == "ok" else 1
+
     if args.command == "personal-ops-actions":
         report = run_personal_ops_action_export(
             hours=args.hours,
@@ -1276,6 +1322,11 @@ def inbox_main(argv: Sequence[str] | None = None) -> int:
 def coordination_snapshot_main(argv: Sequence[str] | None = None) -> int:
     forwarded = list(argv) if argv is not None else sys.argv[1:]
     return main(["coordination-snapshot", *forwarded])
+
+
+def coordination_readiness_main(argv: Sequence[str] | None = None) -> int:
+    forwarded = list(argv) if argv is not None else sys.argv[1:]
+    return main(["coordination-readiness", *forwarded])
 
 
 def personal_ops_actions_main(argv: Sequence[str] | None = None) -> int:

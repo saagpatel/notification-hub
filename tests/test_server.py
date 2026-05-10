@@ -146,6 +146,7 @@ async def test_review_page_endpoint(client: AsyncClient) -> None:
     assert resp.status_code == 200
     assert "text/html" in resp.headers["content-type"]
     assert "notification-hub review" in resp.text
+    assert "Coordination Readiness" in resp.text
     assert "Burn-In Reports" in resp.text
 
 
@@ -263,6 +264,26 @@ async def test_review_data_endpoint_is_read_only(client: AsyncClient) -> None:
                 "applied": False,
             },
         ) as mock_reminder,
+        patch(
+            "notification_hub.server.run_coordination_readiness",
+            return_value={
+                "status": "ok",
+                "decision": "ready_to_expand",
+                "summary": "Runtime, queue, and saved burn-in evidence are ready.",
+                "queue_status": "ok",
+                "queued_count": 0,
+                "pending_count": 0,
+                "stale_count": 0,
+                "saved_burn_in_reports": 1,
+                "latest_burn_in_ready": True,
+                "latest_burn_in_noise_candidates": 0,
+                "runtime_status": "ok",
+                "policy_warning_count": 0,
+                "next_action": "Plan the next compact coordination console slice.",
+                "evidence": ["runtime=ok"],
+                "applied": False,
+            },
+        ) as mock_readiness,
     ):
         resp = await client.get("/review/data?hours=2&limit=3")
 
@@ -271,6 +292,7 @@ async def test_review_data_endpoint_is_read_only(client: AsyncClient) -> None:
     assert data["status"] == "ok"
     assert data["operator_focus"]["title"] == "No action needed"
     assert data["operator_focus"]["queued_count"] == 0
+    assert data["coordination_readiness"]["decision"] == "ready_to_expand"
     assert data["trust"]["applied"] is False
     assert data["trust"]["validated"] is False
     mock_inbox.assert_called_once_with(hours=2, limit=3)
@@ -278,6 +300,7 @@ async def test_review_data_endpoint_is_read_only(client: AsyncClient) -> None:
     mock_status.assert_awaited_once_with()
     mock_queue_health.assert_called_once_with(limit=3)
     mock_reminder.assert_called_once_with(limit=3)
+    mock_readiness.assert_called_once_with(limit=3)
 
 
 async def test_review_save_package_endpoint_stages_without_applying(client: AsyncClient) -> None:
@@ -697,6 +720,39 @@ async def test_review_burn_in_report_detail_endpoint_inspects_saved_report(
     assert data["applied"] is False
     assert data["summary"]["ready_for_live_promotion"] is True
     mock_detail.assert_called_once_with(name="personal-ops-queue-burn-in-20260510-040904.json")
+
+
+async def test_review_coordination_readiness_endpoint_is_read_only(
+    client: AsyncClient,
+) -> None:
+    with patch(
+        "notification_hub.server.run_coordination_readiness",
+        return_value={
+            "status": "ok",
+            "decision": "ready_to_expand",
+            "summary": "Runtime, queue, and saved burn-in evidence are ready.",
+            "queue_status": "ok",
+            "queued_count": 0,
+            "pending_count": 0,
+            "stale_count": 0,
+            "saved_burn_in_reports": 1,
+            "latest_burn_in_ready": True,
+            "latest_burn_in_noise_candidates": 0,
+            "runtime_status": "ok",
+            "policy_warning_count": 0,
+            "next_action": "Plan the next compact coordination console slice.",
+            "evidence": ["runtime=ok"],
+            "applied": False,
+        },
+    ) as mock_readiness:
+        resp = await client.get("/review/coordination-readiness?limit=3")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert data["decision"] == "ready_to_expand"
+    assert data["applied"] is False
+    mock_readiness.assert_called_once_with(limit=3)
 
 
 async def test_review_outcome_sync_reminder_endpoint_reports_pending(

@@ -30,6 +30,7 @@ from notification_hub.operations import (
     load_action_review_package_detail,
     load_personal_ops_queue_burn_in_report_detail,
     run_burn_in,
+    run_coordination_readiness,
     run_coordination_snapshot,
     run_inbox,
     run_logs,
@@ -45,6 +46,76 @@ from notification_hub.operations import (
     update_personal_ops_import_queue_item,
     validate_action_package,
 )
+
+
+def _coordination_status(
+    *,
+    status: str = "ok",
+    policy_warning_count: int = 0,
+    queued_count: int = 0,
+    promoted_count: int = 3,
+    promoted_pending_count: int = 0,
+    promoted_pending_stale_count: int = 0,
+) -> dict[str, object]:
+    return {
+        "status": status,
+        "health_url": "http://127.0.0.1:9199/health/details",
+        "daemon_reachable": True,
+        "watcher_active": True,
+        "events_processed": 12,
+        "uptime_seconds": 123.4,
+        "policy_config_found": True,
+        "policy_warning_count": policy_warning_count,
+        "retention_enabled": True,
+        "retention_last_status": "ok",
+        "runtime_wiring_current": True,
+        "push_notifier_available": True,
+        "slack_configured": True,
+        "slack_delivery_failures": 0,
+        "import_queue": {
+            "status": "warn" if promoted_pending_stale_count else "ok",
+            "queue_path": "/tmp/queue.jsonl",
+            "total_count": promoted_count + queued_count,
+            "queued_count": queued_count,
+            "reviewed_count": 0,
+            "rejected_count": 0,
+            "snoozed_count": 0,
+            "superseded_count": 0,
+            "promoted_count": promoted_count,
+            "promoted_pending_count": promoted_pending_count,
+            "promoted_pending_stale_count": promoted_pending_stale_count,
+            "promoted_accepted_count": promoted_count,
+            "promoted_rejected_count": 0,
+            "promoted_ignored_count": 0,
+            "needs_outcome_sync": promoted_pending_count > 0,
+            "needs_review": queued_count > 0,
+            "oldest_queued_at": None,
+            "oldest_queued_age_seconds": None,
+            "oldest_promoted_pending_at": None,
+            "oldest_promoted_pending_age_seconds": None,
+            "stale_after_hours": 4.0,
+            "next_action": "No queued personal-ops handoff items.",
+        },
+        "next_action": "No action needed.",
+    }
+
+
+def _coordination_burn_in_report(*, noise_candidate_count: int = 0) -> dict[str, object]:
+    return {
+        "path": "/tmp/report.json",
+        "name": "personal-ops-queue-burn-in-20260510-040904.json",
+        "modified_at": "2026-05-10T04:09:04+00:00",
+        "size_bytes": 200,
+        "status": "ok",
+        "generated_at": "2026-05-10T04:09:04+00:00",
+        "ready_for_live_promotion": noise_candidate_count == 0,
+        "queued_count": 0,
+        "pending_count": 0,
+        "stale_count": 0,
+        "runtime_status": "ok",
+        "noise_candidate_count": noise_candidate_count,
+        "next_action": "Queue loop is ready.",
+    }
 
 
 def test_smoke_check_reports_success_when_event_hits_log() -> None:
@@ -78,6 +149,54 @@ def test_smoke_check_reports_http_failure() -> None:
     assert report["status"] == "degraded"
     assert report["response_status"] is None
     assert report["event_id"] is None
+
+
+def test_coordination_readiness_reports_ready_to_expand() -> None:
+    with (
+        patch("notification_hub.operations.run_status", return_value=_coordination_status()),
+        patch(
+            "notification_hub.operations.list_personal_ops_queue_burn_in_reports",
+            return_value=[_coordination_burn_in_report()],
+        ) as mock_reports,
+    ):
+        report = run_coordination_readiness(limit=3)
+
+    assert report["status"] == "ok"
+    assert report["decision"] == "ready_to_expand"
+    assert report["latest_burn_in_noise_candidates"] == 0
+    assert report["applied"] is False
+    mock_reports.assert_called_once_with(limit=3)
+
+
+def test_coordination_readiness_keeps_burning_in_without_saved_reports() -> None:
+    with (
+        patch("notification_hub.operations.run_status", return_value=_coordination_status()),
+        patch(
+            "notification_hub.operations.list_personal_ops_queue_burn_in_reports",
+            return_value=[],
+        ),
+    ):
+        report = run_coordination_readiness()
+
+    assert report["status"] == "ok"
+    assert report["decision"] == "keep_burning_in"
+    assert report["latest_burn_in_ready"] is None
+    assert "not enough saved burn-in evidence" in report["summary"]
+
+
+def test_coordination_readiness_prioritizes_noise_before_expansion() -> None:
+    with (
+        patch("notification_hub.operations.run_status", return_value=_coordination_status()),
+        patch(
+            "notification_hub.operations.list_personal_ops_queue_burn_in_reports",
+            return_value=[_coordination_burn_in_report(noise_candidate_count=2)],
+        ),
+    ):
+        report = run_coordination_readiness()
+
+    assert report["status"] == "warn"
+    assert report["decision"] == "fix_noise_first"
+    assert "noise candidates" in report["summary"]
 
 
 def test_inbox_groups_recent_events_by_coordination_intent() -> None:

@@ -42,7 +42,7 @@ for maintainer notes and portfolio context. The cleanup and hardening pass is co
 
 Use `docs/CURRENT-STATE.md` to resume quickly, use the README for day-to-day commands, and treat
 the current lane as operator-loop burn-in: save queue burn-in reports around real handoff use,
-review the `/review` Operator Focus and Burn-In Reports state first, and only expand coordination
-features after real queue volume justifies them.
+review the `/review` Operator Focus, Coordination Readiness, and Burn-In Reports state first, and
+only expand coordination features after the local readiness gate and real queue volume justify them.
 
 <!-- portfolio-context:end -->

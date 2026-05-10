@@ -50,12 +50,15 @@ tuning pass.
   `--save-report`, giving real-use promotion checks a durable artifact without applying work.
 - Saved queue burn-in reports can now be listed and inspected from `/review`, so real-use evidence
   remains visible after the command that generated it has finished.
+- A compact `coordination-readiness` command and `/review/coordination-readiness` endpoint now
+  combine runtime health, queue state, and saved burn-in report history into a deterministic
+  `fix_noise_first`, `keep_burning_in`, or `ready_to_expand` decision.
 - The sample policy now includes the repeated `personal-ops` daemon-start signal seen during live
   burn-in, keeping evidence-based noise tuning in the repo without changing machine-local config.
 - A localhost-only review page is available at `/review` on the daemon. It shows runtime health,
   inbox rollups, action proposals, and trust state without applying anything.
-- The review page now includes an Operator Focus summary that puts the current action state first:
-  runtime issue, queued handoffs, pending promoted outcomes, available proposals, or no action needed.
+- The review page now includes Operator Focus and Coordination Readiness summaries that put the
+  current action state and expansion gate first.
 - The review page can stage a local review package, list recent saved review packages, inspect
   package actions/evidence plus queue lineage, queue import handoff items, filter
   queued/promoted/pending/stale/resolved handoffs, mark queued items reviewed/rejected/snoozed/promoted,
@@ -205,6 +208,7 @@ uv run --frozen notification-hub status
 uv run --frozen notification-hub inbox
 uv run --frozen notification-hub coordination-snapshot
 uv run --frozen notification-hub coordination-snapshot --save-bridge-db
+uv run --frozen notification-hub coordination-readiness
 uv run --frozen notification-hub personal-ops-actions
 uv run --frozen notification-hub personal-ops-actions --save-review-package
 uv run --frozen notification-hub validate-action-package path/to/actions.json
@@ -240,7 +244,7 @@ uv run --frozen notification-hub retention --max-events 2000
 
 Expected current outcome:
 
-- `pytest`: 295 passed
+- `pytest`: 301 passed
 - `ruff`: clean
 - `pyright`: 0 errors
 - `/health/details`: `status: ok`, watcher active, push available, Slack configured
@@ -251,6 +255,8 @@ Expected current outcome:
   event rollups
 - `notification-hub coordination-snapshot`: bridge-ready JSON combining inbox state, runtime
   status, and follow-up guidance; writes to bridge-db only with `--save-bridge-db`
+- `notification-hub coordination-readiness`: read-only expansion gate combining runtime status,
+  queue state, and saved queue burn-in report history; current live decision is `keep_burning_in`
 - `notification-hub personal-ops-actions`: proposal-only action export derived from repeated inbox
   rollups
 - `notification-hub personal-ops-actions --save-review-package`: writes a local JSON review package
@@ -272,10 +278,12 @@ Expected current outcome:
 - `notification-hub-personal-ops-queue-burn-in`: script shortcut for the same burn-in report
 - `/review/burn-in-reports` and `/review/burn-in-report/{name}`: list and inspect saved queue
   burn-in reports without applying work
+- `/review/coordination-readiness`: reports whether to fix noise, keep burning in, or start a
+  small coordination expansion without applying work
 - `notification-hub personal-ops-queue-scenario`: runs a temporary queue lifecycle and records a
   final accepted promotion outcome without touching runtime queue state
-- `/review`: localhost-only review UI for runtime state, Operator Focus, inbox rollups, action
-  proposals, import queue health, saved burn-in report history, and trust state
+- `/review`: localhost-only review UI for runtime state, Operator Focus, Coordination Readiness,
+  inbox rollups, action proposals, import queue health, saved burn-in report history, and trust state
 - `/review/save-package` and `/review/validate-package`: review UI controls for staging and
   validating packages without importing or applying them
 - `/review/packages`: lists recent saved review packages and validation summaries without importing
@@ -351,9 +359,9 @@ It is not part of normal day-to-day work.
 
 Start future work from `main`, keep using the frozen verification commands, and treat the repo-owned
 runtime templates as the source of truth for live launcher and hook wiring.
-The next work here should use `personal-ops-queue-burn-in` around the first real operator promotion,
-save and inspect burn-in reports when the loop is exercised, and decide from real queue volume
-whether promoted-outcome reminders justify a higher-level coordination console.
+The next work here should use `coordination-readiness` as the first expansion gate, continue saving
+and inspecting burn-in reports when the loop is exercised, and only build a higher-level
+coordination console once the command reports `ready_to_expand`.
 
 ## Optional Follow-Up
 
