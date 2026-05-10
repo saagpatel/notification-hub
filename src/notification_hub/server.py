@@ -42,6 +42,7 @@ from notification_hub.operations import (
     run_personal_ops_import_queue_health_check,
     run_personal_ops_import_stub,
     run_personal_ops_outcome_sync_reminder,
+    run_personal_ops_queue_review,
     run_retention,
     save_action_proposal_group_package,
     record_action_proposal_group_outcome,
@@ -468,6 +469,10 @@ REVIEW_HTML = """<!doctype html>
         <ul id="burnInDetail"></ul>
       </section>
       <section>
+        <h2>Queue Review</h2>
+        <ul id="queueReview"></ul>
+      </section>
+      <section>
         <div class="toolbar">
           <h2>Import Queue</h2>
           <select id="importQueueFilter" aria-label="Import queue filter">
@@ -510,6 +515,7 @@ REVIEW_HTML = """<!doctype html>
     const burnInReports = document.getElementById("burnInReports");
     const burnInDetail = document.getElementById("burnInDetail");
     const importQueueHealth = document.getElementById("importQueueHealth");
+    const queueReview = document.getElementById("queueReview");
     const importQueue = document.getElementById("importQueue");
     const importQueueFilter = document.getElementById("importQueueFilter");
 
@@ -627,6 +633,7 @@ REVIEW_HTML = """<!doctype html>
       renderPackage(data.review_package);
       await loadPackages();
       await loadBurnInReports();
+      await loadQueueReview();
       await loadImportQueue();
       await loadCoordinationConsole();
       await loadNoiseCandidateReview();
@@ -1326,6 +1333,33 @@ REVIEW_HTML = """<!doctype html>
         button.addEventListener("click", () => updateQueueItem(button.dataset.queueId, button.dataset.queueStatus));
       });
     }
+    async function loadQueueReview() {
+      const res = await fetch("/review/import-queue-review?limit=25");
+      const data = await res.json();
+      const batches = data.batches || [];
+      queueReview.replaceChildren(item(`
+        <div class="line"><span class="title">Queued handoff review</span><span class="meta">${esc(data.status || "unknown")}</span></div>
+        <div class="badge-row">
+          ${warnBadge(`queued ${data.queued_count ?? 0}`, (data.queued_count ?? 0) > 0)}
+          ${warnBadge(`operator decisions ${data.operator_decision_count ?? 0}`, (data.operator_decision_count ?? 0) > 0)}
+          ${warnBadge(`pending ${data.pending_count ?? 0}`, (data.pending_count ?? 0) > 0)}
+          ${warnBadge(`stale ${data.stale_count ?? 0}`, (data.stale_count ?? 0) > 0)}
+          ${badge(`batches ${data.batch_count ?? 0}`)}
+        </div>
+        <div class="next">${esc(data.next_action || "")}</div>
+        ${(data.next_commands || []).slice(0, 2).map(command => `<div class="next"><strong>Next command</strong>: ${esc(command)}</div>`).join("")}
+      `), ...batches.slice(0, 5).map(batch => item(`
+        <div class="line"><span class="title">${esc(batch.title)}</span><span class="meta">${esc(batch.item_count)} item(s)</span></div>
+        <div class="badge-row">
+          ${warnBadge(batch.priority, batch.priority === "high")}
+          ${badge(batch.state)}
+          ${badge(batch.source_package_name)}
+        </div>
+        <div class="next">${esc(batch.suggested_next_action || "")}</div>
+        ${batch.first_queue_id ? `<div class="next">First queue id: ${esc(batch.first_queue_id)}</div>` : ""}
+        ${(batch.summaries || []).slice(0, 3).map(summary => `<div class="next">${esc(summary)}</div>`).join("")}
+      `)));
+    }
     async function updateQueueItem(queueId, status) {
       if (!queueId || !status) {
         return;
@@ -1349,6 +1383,7 @@ REVIEW_HTML = """<!doctype html>
         item(`<div class="line"><span class="title">${esc(queueId)}</span><span class="meta">${esc(data.status)}</span></div>`),
         item(`<div class="next">${esc(data.next_action || data.error)}</div>`)
       );
+      await loadQueueReview();
       await loadImportQueue();
     }
     document.getElementById("refresh").addEventListener("click", load);
@@ -1583,6 +1618,20 @@ async def review_import_queue(limit: int = 10, stale_after_hours: float = 4.0) -
         "outcome_sync_reminder": outcome_sync_reminder,
         "applied": False,
     }
+
+
+@app.get("/review/import-queue-review")
+async def review_import_queue_review(
+    limit: int = 25,
+    stale_after_hours: float = 4.0,
+) -> dict[str, object]:
+    """Summarize queued handoff batches without applying decisions."""
+    report = await asyncio.to_thread(
+        run_personal_ops_queue_review,
+        limit=max(limit, 1),
+        stale_after_hours=stale_after_hours,
+    )
+    return dict(report)
 
 
 @app.get("/review/burn-in-reports")

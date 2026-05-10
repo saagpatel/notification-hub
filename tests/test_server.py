@@ -654,6 +654,48 @@ async def test_review_import_queue_endpoint_lists_queue_items(client: AsyncClien
     mock_reminder.assert_called_once_with(limit=3, stale_after_hours=4.0)
 
 
+async def test_review_import_queue_review_endpoint_is_read_only(client: AsyncClient) -> None:
+    with patch(
+        "notification_hub.server.run_personal_ops_queue_review",
+        return_value={
+            "status": "warn",
+            "queue_status": "warn",
+            "queued_count": 2,
+            "pending_count": 0,
+            "stale_count": 0,
+            "operator_decision_count": 2,
+            "batch_count": 1,
+            "batches": [
+                {
+                    "batch_key": "package.json:Approval Requested:high:waiting",
+                    "source_package_name": "package.json",
+                    "title": "Approval Requested",
+                    "priority": "high",
+                    "state": "waiting",
+                    "item_count": 2,
+                    "queue_ids": ["queue-1", "queue-2"],
+                    "evidence_event_ids": ["event-1", "event-2"],
+                    "summaries": ["Approval draft", "Outbound workflow reply"],
+                    "first_queue_id": "queue-1",
+                    "suggested_next_action": "Review this batch evidence.",
+                }
+            ],
+            "next_action": "Review queued handoff batches before expanding coordination.",
+            "next_commands": ["uv run notification-hub personal-ops-queue"],
+            "applied": False,
+        },
+    ) as mock_review:
+        resp = await client.get("/review/import-queue-review?limit=3")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "warn"
+    assert data["operator_decision_count"] == 2
+    assert data["batches"][0]["first_queue_id"] == "queue-1"
+    assert data["applied"] is False
+    mock_review.assert_called_once_with(limit=3, stale_after_hours=4.0)
+
+
 async def test_review_burn_in_reports_endpoint_lists_saved_reports(
     client: AsyncClient,
 ) -> None:

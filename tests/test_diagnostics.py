@@ -1732,6 +1732,36 @@ def test_cli_personal_ops_queue_health_json_output(capsys: CaptureFixture[str]) 
     assert mock_health.call_args.kwargs["stale_after_hours"] == 2.0
 
 
+def test_cli_personal_ops_queue_review_json_output(capsys: CaptureFixture[str]) -> None:
+    with patch(
+        "notification_hub.cli.run_personal_ops_queue_review",
+        return_value={
+            "status": "warn",
+            "queue_status": "warn",
+            "queued_count": 2,
+            "pending_count": 0,
+            "stale_count": 0,
+            "operator_decision_count": 2,
+            "batch_count": 1,
+            "batches": [],
+            "next_action": "Review queued handoff batches before expanding coordination.",
+            "next_commands": ["uv run notification-hub personal-ops-queue"],
+            "applied": False,
+        },
+    ) as mock_review:
+        exit_code = main(
+            ["personal-ops-queue-review", "--json", "--limit", "3", "--stale-after-hours", "2"]
+        )
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert '"operator_decision_count": 2' in captured.out
+    assert '"applied": false' in captured.out
+    mock_review.assert_called_once()
+    assert mock_review.call_args.kwargs["limit"] == 3
+    assert mock_review.call_args.kwargs["stale_after_hours"] == 2.0
+
+
 def test_cli_personal_ops_outcome_sync_reminder_json_output(
     capsys: CaptureFixture[str],
 ) -> None:

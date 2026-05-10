@@ -28,6 +28,7 @@ from notification_hub.operations import (
     PersonalOpsImportQueueUpdateReport,
     PersonalOpsOutcomeSyncReminderReport,
     PersonalOpsQueueBurnInReport,
+    PersonalOpsQueueReviewReport,
     PersonalOpsQueueScenarioReport,
     ActionPackageValidationReport,
     ActionProposalDismissalListReport,
@@ -61,6 +62,7 @@ from notification_hub.operations import (
     run_personal_ops_import_stub,
     run_personal_ops_outcome_sync_reminder,
     run_personal_ops_queue_burn_in,
+    run_personal_ops_queue_review,
     run_personal_ops_queue_scenario,
     list_personal_ops_import_queue,
     summarize_personal_ops_import_queue,
@@ -678,6 +680,32 @@ def _build_parser(prog: str = "notification-hub") -> argparse.ArgumentParser:
         help="Emit the queue health report as JSON.",
     )
 
+    personal_ops_queue_review = subparsers.add_parser(
+        "personal-ops-queue-review",
+        help="Summarize queued handoff batches without applying decisions.",
+    )
+    personal_ops_queue_review.add_argument(
+        "--queue-path",
+        help="Optional JSONL queue path.",
+    )
+    personal_ops_queue_review.add_argument(
+        "--limit",
+        type=int,
+        default=25,
+        help="Maximum queue items to inspect.",
+    )
+    personal_ops_queue_review.add_argument(
+        "--stale-after-hours",
+        type=float,
+        default=4.0,
+        help="Hours before a pending promotion is considered stale.",
+    )
+    personal_ops_queue_review.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the queue review report as JSON.",
+    )
+
     personal_ops_queue_burn_in = subparsers.add_parser(
         "personal-ops-queue-burn-in",
         help="Check queue lifecycle readiness, recent runtime noise, and live operator next steps.",
@@ -1246,6 +1274,31 @@ def _print_personal_ops_queue_health_report(
             print(f"  - {item['queue_id']}: {item['title']}")
 
 
+def _print_personal_ops_queue_review_report(report: PersonalOpsQueueReviewReport) -> None:
+    print(f"notification-hub personal-ops-queue-review: {report['status']}")
+    print(f"- queued: {report['queued_count']}")
+    print(f"- operator decisions: {report['operator_decision_count']}")
+    print(f"- batches: {report['batch_count']}")
+    print(f"- next action: {report['next_action']}")
+    if report["next_commands"]:
+        print("- next commands:")
+        for command in report["next_commands"][:3]:
+            print(f"  - {command}")
+    if not report["batches"]:
+        print("- batches: none")
+        return
+    print("- batches:")
+    for batch in report["batches"]:
+        print(
+            f"  - {batch['item_count']}x {batch['title']} "
+            f"({batch['priority']}/{batch['state']})"
+        )
+        if batch["first_queue_id"] is not None:
+            print(f"    first queue id: {batch['first_queue_id']}")
+        for summary in batch["summaries"][:3]:
+            print(f"    - {summary}")
+
+
 def _print_personal_ops_outcome_sync_reminder_report(
     report: PersonalOpsOutcomeSyncReminderReport,
 ) -> None:
@@ -1770,6 +1823,18 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(json.dumps(report, indent=2, sort_keys=True))
         else:
             _print_personal_ops_queue_health_report(report)
+        return 0 if report["status"] == "ok" else 1
+
+    if args.command == "personal-ops-queue-review":
+        report = run_personal_ops_queue_review(
+            queue_path=Path(args.queue_path).expanduser() if args.queue_path else None,
+            limit=args.limit,
+            stale_after_hours=args.stale_after_hours,
+        )
+        if args.json:
+            print(json.dumps(report, indent=2, sort_keys=True))
+        else:
+            _print_personal_ops_queue_review_report(report)
         return 0 if report["status"] == "ok" else 1
 
     if args.command == "personal-ops-queue-burn-in":

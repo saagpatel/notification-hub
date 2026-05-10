@@ -443,6 +443,34 @@ class PersonalOpsImportQueueHealthCheckReport(TypedDict):
     applied: bool
 
 
+class PersonalOpsQueueReviewBatchReport(TypedDict):
+    batch_key: str
+    source_package_name: str
+    title: str
+    priority: str
+    state: str
+    item_count: int
+    queue_ids: list[str]
+    evidence_event_ids: list[str]
+    summaries: list[str]
+    first_queue_id: str | None
+    suggested_next_action: str
+
+
+class PersonalOpsQueueReviewReport(TypedDict):
+    status: str
+    queue_status: str
+    queued_count: int
+    pending_count: int
+    stale_count: int
+    operator_decision_count: int
+    batch_count: int
+    batches: list[PersonalOpsQueueReviewBatchReport]
+    next_action: str
+    next_commands: list[str]
+    applied: bool
+
+
 class PersonalOpsOutcomeSyncReminderReport(TypedDict):
     status: str
     should_remind: bool
@@ -2334,6 +2362,92 @@ def run_personal_ops_import_queue_health_check(
         "health": health,
         "queued_items": queued_items,
         "pending_promotion_items": pending_items,
+        "next_commands": next_commands,
+        "applied": False,
+    }
+
+
+def run_personal_ops_queue_review(
+    *,
+    queue_path: Path | None = None,
+    limit: int = 25,
+    stale_after_hours: float = 4.0,
+) -> PersonalOpsQueueReviewReport:
+    """Summarize queued handoffs into review batches without applying decisions."""
+    queue_report = run_personal_ops_import_queue_health_check(
+        queue_path=queue_path,
+        limit=max(limit, 1),
+        stale_after_hours=stale_after_hours,
+    )
+    health = queue_report["health"]
+    queued_items = queue_report["queued_items"]
+    batches_by_key: dict[tuple[str, str, str, str], list[PersonalOpsImportQueueItemReport]] = {}
+    for item in queued_items:
+        key = (
+            item["source_package_name"],
+            item["title"],
+            item["priority"],
+            item["state"],
+        )
+        batches_by_key.setdefault(key, []).append(item)
+
+    batches: list[PersonalOpsQueueReviewBatchReport] = []
+    for (source_package_name, title, priority, state), items in batches_by_key.items():
+        queue_ids = [item["queue_id"] for item in items]
+        evidence_event_ids = [item["evidence_event_id"] for item in items]
+        summaries = list(dict.fromkeys(item["summary"] for item in items))
+        first_queue_id = queue_ids[0] if queue_ids else None
+        batches.append(
+            {
+                "batch_key": f"{source_package_name}:{title}:{priority}:{state}",
+                "source_package_name": source_package_name,
+                "title": title,
+                "priority": priority,
+                "state": state,
+                "item_count": len(items),
+                "queue_ids": queue_ids,
+                "evidence_event_ids": evidence_event_ids,
+                "summaries": summaries,
+                "first_queue_id": first_queue_id,
+                "suggested_next_action": (
+                    "Review this batch evidence, then mark each item reviewed, promoted, "
+                    "rejected, or snoozed."
+                ),
+            }
+        )
+    batches.sort(key=lambda batch: batch["item_count"], reverse=True)
+
+    operator_decision_count = sum(
+        1 for item in queued_items if item["title"].lower() == "approval requested"
+    )
+    first_queue_id = queued_items[0]["queue_id"] if queued_items else None
+    next_commands = list(queue_report["next_commands"])
+    if first_queue_id is not None:
+        next_commands.insert(
+            1,
+            "uv run notification-hub personal-ops-queue "
+            f'--queue-id {first_queue_id} --status reviewed --reason "evidence checked"',
+        )
+    if queued_items:
+        next_action = "Review queued handoff batches before expanding coordination."
+        status = "warn"
+    elif health["promoted_pending_count"] > 0:
+        next_action = health["next_action"]
+        status = "warn"
+    else:
+        next_action = "No queued handoff batches need operator review."
+        status = "ok"
+
+    return {
+        "status": status,
+        "queue_status": health["status"],
+        "queued_count": health["queued_count"],
+        "pending_count": health["promoted_pending_count"],
+        "stale_count": health["promoted_pending_stale_count"],
+        "operator_decision_count": operator_decision_count,
+        "batch_count": len(batches),
+        "batches": batches,
+        "next_action": next_action,
         "next_commands": next_commands,
         "applied": False,
     }

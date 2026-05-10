@@ -54,6 +54,7 @@ from notification_hub.operations import (
     run_personal_ops_import_stub,
     run_personal_ops_outcome_sync_reminder,
     run_personal_ops_queue_burn_in,
+    run_personal_ops_queue_review,
     run_personal_ops_queue_scenario,
     run_policy_check,
     run_retention,
@@ -2318,6 +2319,62 @@ def test_personal_ops_import_queue_lifecycle_and_health(tmp_path: Path) -> None:
     assert health_after["promoted_accepted_count"] == 1
     assert health_after["promoted_pending_count"] == 0
     assert health_after["needs_review"] is False
+
+
+def test_personal_ops_queue_review_groups_queued_handoffs(tmp_path: Path) -> None:
+    package_path = tmp_path / "actions.json"
+    queue_path = tmp_path / "queue.jsonl"
+    package_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "notification-hub.personal_ops_action_export.v1",
+                "actions": [
+                    {
+                        "action_id": "action-1",
+                        "source": "personal-ops",
+                        "project": "mail",
+                        "intent": "waiting_on_user",
+                        "priority": "high",
+                        "state": "waiting",
+                        "title": "Approval Requested",
+                        "summary": "Outbound workflow reply",
+                        "suggested_next_action": "Review the waiting item.",
+                        "evidence_event_id": "abc123",
+                        "evidence_timestamp": "2026-05-09T00:00:00+00:00",
+                        "count": 2,
+                    },
+                    {
+                        "action_id": "action-2",
+                        "source": "personal-ops",
+                        "project": "mail",
+                        "intent": "waiting_on_user",
+                        "priority": "high",
+                        "state": "waiting",
+                        "title": "Approval Requested",
+                        "summary": "Approval draft",
+                        "suggested_next_action": "Review the waiting item.",
+                        "evidence_event_id": "def456",
+                        "evidence_timestamp": "2026-05-09T00:01:00+00:00",
+                        "count": 2,
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    run_personal_ops_import_stub(path=package_path, enqueue=True, queue_path=queue_path)
+
+    report = run_personal_ops_queue_review(queue_path=queue_path)
+
+    assert report["status"] == "warn"
+    assert report["queued_count"] == 2
+    assert report["operator_decision_count"] == 2
+    assert report["batch_count"] == 1
+    assert report["batches"][0]["item_count"] == 2
+    assert report["batches"][0]["title"] == "Approval Requested"
+    assert report["batches"][0]["first_queue_id"] in report["batches"][0]["queue_ids"]
+    assert "personal-ops-queue --queue-id" in report["next_commands"][1]
+    assert report["applied"] is False
 
 
 def test_personal_ops_import_queue_health_flags_stale_promotions(tmp_path: Path) -> None:
