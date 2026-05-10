@@ -50,6 +50,12 @@ title_contains = "external-signal-sync complete"
 level = "info"
 window_minutes = 10
 
+[[noise.rules]]
+source = "notion-os"
+title_contains = "control-tower-sync complete"
+level = "info"
+window_minutes = 10
+
 [retention]
 enabled = true
 interval_minutes = 60

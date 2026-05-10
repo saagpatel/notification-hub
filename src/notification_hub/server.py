@@ -24,6 +24,7 @@ from notification_hub.operations import (
     list_personal_ops_queue_burn_in_reports,
     load_action_review_package_detail,
     load_personal_ops_queue_burn_in_report_detail,
+    run_coordination_console,
     run_coordination_readiness,
     run_inbox,
     run_personal_ops_action_export,
@@ -365,6 +366,10 @@ REVIEW_HTML = """<!doctype html>
       <h2>Coordination Readiness</h2>
       <ul id="coordinationReadiness"></ul>
     </section>
+    <section class="focus">
+      <h2>Coordination Console</h2>
+      <ul id="coordinationConsole"></ul>
+    </section>
     <div class="grid">
       <section>
         <h2>Action Proposals</h2>
@@ -424,6 +429,7 @@ REVIEW_HTML = """<!doctype html>
     const summary = document.getElementById("summary");
     const operatorFocus = document.getElementById("operatorFocus");
     const coordinationReadiness = document.getElementById("coordinationReadiness");
+    const coordinationConsole = document.getElementById("coordinationConsole");
     const actions = document.getElementById("actions");
     const rollups = document.getElementById("rollups");
     const attention = document.getElementById("attention");
@@ -540,6 +546,26 @@ REVIEW_HTML = """<!doctype html>
       await loadPackages();
       await loadBurnInReports();
       await loadImportQueue();
+      await loadCoordinationConsole();
+    }
+    async function loadCoordinationConsole() {
+      const res = await fetch("/review/coordination-console?hours=2&limit=5");
+      const data = await res.json();
+      const readiness = data.readiness || {};
+      const queue = data.queue_health || {};
+      const reminder = data.outcome_sync_reminder || {};
+      coordinationConsole.replaceChildren(item(`
+        <div class="line"><span class="title">${esc(readiness.decision || "unknown")}</span><span class="meta">${esc(data.status || "unknown")}</span></div>
+        <div class="badge-row">
+          ${badge(`actions ${data.action_count ?? 0}`)}
+          ${warnBadge(`queued ${queue.queued_count ?? 0}`, (queue.queued_count ?? 0) > 0)}
+          ${warnBadge(`pending ${queue.promoted_pending_count ?? 0}`, (queue.promoted_pending_count ?? 0) > 0)}
+          ${warnBadge(`stale ${queue.promoted_pending_stale_count ?? 0}`, (queue.promoted_pending_stale_count ?? 0) > 0)}
+          ${warnBadge(`reminders ${reminder.pending_count ?? 0}`, (reminder.pending_count ?? 0) > 0)}
+          ${badge(`reports ${(data.burn_in_reports || []).length}`)}
+        </div>
+        <div class="next">${esc(data.next_action || "")}</div>
+      `));
     }
     function renderPackage(state) {
       packageState.replaceChildren(
@@ -1037,6 +1063,17 @@ async def review_burn_in_report_detail(name: str) -> dict[str, object]:
 async def review_coordination_readiness(limit: int = 5) -> dict[str, object]:
     """Summarize coordination expansion readiness without applying work."""
     report = await asyncio.to_thread(run_coordination_readiness, limit=max(limit, 1))
+    return dict(report)
+
+
+@app.get("/review/coordination-console")
+async def review_coordination_console(hours: int = 2, limit: int = 5) -> dict[str, object]:
+    """Return one compact coordination console summary without applying work."""
+    report = await asyncio.to_thread(
+        run_coordination_console,
+        hours=max(hours, 1),
+        limit=max(limit, 1),
+    )
     return dict(report)
 
 

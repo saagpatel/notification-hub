@@ -490,6 +490,20 @@ class CoordinationReadinessReport(TypedDict):
     applied: bool
 
 
+class CoordinationConsoleReport(TypedDict):
+    status: str
+    readiness: CoordinationReadinessReport
+    action_count: int
+    actions: list[PersonalOpsActionReport]
+    queue_health: PersonalOpsImportQueueHealthReport
+    queued_items: list[PersonalOpsImportQueueItemReport]
+    pending_promotion_items: list[PersonalOpsImportQueueItemReport]
+    outcome_sync_reminder: PersonalOpsOutcomeSyncReminderReport
+    burn_in_reports: list[PersonalOpsQueueBurnInReportSummary]
+    next_action: str
+    applied: bool
+
+
 DEFAULT_BRIDGE_DB_PATH = Path.home() / ".local" / "share" / "bridge-db" / "bridge.db"
 BRIDGE_SNAPSHOT_RETENTION_PER_SYSTEM = 10
 ACTION_EXPORT_DIR = EVENTS_DIR / "action-exports"
@@ -2841,5 +2855,50 @@ def run_coordination_readiness(*, limit: int = 5) -> CoordinationReadinessReport
         "policy_warning_count": runtime_status["policy_warning_count"],
         "next_action": next_action,
         "evidence": evidence,
+        "applied": False,
+    }
+
+
+def run_coordination_console(*, hours: int = 2, limit: int = 5) -> CoordinationConsoleReport:
+    """Build one read-only coordination view after readiness has cleared expansion."""
+    safe_hours = max(hours, 1)
+    safe_limit = max(limit, 1)
+    readiness = run_coordination_readiness(limit=safe_limit)
+    actions = run_personal_ops_action_export(hours=safe_hours, limit=safe_limit)
+    queue = run_personal_ops_import_queue_health_check(limit=safe_limit)
+    outcome_sync_reminder = run_personal_ops_outcome_sync_reminder(limit=safe_limit)
+    burn_in_reports = list_personal_ops_queue_burn_in_reports(limit=safe_limit)
+
+    queue_health = queue["health"]
+    if readiness["decision"] != "ready_to_expand":
+        next_action = readiness["next_action"]
+    elif queue_health["queued_count"] > 0 or queue_health["promoted_pending_count"] > 0:
+        next_action = queue_health["next_action"]
+    elif actions["actions"]:
+        next_action = "Save and validate a review package, then queue one handoff for operator review."
+    else:
+        next_action = "Monitor /review for the next real handoff signal."
+
+    status = (
+        "ok"
+        if (
+            readiness["status"] == "ok"
+            and actions["status"] == "ok"
+            and queue["status"] == "ok"
+            and outcome_sync_reminder["status"] == "ok"
+        )
+        else "warn"
+    )
+    return {
+        "status": status,
+        "readiness": readiness,
+        "action_count": len(actions["actions"]),
+        "actions": actions["actions"][:safe_limit],
+        "queue_health": queue_health,
+        "queued_items": queue["queued_items"][:safe_limit],
+        "pending_promotion_items": queue["pending_promotion_items"][:safe_limit],
+        "outcome_sync_reminder": outcome_sync_reminder,
+        "burn_in_reports": burn_in_reports,
+        "next_action": next_action,
         "applied": False,
     }

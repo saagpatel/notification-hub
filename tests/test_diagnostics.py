@@ -13,6 +13,7 @@ from pytest import MonkeyPatch
 from notification_hub.cli import (
     burn_in_main,
     bootstrap_config_main,
+    coordination_console_main,
     coordination_readiness_main,
     coordination_snapshot_main,
     delivery_check_main,
@@ -237,6 +238,31 @@ def _coordination_readiness_report(status: str = "ok") -> dict[str, object]:
         "policy_warning_count": 0,
         "next_action": "Plan the next compact coordination console slice.",
         "evidence": ["runtime=ok"],
+        "applied": False,
+    }
+
+
+def _coordination_console_report(status: str = "ok") -> dict[str, object]:
+    return {
+        "status": status,
+        "readiness": _coordination_readiness_report(status=status),
+        "action_count": 1,
+        "actions": [],
+        "queue_health": _import_queue_health(),
+        "queued_items": [],
+        "pending_promotion_items": [],
+        "outcome_sync_reminder": {
+            "status": "ok",
+            "should_remind": False,
+            "pending_count": 0,
+            "stale_count": 0,
+            "reminders": [],
+            "next_commands": ["uv run notification-hub personal-ops-queue-health"],
+            "next_action": "No pending promoted personal-ops handoff outcomes.",
+            "applied": False,
+        },
+        "burn_in_reports": [],
+        "next_action": "Save and validate a review package.",
         "applied": False,
     }
 
@@ -1226,6 +1252,19 @@ def test_cli_coordination_readiness_json_output(capsys: CaptureFixture[str]) -> 
     mock_readiness.assert_called_once_with(limit=3)
 
 
+def test_cli_coordination_console_json_output(capsys: CaptureFixture[str]) -> None:
+    with patch(
+        "notification_hub.cli.run_coordination_console",
+        return_value=_coordination_console_report(),
+    ) as mock_console:
+        exit_code = main(["coordination-console", "--json", "--hours", "4", "--limit", "3"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert '"action_count": 1' in captured.out
+    mock_console.assert_called_once_with(hours=4, limit=3)
+
+
 def test_cli_coordination_snapshot_writes_output(
     tmp_path: Path, capsys: CaptureFixture[str]
 ) -> None:
@@ -1974,6 +2013,19 @@ def test_coordination_readiness_wrapper_forwards_flags(capsys: CaptureFixture[st
     assert exit_code == 0
     assert '"saved_burn_in_reports": 1' in output.out
     mock_readiness.assert_called_once_with(limit=2)
+
+
+def test_coordination_console_wrapper_forwards_flags(capsys: CaptureFixture[str]) -> None:
+    with patch(
+        "notification_hub.cli.run_coordination_console",
+        return_value=_coordination_console_report(),
+    ) as mock_console:
+        exit_code = coordination_console_main(["--json", "--hours", "6", "--limit", "2"])
+
+    output = capsys.readouterr()
+    assert exit_code == 0
+    assert '"next_action": "Save and validate a review package."' in output.out
+    mock_console.assert_called_once_with(hours=6, limit=2)
 
 
 def test_personal_ops_actions_wrapper_forwards_flags(capsys: CaptureFixture[str]) -> None:

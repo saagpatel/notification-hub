@@ -147,6 +147,7 @@ async def test_review_page_endpoint(client: AsyncClient) -> None:
     assert "text/html" in resp.headers["content-type"]
     assert "notification-hub review" in resp.text
     assert "Coordination Readiness" in resp.text
+    assert "Coordination Console" in resp.text
     assert "Burn-In Reports" in resp.text
 
 
@@ -753,6 +754,83 @@ async def test_review_coordination_readiness_endpoint_is_read_only(
     assert data["decision"] == "ready_to_expand"
     assert data["applied"] is False
     mock_readiness.assert_called_once_with(limit=3)
+
+
+async def test_review_coordination_console_endpoint_is_read_only(
+    client: AsyncClient,
+) -> None:
+    with patch(
+        "notification_hub.server.run_coordination_console",
+        return_value={
+            "status": "ok",
+            "readiness": {
+                "status": "ok",
+                "decision": "ready_to_expand",
+                "summary": "Runtime, queue, and saved burn-in evidence are ready.",
+                "queue_status": "ok",
+                "queued_count": 0,
+                "pending_count": 0,
+                "stale_count": 0,
+                "saved_burn_in_reports": 2,
+                "latest_burn_in_ready": True,
+                "latest_burn_in_noise_candidates": 0,
+                "runtime_status": "ok",
+                "policy_warning_count": 0,
+                "next_action": "Plan the next compact coordination console slice.",
+                "evidence": ["runtime=ok"],
+                "applied": False,
+            },
+            "action_count": 1,
+            "actions": [],
+            "queue_health": {
+                "status": "ok",
+                "queue_path": "/tmp/queue.jsonl",
+                "total_count": 0,
+                "queued_count": 0,
+                "reviewed_count": 0,
+                "rejected_count": 0,
+                "snoozed_count": 0,
+                "superseded_count": 0,
+                "promoted_count": 3,
+                "promoted_pending_count": 0,
+                "promoted_pending_stale_count": 0,
+                "promoted_accepted_count": 0,
+                "promoted_rejected_count": 3,
+                "promoted_ignored_count": 0,
+                "needs_outcome_sync": False,
+                "needs_review": False,
+                "oldest_queued_at": None,
+                "oldest_queued_age_seconds": None,
+                "oldest_promoted_pending_at": None,
+                "oldest_promoted_pending_age_seconds": None,
+                "stale_after_hours": 4.0,
+                "next_action": "No queued personal-ops handoff items.",
+            },
+            "queued_items": [],
+            "pending_promotion_items": [],
+            "outcome_sync_reminder": {
+                "status": "ok",
+                "should_remind": False,
+                "pending_count": 0,
+                "stale_count": 0,
+                "reminders": [],
+                "next_commands": ["uv run notification-hub personal-ops-queue-health"],
+                "next_action": "No pending promoted personal-ops handoff outcomes.",
+                "applied": False,
+            },
+            "burn_in_reports": [],
+            "next_action": "Save and validate a review package.",
+            "applied": False,
+        },
+    ) as mock_console:
+        resp = await client.get("/review/coordination-console?hours=4&limit=3")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert data["readiness"]["decision"] == "ready_to_expand"
+    assert data["applied"] is False
+    mock_console.assert_called_once_with(hours=4, limit=3)
 
 
 async def test_review_outcome_sync_reminder_endpoint_reports_pending(

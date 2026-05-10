@@ -54,6 +54,8 @@ uv run notification-hub-coordination-snapshot --json
 uv run notification-hub coordination-snapshot --save-bridge-db
 uv run notification-hub coordination-readiness
 uv run notification-hub-coordination-readiness --json
+uv run notification-hub coordination-console
+uv run notification-hub-coordination-console --json
 uv run notification-hub personal-ops-actions
 uv run notification-hub-personal-ops-actions --json
 uv run notification-hub personal-ops-actions --save-review-package
@@ -101,6 +103,9 @@ system snapshot. Use `--bridge-db-path` to target a non-default database during 
 The coordination-readiness command combines runtime status, queue state, and saved queue burn-in
 report history into one compact expansion gate. It returns `fix_noise_first`, `keep_burning_in`, or
 `ready_to_expand` without applying work.
+The coordination-console command is the first compact expansion after that gate. It brings
+readiness, action proposals, queue state, promoted-outcome reminders, burn-in report history, and
+the next safe action into one read-only summary.
 The personal-ops-actions command turns inbox rollups into action proposals for review. It does not
 write to personal-ops; pass `--output path/to/actions.json` when you want a handoff file.
 Pass `--save-review-package` when you want notification-hub to stage a local review package under
@@ -248,6 +253,12 @@ title_contains = "external-signal-sync complete"
 level = "info"
 window_minutes = 10
 
+[[noise.rules]]
+source = "notion-os"
+title_contains = "control-tower-sync complete"
+level = "info"
+window_minutes = 10
+
 [retention]
 enabled = true
 interval_minutes = 60
@@ -340,6 +351,7 @@ uv run --frozen notification-hub inbox
 uv run --frozen notification-hub coordination-snapshot
 uv run --frozen notification-hub coordination-snapshot --save-bridge-db
 uv run --frozen notification-hub coordination-readiness
+uv run --frozen notification-hub coordination-console
 uv run --frozen notification-hub personal-ops-actions
 uv run --frozen notification-hub personal-ops-actions --save-review-package
 uv run --frozen notification-hub validate-action-package path/to/actions.json
@@ -362,6 +374,7 @@ curl http://127.0.0.1:9199/review/package/personal-ops-actions-YYYYMMDD-HHMMSS.j
 curl -X POST http://127.0.0.1:9199/review/package/personal-ops-actions-YYYYMMDD-HHMMSS.json/queue
 curl http://127.0.0.1:9199/review/import-queue
 curl http://127.0.0.1:9199/review/coordination-readiness
+curl http://127.0.0.1:9199/review/coordination-console
 curl http://127.0.0.1:9199/review/outcome-sync-reminder
 curl -X PATCH http://127.0.0.1:9199/review/import-queue/QUEUE_ID \
   -H 'Content-Type: application/json' \

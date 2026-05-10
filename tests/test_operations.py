@@ -30,6 +30,7 @@ from notification_hub.operations import (
     load_action_review_package_detail,
     load_personal_ops_queue_burn_in_report_detail,
     run_burn_in,
+    run_coordination_console,
     run_coordination_readiness,
     run_coordination_snapshot,
     run_inbox,
@@ -197,6 +198,101 @@ def test_coordination_readiness_prioritizes_noise_before_expansion() -> None:
     assert report["status"] == "warn"
     assert report["decision"] == "fix_noise_first"
     assert "noise candidates" in report["summary"]
+
+
+def test_coordination_console_summarizes_ready_expansion() -> None:
+    with (
+        patch(
+            "notification_hub.operations.run_coordination_readiness",
+            return_value={
+                "status": "ok",
+                "decision": "ready_to_expand",
+                "summary": "Runtime, queue, and saved burn-in evidence are ready.",
+                "queue_status": "ok",
+                "queued_count": 0,
+                "pending_count": 0,
+                "stale_count": 0,
+                "saved_burn_in_reports": 2,
+                "latest_burn_in_ready": True,
+                "latest_burn_in_noise_candidates": 0,
+                "runtime_status": "ok",
+                "policy_warning_count": 0,
+                "next_action": "Plan the next compact coordination console slice.",
+                "evidence": ["runtime=ok"],
+                "applied": False,
+            },
+        ) as mock_readiness,
+        patch(
+            "notification_hub.operations.run_personal_ops_action_export",
+            return_value={
+                "status": "ok",
+                "schema_version": "notification-hub.personal_ops_action_export.v1",
+                "generated_at": "2026-05-10T04:40:00+00:00",
+                "hours": 2,
+                "actions": [
+                    {
+                        "action_id": "action-1",
+                        "source": "personal-ops",
+                        "project": "mail",
+                        "intent": "waiting_on_user",
+                        "priority": "high",
+                        "state": "waiting",
+                        "title": "Approval Requested",
+                        "summary": "Repeated mail approval.",
+                        "suggested_next_action": "Review the waiting item.",
+                        "evidence_event_id": "event-1",
+                        "evidence_timestamp": "2026-05-10T04:40:00+00:00",
+                        "count": 3,
+                    }
+                ],
+                "review_package": {"status": "not_requested"},
+                "inbox": {},
+                "error": None,
+            },
+        ) as mock_actions,
+        patch(
+            "notification_hub.operations.run_personal_ops_import_queue_health_check",
+            return_value={
+                "status": "ok",
+                "health": _coordination_status()["import_queue"],
+                "queued_items": [],
+                "pending_promotion_items": [],
+                "next_commands": ["uv run notification-hub personal-ops-queue-health"],
+                "applied": False,
+            },
+        ) as mock_queue,
+        patch(
+            "notification_hub.operations.run_personal_ops_outcome_sync_reminder",
+            return_value={
+                "status": "ok",
+                "should_remind": False,
+                "pending_count": 0,
+                "stale_count": 0,
+                "reminders": [],
+                "next_commands": ["uv run notification-hub personal-ops-queue-health"],
+                "next_action": "No pending promoted personal-ops handoff outcomes.",
+                "applied": False,
+            },
+        ) as mock_reminder,
+        patch(
+            "notification_hub.operations.list_personal_ops_queue_burn_in_reports",
+            return_value=[_coordination_burn_in_report()],
+        ) as mock_reports,
+    ):
+        report = run_coordination_console(hours=2, limit=3)
+
+    assert report["status"] == "ok"
+    assert report["readiness"]["decision"] == "ready_to_expand"
+    assert report["action_count"] == 1
+    assert report["next_action"] == (
+        "Save and validate a review package, then queue one handoff for operator review."
+    )
+    assert report["applied"] is False
+    mock_readiness.assert_called_once_with(limit=3)
+    mock_actions.assert_called_once_with(hours=2, limit=3)
+    mock_queue.assert_called_once_with(limit=3)
+    mock_reminder.assert_called_once_with(limit=3)
+    mock_reports.assert_called_once_with(limit=3)
 
 
 def test_inbox_groups_recent_events_by_coordination_intent() -> None:

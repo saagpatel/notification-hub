@@ -53,12 +53,16 @@ tuning pass.
 - A compact `coordination-readiness` command and `/review/coordination-readiness` endpoint now
   combine runtime health, queue state, and saved burn-in report history into a deterministic
   `fix_noise_first`, `keep_burning_in`, or `ready_to_expand` decision.
-- The sample policy now includes the repeated `personal-ops` daemon-start signal seen during live
-  burn-in, keeping evidence-based noise tuning in the repo without changing machine-local config.
+- A compact `coordination-console` command and `/review/coordination-console` endpoint now summarize
+  readiness, action proposals, queue state, promoted-outcome reminders, burn-in report history, and
+  the next safe action in one read-only view.
+- The sample policy now includes the repeated `personal-ops` daemon-start and `notion-os`
+  control-tower sync signals seen during live burn-in, keeping evidence-based noise tuning in the
+  repo without changing machine-local config.
 - A localhost-only review page is available at `/review` on the daemon. It shows runtime health,
   inbox rollups, action proposals, and trust state without applying anything.
-- The review page now includes Operator Focus and Coordination Readiness summaries that put the
-  current action state and expansion gate first.
+- The review page now includes Operator Focus, Coordination Readiness, and Coordination Console
+  summaries that put the current action state, expansion gate, and next safe action first.
 - The review page can stage a local review package, list recent saved review packages, inspect
   package actions/evidence plus queue lineage, queue import handoff items, filter
   queued/promoted/pending/stale/resolved handoffs, mark queued items reviewed/rejected/snoozed/promoted,
@@ -209,6 +213,7 @@ uv run --frozen notification-hub inbox
 uv run --frozen notification-hub coordination-snapshot
 uv run --frozen notification-hub coordination-snapshot --save-bridge-db
 uv run --frozen notification-hub coordination-readiness
+uv run --frozen notification-hub coordination-console
 uv run --frozen notification-hub personal-ops-actions
 uv run --frozen notification-hub personal-ops-actions --save-review-package
 uv run --frozen notification-hub validate-action-package path/to/actions.json
@@ -244,7 +249,7 @@ uv run --frozen notification-hub retention --max-events 2000
 
 Expected current outcome:
 
-- `pytest`: 301 passed
+- `pytest`: 305 passed
 - `ruff`: clean
 - `pyright`: 0 errors
 - `/health/details`: `status: ok`, watcher active, push available, Slack configured
@@ -256,7 +261,9 @@ Expected current outcome:
 - `notification-hub coordination-snapshot`: bridge-ready JSON combining inbox state, runtime
   status, and follow-up guidance; writes to bridge-db only with `--save-bridge-db`
 - `notification-hub coordination-readiness`: read-only expansion gate combining runtime status,
-  queue state, and saved queue burn-in report history; current live decision is `keep_burning_in`
+  queue state, and saved queue burn-in report history; current live decision is `ready_to_expand`
+- `notification-hub coordination-console`: read-only compact console for readiness, action proposals,
+  queue state, outcome reminders, saved burn-in evidence, and next safe action
 - `notification-hub personal-ops-actions`: proposal-only action export derived from repeated inbox
   rollups
 - `notification-hub personal-ops-actions --save-review-package`: writes a local JSON review package
@@ -280,10 +287,13 @@ Expected current outcome:
   burn-in reports without applying work
 - `/review/coordination-readiness`: reports whether to fix noise, keep burning in, or start a
   small coordination expansion without applying work
+- `/review/coordination-console`: reports the compact coordination console payload without applying
+  work
 - `notification-hub personal-ops-queue-scenario`: runs a temporary queue lifecycle and records a
   final accepted promotion outcome without touching runtime queue state
 - `/review`: localhost-only review UI for runtime state, Operator Focus, Coordination Readiness,
-  inbox rollups, action proposals, import queue health, saved burn-in report history, and trust state
+  Coordination Console, inbox rollups, action proposals, import queue health, saved burn-in report
+  history, and trust state
 - `/review/save-package` and `/review/validate-package`: review UI controls for staging and
   validating packages without importing or applying them
 - `/review/packages`: lists recent saved review packages and validation summaries without importing
@@ -359,9 +369,9 @@ It is not part of normal day-to-day work.
 
 Start future work from `main`, keep using the frozen verification commands, and treat the repo-owned
 runtime templates as the source of truth for live launcher and hook wiring.
-The next work here should use `coordination-readiness` as the first expansion gate, continue saving
-and inspecting burn-in reports when the loop is exercised, and only build a higher-level
-coordination console once the command reports `ready_to_expand`.
+The next work here should use `coordination-console` as the first expansion surface, keep all apply
+behavior operator-mediated, and only consider a higher-level coordination console after this compact
+view proves useful in real work.
 
 ## Optional Follow-Up
 
