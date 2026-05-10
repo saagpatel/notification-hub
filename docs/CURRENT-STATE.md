@@ -89,8 +89,8 @@ tuning pass.
   without deleting dismissal history.
 - An `operator-daily-state` command and `/review/operator-daily-state` endpoint now build a
   resume-ready local state snapshot across runtime health, queue health, Coordination Console next
-  signal, burn-in, and dismissals. The command can save timestamped JSON reports under local
-  notification-hub runtime state.
+  signal, burn-in, dismissals, and the rich/thin outcome-quality summary. The command can save
+  timestamped JSON reports under local notification-hub runtime state.
 - An `operator-review-session` command and `/review/operator-review-session` endpoint now summarize
   recent local review activity across grouped proposal saves, queues, dismissals, outcomes, and
   queue follow-through. The `/review` Operator State panel shows this alongside the daily state, and

@@ -1133,6 +1133,7 @@ def _print_operator_daily_state_report(report: OperatorDailyStateReport) -> None
     )
     print(f"- next signal: {console['next_signal']['title']} ({console['next_signal']['status']})")
     print(f"- active actions: {console['active_action_count']}")
+    print(f"- outcome quality: {report['outcome_quality_summary']}")
     print(f"- dismissals: {len(report['dismissals'])}")
     print(f"- burn-in: {report['burn_in']['status']}")
     report_file = report["report_file"]
@@ -1147,6 +1148,10 @@ def _print_operator_handoff_drill_report(report: OperatorHandoffDrillReport) -> 
     print(f"notification-hub operator-handoff-drill: {report['status']}")
     print(f"- generated: {report['generated_at']}")
     print(f"- scenario: {report['scenario']['status']}")
+    print(
+        f"- rich evidence ready: {report['scenario']['rich_evidence_ready']} "
+        f"({report['scenario']['evidence_quality']})"
+    )
     print(f"- queue burn-in: {report['queue_burn_in']['status']}")
     print(f"- ready for live promotion: {report['queue_burn_in']['ready_for_live_promotion']}")
     print(f"- next action: {report['next_action']}")

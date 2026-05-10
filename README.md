@@ -153,8 +153,9 @@ repeated proposal from future console/action exports without deleting the underl
 `action-proposal-undismiss` reactivates a proposal by appending a tombstone rather than rewriting
 history.
 The operator-daily-state command builds a resume-ready local snapshot across runtime health, queue
-health, Coordination Console next signal, burn-in, and dismissals. Pass `--save-report` when you want
-a timestamped JSON report under `~/.local/share/notification-hub/operator-state-reports/`.
+health, Coordination Console next signal, burn-in, dismissals, and the current rich/thin outcome
+quality summary. Pass `--save-report` when you want a timestamped JSON report under
+`~/.local/share/notification-hub/operator-state-reports/`.
 The operator-review-session command summarizes recent local review activity, including grouped
 proposal saves, queues, dismissals, outcomes, and queue follow-through. It is read-only and mirrors
 the review-session summary shown in `/review`; pass `--save-report` when you want a timestamped JSON

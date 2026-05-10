@@ -724,7 +724,9 @@ REVIEW_HTML = """<!doctype html>
         </div>
         <div class="next">${esc(review.summary || "")}</div>
         ${review.handled_history_summary ? `<div class="next">${esc(review.handled_history_summary)}</div>` : ""}
-        ${(data.handled_actions || []).slice(0, 3).map(entry => `<div class="next"><strong>Handled</strong>: ${esc(entry.action?.title || "proposal")} - ${esc(entry.lineage_reason || "")}</div>`).join("")}
+        ${(review.handled_evidence_rotation_count ?? 0) > 0
+          ? `<div class="next"><strong>Handled history</strong>: ${esc(review.handled_evidence_rotation_count)} newer evidence event(s) are still covered by stable proposal keys.</div>`
+          : (data.handled_actions || []).slice(0, 3).map(entry => `<div class="next"><strong>Handled</strong>: ${esc(entry.action?.title || "proposal")} - ${esc(entry.lineage_reason || "")}</div>`).join("")}
         <div class="next">${esc(review.next_action || "")}</div>
         ${(review.group_history || []).slice(0, 3).map(entry => `<div class="next"><strong>Recent group action</strong>: ${esc(entry.event_type)} ${esc(entry.group_key)} (${esc(entry.status)})</div>`).join("")}
       `), ...(groupRows.length ? groupRows : [item(`<div class="next">No active proposal groups.</div>`)]));

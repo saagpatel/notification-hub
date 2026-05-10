@@ -3160,6 +3160,8 @@ def test_personal_ops_queue_scenario_records_final_outcome() -> None:
     assert report["status"] == "ok"
     assert report["queued_count"] == 1
     assert report["queue_id"] is not None
+    assert report["evidence_quality"] == "rich"
+    assert report["rich_evidence_ready"] is True
     assert report["promotion_outcome"] == "accepted"
     assert report["final_health"]["promoted_accepted_count"] == 1
     assert report["applied"] is True
@@ -3398,6 +3400,9 @@ def test_operator_daily_state_can_save_resume_snapshot(tmp_path: Path) -> None:
     payload = json.loads(Path(str(report_file["path"])).read_text(encoding="utf-8"))
     assert payload["schema_version"] == "notification-hub.operator_daily_state.v1"
     assert payload["report"]["next_action"] == "Monitor /review for the next real handoff signal."
+    assert payload["report"]["outcome_quality_summary"] == (
+        "No promoted handoff outcomes are recorded yet."
+    )
 
 
 def test_operator_handoff_drill_runs_temporary_lifecycle() -> None:

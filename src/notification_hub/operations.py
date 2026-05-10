@@ -493,6 +493,8 @@ class PersonalOpsQueueScenarioReport(TypedDict):
     package_path: str
     queue_id: str | None
     queued_count: int
+    evidence_quality: str
+    rich_evidence_ready: bool
     review_status: str | None
     promotion_status: str | None
     promotion_outcome: str | None
@@ -898,6 +900,8 @@ class OperatorDailyStateReport(TypedDict):
     coordination_console: CoordinationConsoleReport
     burn_in: BurnInReport
     dismissals: list[ActionProposalDismissalReport]
+    outcome_quality: HandoffOutcomeQualityReport
+    outcome_quality_summary: str
     next_action: str
     report_file: dict[str, object]
     applied: bool
@@ -4225,6 +4229,12 @@ def run_personal_ops_queue_scenario() -> PersonalOpsQueueScenarioReport:
                             "count": 1,
                             "evidence_event_id": "scenario-event-1",
                             "evidence_timestamp": datetime.now(timezone.utc).isoformat(),
+                            "evidence_context": {
+                                "thread_id": "scenario-thread-1",
+                                "draft_id": "scenario-draft-1",
+                                "approval_id": "scenario-approval-1",
+                            },
+                            "evidence_quality": "rich",
                         }
                     ],
                 }
@@ -4243,6 +4253,8 @@ def run_personal_ops_queue_scenario() -> PersonalOpsQueueScenarioReport:
                 "package_path": str(package_path),
                 "queue_id": queue_id,
                 "queued_count": imported["queued_count"],
+                "evidence_quality": "rich",
+                "rich_evidence_ready": True,
                 "review_status": None,
                 "promotion_status": None,
                 "promotion_outcome": None,
@@ -4280,6 +4292,11 @@ def run_personal_ops_queue_scenario() -> PersonalOpsQueueScenarioReport:
         )
         final_item = accepted["item"] or promoted["item"] or reviewed["item"]
         final_health = summarize_personal_ops_import_queue(queue_path=queue_path)
+        evidence_quality = (
+            _evidence_quality(final_item["evidence_context"])
+            if final_item is not None
+            else "rich"
+        )
         status = (
             "ok"
             if reviewed["status"] == promoted["status"] == accepted["status"] == "ok"
@@ -4291,6 +4308,8 @@ def run_personal_ops_queue_scenario() -> PersonalOpsQueueScenarioReport:
             "package_path": str(package_path),
             "queue_id": queue_id,
             "queued_count": imported["queued_count"],
+            "evidence_quality": evidence_quality,
+            "rich_evidence_ready": evidence_quality == "rich",
             "review_status": reviewed["status"],
             "promotion_status": promoted["status"],
             "promotion_outcome": final_item["promotion_outcome"]
@@ -5909,6 +5928,7 @@ def run_operator_daily_state(
         else "warn"
     )
     next_action = coordination_console["next_action"]
+    outcome_quality = coordination_console.get("outcome_quality") or _build_handoff_outcome_quality([])
     report: OperatorDailyStateReport = {
         "status": status,
         "generated_at": generated_at,
@@ -5918,6 +5938,8 @@ def run_operator_daily_state(
         "coordination_console": coordination_console,
         "burn_in": burn_in,
         "dismissals": dismissals,
+        "outcome_quality": outcome_quality,
+        "outcome_quality_summary": outcome_quality["summary"],
         "next_action": next_action,
         "report_file": {
             "requested": False,
