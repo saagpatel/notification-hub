@@ -5037,10 +5037,10 @@ def run_coordination_console(
         None,
     )
     next_commands = current_guide_step["commands"] if current_guide_step is not None else []
-    if readiness["decision"] != "ready_to_expand":
-        next_action = readiness["next_action"]
-    elif queue_health["queued_count"] > 0 or queue_health["promoted_pending_count"] > 0:
+    if queue_health["queued_count"] > 0 or queue_health["promoted_pending_count"] > 0:
         next_action = queue_health["next_action"]
+    elif readiness["decision"] != "ready_to_expand":
+        next_action = readiness["next_action"]
     elif any(action["lineage_status"] == "new" for action in active_actions):
         next_action = (
             "Save and validate a review package, then queue one handoff for operator review."
