@@ -148,7 +148,9 @@ async def test_review_page_endpoint(client: AsyncClient) -> None:
     assert "notification-hub review" in resp.text
     assert "Coordination Readiness" in resp.text
     assert "Coordination Console" in resp.text
+    assert "Policy Drift" in resp.text
     assert "Burn-In Reports" in resp.text
+    assert "Latest Review Session" in resp.text
     assert "Review Sessions" in resp.text
     assert "Review Session Retention" in resp.text
 
@@ -852,6 +854,41 @@ async def test_review_coordination_console_endpoint_is_read_only(
     assert data["guide_stage"] == "package_review"
     assert data["applied"] is False
     mock_console.assert_called_once_with(hours=4, limit=3)
+
+
+async def test_review_policy_check_endpoint_is_read_only(client: AsyncClient) -> None:
+    with patch(
+        "notification_hub.server.run_policy_check",
+        return_value={
+            "status": "warn",
+            "config_path": "/tmp/config.toml",
+            "config_found": True,
+            "example_path": "/tmp/policy.example.toml",
+            "load_error": None,
+            "warning_count": 0,
+            "suggestion_count": 0,
+            "warnings": [],
+            "suggestions": [],
+            "policy_drift": {
+                "status": "warn",
+                "live_noise_rule_count": 2,
+                "sample_noise_rule_count": 3,
+                "missing_sample_noise_rule_count": 1,
+                "extra_live_noise_rule_count": 0,
+                "missing_sample_noise_rules": [{"source": "personal-ops"}],
+                "extra_live_noise_rules": [],
+                "next_action": "Add the missing sample noise rules.",
+                "error": None,
+            },
+        },
+    ) as mock_policy:
+        resp = await client.get("/review/policy-check")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "warn"
+    assert data["policy_drift"]["missing_sample_noise_rule_count"] == 1
+    mock_policy.assert_called_once_with()
 
 
 async def test_review_action_proposal_group_package_endpoint_is_read_only(

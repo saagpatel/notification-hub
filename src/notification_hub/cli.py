@@ -1398,14 +1398,24 @@ def _print_verify_runtime_report(report: VerifyRuntimeReport) -> None:
 
 
 def _print_policy_check_report(report: PolicyCheckReport) -> None:
+    drift = report["policy_drift"]
     print(f"notification-hub policy-check: {report['status']}")
     print(f"- config found: {report['config_found']}")
     print(f"- config path: {report['config_path']}")
     print(f"- sample path: {report['example_path']}")
     print(f"- warning count: {report['warning_count']}")
     print(f"- suggestion count: {report['suggestion_count']}")
+    print(f"- policy drift: {drift['status']}")
+    print(f"- missing sample noise rules: {drift['missing_sample_noise_rule_count']}")
+    print(f"- extra live noise rules: {drift['extra_live_noise_rule_count']}")
     if report["load_error"] is not None:
         print(f"- load error: {report['load_error']}")
+    if drift["error"] is not None:
+        print(f"- drift error: {drift['error']}")
+    if drift["status"] != "ok":
+        print(f"- drift next action: {drift['next_action']}")
+    for rule in drift["missing_sample_noise_rules"][:3]:
+        print(f"- missing sample noise rule: {rule}")
     for warning, suggestion in zip(report["warnings"], report["suggestions"], strict=False):
         print(f"- warning: {warning}")
         print(f"- suggestion: {suggestion}")

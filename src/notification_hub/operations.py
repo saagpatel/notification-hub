@@ -26,6 +26,7 @@ from notification_hub.config import (
     NoiseRule,
     POLICY_CONFIG,
     PORT,
+    PolicyConfig,
     analyze_policy_config,
     get_policy_config,
     load_policy_config_file,
@@ -4125,10 +4126,8 @@ def _noise_rule_summary(rule: NoiseRule) -> dict[str, object]:
     return summary
 
 
-def _build_policy_drift_report(policy: object) -> PolicyDriftReport:
-    if not isinstance(policy, type(get_policy_config())):
-        policy = get_policy_config()
-    live_policy = cast(type(get_policy_config()), policy)
+def _build_policy_drift_report(policy: PolicyConfig) -> PolicyDriftReport:
+    live_policy = policy
     sample_policy = load_policy_config_file(EXAMPLE_POLICY_CONFIG)
     if not sample_policy.config_found:
         return {

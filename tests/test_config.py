@@ -23,6 +23,7 @@ from notification_hub.config import (
     clear_webhook_cache,
     get_policy_config,
     get_slack_webhook_url,
+    load_policy_config_file,
 )
 
 
@@ -129,6 +130,34 @@ class TestKeychainWebhook:
         assert "-s" in cmd
         assert "slack-webhook" in cmd
         assert "-w" in cmd
+
+
+def test_load_policy_config_file_does_not_touch_live_cache(tmp_path: Path) -> None:
+    policy_path = tmp_path / "policy.toml"
+    policy_path.write_text(
+        """
+[[noise.rules]]
+source = "codex"
+text_contains = "session complete"
+level = "info"
+window_minutes = 10
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    policy = load_policy_config_file(policy_path)
+
+    assert policy.config_found is True
+    assert policy.load_error is None
+    assert policy.noise.rules == (
+        NoiseRule(
+            source="codex",
+            text_contains="session complete",
+            level="info",
+            window_minutes=10,
+        ),
+    )
 
 
 class TestPolicyConfig:

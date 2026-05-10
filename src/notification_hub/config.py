@@ -654,6 +654,19 @@ def get_policy_config() -> PolicyConfig:
     return _cached_policy
 
 
+def load_policy_config_file(path: Path) -> PolicyConfig:
+    """Load a policy config from an explicit path without touching the live cache."""
+    try:
+        with path.open("rb") as handle:
+            raw_config = tomllib.load(handle)
+    except FileNotFoundError:
+        return PolicyConfig(path=path, config_found=False, load_error=None)
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        return PolicyConfig(path=path, config_found=True, load_error=str(exc))
+
+    return _build_policy_config(raw_config, path=path, config_found=True, load_error=None)
+
+
 def clear_policy_cache() -> None:
     """Clear cached policy config. Used for testing."""
     global _cached_policy, _cached_policy_mtime_ns
