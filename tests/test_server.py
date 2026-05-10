@@ -885,6 +885,86 @@ async def test_review_outcome_sync_reminder_endpoint_reports_pending(
     mock_reminder.assert_called_once_with(limit=3, stale_after_hours=2.0)
 
 
+async def test_review_action_proposal_dismiss_endpoint_persists_dismissal(
+    client: AsyncClient,
+) -> None:
+    with (
+        patch(
+            "notification_hub.server.run_personal_ops_action_export",
+            return_value={
+                "status": "ok",
+                "schema_version": "notification-hub.personal_ops_action_export.v1",
+                "generated_at": "2026-05-10T04:40:00+00:00",
+                "hours": 24,
+                "actions": [
+                    {
+                        "action_id": "action-1",
+                        "dismissal_key": "proposal:personal-ops:mail:waiting-on-user:abc",
+                        "source": "personal-ops",
+                        "project": "mail",
+                        "intent": "waiting_on_user",
+                        "priority": "high",
+                        "state": "waiting",
+                        "title": "Approval Requested",
+                        "summary": "2 repeated personal-ops events: Test draft",
+                        "signal_level": "urgent",
+                        "signal_body": "Test draft",
+                        "suggested_next_action": "Review the waiting item.",
+                        "evidence_event_id": "event-1",
+                        "evidence_timestamp": "2026-05-10T04:40:00+00:00",
+                        "count": 2,
+                    }
+                ],
+                "dismissed_action_count": 0,
+                "dismissals": [],
+                "review_package": {"status": "not_requested"},
+                "inbox": {},
+                "error": None,
+            },
+        ) as mock_actions,
+        patch(
+            "notification_hub.server.dismiss_action_proposal",
+            return_value={
+                "status": "ok",
+                "path": "/tmp/dismissals.jsonl",
+                "dismissal": {
+                    "dismissal_key": "proposal:personal-ops:mail:waiting-on-user:abc",
+                    "dismissed_at": "2026-05-10T04:41:00+00:00",
+                    "reason": "known test signal",
+                    "source": "personal-ops",
+                    "project": "mail",
+                    "intent": "waiting_on_user",
+                    "title": "Approval Requested",
+                    "body": "Test draft",
+                    "evidence_event_id": "event-1",
+                },
+                "applied": False,
+                "error": None,
+            },
+        ) as mock_dismiss,
+    ):
+        resp = await client.post(
+            "/review/action-proposal/proposal%3Apersonal-ops%3Amail%3Awaiting-on-user%3Aabc/dismiss",
+            json={"reason": "known test signal"},
+        )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert data["applied"] is False
+    mock_actions.assert_called_once_with(hours=24, limit=100, include_dismissed=True)
+    mock_dismiss.assert_called_once_with(
+        dismissal_key="proposal:personal-ops:mail:waiting-on-user:abc",
+        reason="known test signal",
+        source="personal-ops",
+        project="mail",
+        intent="waiting_on_user",
+        title="Approval Requested",
+        body="Test draft",
+        evidence_event_id="event-1",
+    )
+
+
 async def test_review_import_queue_patch_updates_lifecycle(client: AsyncClient) -> None:
     with patch(
         "notification_hub.server.update_personal_ops_import_queue_item",

@@ -19,6 +19,7 @@ from notification_hub.diagnostics import collect_runtime_readiness
 from notification_hub.models import Event, EventResponse
 from notification_hub.operations import (
     delete_action_review_package,
+    dismiss_action_proposal,
     list_action_review_packages,
     list_personal_ops_import_queue,
     list_personal_ops_queue_burn_in_reports,
@@ -527,7 +528,13 @@ REVIEW_HTML = """<!doctype html>
       renderList(actions, data.actions.actions, a => item(`
         <div class="line"><span class="title">${esc(a.title)}</span><span class="meta">${esc(a.priority)}/${esc(a.state)} x${esc(a.count)}</span></div>
         <div class="next">${esc(a.suggested_next_action)}</div>
+        <div class="button-row">
+          <button type="button" data-dismissal-key="${esc(a.dismissal_key)}">Dismiss</button>
+        </div>
       `), "No action proposals.");
+      actions.querySelectorAll("button[data-dismissal-key]").forEach(button => {
+        button.addEventListener("click", () => dismissActionProposal(button.dataset.dismissalKey));
+      });
       renderList(rollups, data.inbox.rollups, r => item(`
         <div class="line"><span class="title">${esc(r.title)}</span><span class="meta">${esc(r.intent)} x${esc(r.count)}</span></div>
         <div class="next">${esc(r.source)}${r.project ? " / " + esc(r.project) : ""}</div>
@@ -566,6 +573,7 @@ REVIEW_HTML = """<!doctype html>
           ${badge(`actions ${data.action_count ?? 0}`)}
           ${warnBadge(`active ${data.active_action_count ?? 0}`, (data.active_action_count ?? 0) > 0)}
           ${badge(`handled ${data.handled_action_count ?? 0}`)}
+          ${badge(`dismissed ${data.dismissal_count ?? 0}`)}
           ${warnBadge(`queued ${queue.queued_count ?? 0}`, (queue.queued_count ?? 0) > 0)}
           ${warnBadge(`pending ${queue.promoted_pending_count ?? 0}`, (queue.promoted_pending_count ?? 0) > 0)}
           ${warnBadge(`stale ${queue.promoted_pending_stale_count ?? 0}`, (queue.promoted_pending_stale_count ?? 0) > 0)}
@@ -575,6 +583,22 @@ REVIEW_HTML = """<!doctype html>
         <div class="next"><strong>Guide</strong>: ${esc(data.guide_stage || "unknown")}</div>
         <div class="next">${esc(data.next_action || "")}</div>
       `), ...(guideRows.length ? guideRows : [item(`<div class="next">No guide steps.</div>`)]));
+    }
+    async function dismissActionProposal(dismissalKey) {
+      if (!dismissalKey) {
+        return;
+      }
+      const res = await fetch(`/review/action-proposal/${encodeURIComponent(dismissalKey)}/dismiss`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: "Review UI dismissed repeated proposal as known noise." })
+      });
+      const data = await res.json();
+      packageDetail.replaceChildren(
+        item(`<div class="line"><span class="title">Dismiss proposal</span><span class="meta">${esc(data.status)}</span></div>`),
+        item(`<div class="next">${esc(data.next_action || data.error || "")}</div>`)
+      );
+      await load();
     }
     function renderPackage(state) {
       packageState.replaceChildren(
@@ -1084,6 +1108,50 @@ async def review_coordination_console(hours: int = 2, limit: int = 5) -> dict[st
         limit=max(limit, 1),
     )
     return dict(report)
+
+
+@app.post("/review/action-proposal/{dismissal_key}/dismiss")
+async def review_dismiss_action_proposal(dismissal_key: str, request: Request) -> dict[str, object]:
+    """Dismiss one repeated action proposal from the local review surface."""
+    try:
+        raw_body = await request.json()
+    except ValueError:
+        raw_body = {}
+    body = cast(dict[str, object], raw_body) if isinstance(raw_body, dict) else {}
+    reason_value = body.get("reason")
+    reason = (
+        reason_value
+        if isinstance(reason_value, str) and reason_value.strip()
+        else "Review UI dismissed repeated proposal as known noise."
+    )
+    actions = await asyncio.to_thread(
+        run_personal_ops_action_export,
+        hours=24,
+        limit=100,
+        include_dismissed=True,
+    )
+    matched = next(
+        (
+            action
+            for action in actions["actions"]
+            if action["dismissal_key"] == dismissal_key
+        ),
+        None,
+    )
+    report = dismiss_action_proposal(
+        dismissal_key=dismissal_key,
+        reason=reason,
+        source=matched["source"] if matched is not None else None,
+        project=matched["project"] if matched is not None else None,
+        intent=matched["intent"] if matched is not None else None,
+        title=matched["title"] if matched is not None else None,
+        body=matched["signal_body"] if matched is not None else None,
+        evidence_event_id=matched["evidence_event_id"] if matched is not None else None,
+    )
+    return {
+        **dict(report),
+        "next_action": "Proposal dismissed from the local console. Future matching proposals stay hidden until the dismissal file is edited.",
+    }
 
 
 @app.get("/review/outcome-sync-reminder")

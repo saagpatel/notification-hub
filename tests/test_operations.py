@@ -15,6 +15,8 @@ import pytest
 import notification_hub.operations as ops_mod
 from notification_hub.config import (
     ClassificationPolicy,
+    NoisePolicy,
+    NoiseRule,
     PolicyConfig,
     RetentionPolicy,
     RoutingPolicy,
@@ -25,7 +27,9 @@ from notification_hub.models import StoredEvent
 from notification_hub.operations import (
     bootstrap_policy_config,
     delete_action_review_package,
+    dismiss_action_proposal,
     list_action_review_packages,
+    list_action_proposal_dismissals,
     list_personal_ops_queue_burn_in_reports,
     list_personal_ops_import_queue,
     load_action_review_package_detail,
@@ -736,11 +740,79 @@ def test_personal_ops_action_export_prepares_actions_from_rollups() -> None:
     assert report["actions"][0]["priority"] == "high"
     assert report["actions"][0]["state"] == "waiting"
     assert report["actions"][0]["action_id"].endswith(":abc123")
+    assert report["actions"][0]["dismissal_key"].startswith(
+        "proposal:personal-ops:mail:waiting-on-user:"
+    )
+    assert report["actions"][0]["signal_body"] == "Console reply needed"
     assert report["actions"][0]["evidence_event_id"] == "abc123"
     assert report["actions"][0]["suggested_next_action"] == (
         "Review the waiting item and approve, reply, or dismiss it."
     )
     assert report["review_package"]["status"] == "not_requested"
+    assert report["dismissed_action_count"] == 0
+
+
+def test_action_proposal_dismissal_filters_matching_rollup(tmp_path: Path) -> None:
+    dismissals_path = tmp_path / "dismissals.jsonl"
+    inbox_report: dict[str, object] = {
+        "status": "ok",
+        "hours": 2,
+        "events_seen": 2,
+        "needs_attention": [],
+        "waiting_or_blocked": [],
+        "ready": [],
+        "completed": [],
+        "rollups": [
+            {
+                "count": 2,
+                "source": "personal-ops",
+                "project": "mail",
+                "intent": "waiting_on_user",
+                "level": "urgent",
+                "title": "Approval Requested",
+                "body": "Test draft",
+                "latest_timestamp": "2026-05-09T00:00:00+00:00",
+                "latest_event_id": "abc123",
+            }
+        ],
+        "noise_candidates": [],
+        "error": None,
+    }
+
+    with patch("notification_hub.operations.run_inbox", return_value=inbox_report):
+        first_report = run_personal_ops_action_export(
+            hours=2,
+            limit=5,
+            dismissals_path=dismissals_path,
+        )
+    dismissal_key = first_report["actions"][0]["dismissal_key"]
+
+    dismiss_report = dismiss_action_proposal(
+        dismissal_key=dismissal_key,
+        reason="known test signal",
+        source="personal-ops",
+        project="mail",
+        intent="waiting_on_user",
+        title="Approval Requested",
+        body="Test draft",
+        evidence_event_id="abc123",
+        dismissals_path=dismissals_path,
+    )
+
+    with patch("notification_hub.operations.run_inbox", return_value=inbox_report):
+        second_report = run_personal_ops_action_export(
+            hours=2,
+            limit=5,
+            dismissals_path=dismissals_path,
+        )
+
+    assert dismiss_report["status"] == "ok"
+    assert second_report["actions"] == []
+    assert second_report["dismissed_action_count"] == 1
+    assert second_report["dismissals"][0]["dismissal_key"] == dismissal_key
+    assert list_action_proposal_dismissals(dismissals_path=dismissals_path)[0]["reason"] == (
+        "known test signal"
+    )
 
 
 def test_personal_ops_action_export_keeps_repeated_titles_unique() -> None:
@@ -1852,6 +1924,11 @@ def test_burn_in_reports_repeated_signatures_and_daemon_counts(
     monkeypatch.setattr(ops_mod, "EVENTS_LOG", events_log)
     monkeypatch.setattr(ops_mod, "DAEMON_STDOUT_LOG", stdout_log)
     monkeypatch.setattr(ops_mod, "DAEMON_STDERR_LOG", stderr_log)
+    monkeypatch.setattr(
+        ops_mod,
+        "get_policy_config",
+        lambda: PolicyConfig(noise=NoisePolicy(rules=())),
+    )
 
     report = run_burn_in(minutes=10, lines=10)
 
@@ -1881,6 +1958,62 @@ def test_burn_in_reports_repeated_signatures_and_daemon_counts(
             "level": "normal",
         }
     ]
+
+
+def test_burn_in_filters_policy_covered_noise_candidates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    events_log = tmp_path / "events.jsonl"
+    events = [
+        StoredEvent(
+            source="codex",
+            level="normal",
+            classified_level="normal",
+            title="Codex finished a turn",
+            body="A Codex turn completed.",
+            project="personal-ops",
+        ),
+        StoredEvent(
+            source="codex",
+            level="normal",
+            classified_level="normal",
+            title="Codex finished a turn",
+            body="A Codex turn completed.",
+            project="personal-ops",
+        ),
+    ]
+    events_log.write_text(
+        "\n".join(event.model_dump_json() for event in events) + "\n", encoding="utf-8"
+    )
+    stdout_log = tmp_path / "stdout.log"
+    stderr_log = tmp_path / "stderr.log"
+    stdout_log.write_text("", encoding="utf-8")
+    stderr_log.write_text("", encoding="utf-8")
+    monkeypatch.setattr(ops_mod, "EVENTS_LOG", events_log)
+    monkeypatch.setattr(ops_mod, "DAEMON_STDOUT_LOG", stdout_log)
+    monkeypatch.setattr(ops_mod, "DAEMON_STDERR_LOG", stderr_log)
+    monkeypatch.setattr(
+        ops_mod,
+        "get_policy_config",
+        lambda: PolicyConfig(
+            noise=NoisePolicy(
+                rules=(
+                    NoiseRule(
+                        source="codex",
+                        title_contains="codex finished a turn",
+                        body_contains="a codex turn completed.",
+                        level="normal",
+                    ),
+                )
+            )
+        ),
+    )
+
+    report = run_burn_in(minutes=10, lines=10)
+
+    assert report["noise_candidates"] == []
+    assert report["noise_rule_suggestions"] == []
+    assert report["repeated_signatures"][0]["title"] == "Codex finished a turn"
 
 
 def test_burn_in_degrades_on_slack_delivery_failures(

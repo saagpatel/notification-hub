@@ -23,6 +23,7 @@ from notification_hub.config import (
     EVENTS_LOG,
     EXAMPLE_POLICY_CONFIG,
     HOST,
+    NoiseRule,
     POLICY_CONFIG,
     PORT,
     analyze_policy_config,
@@ -113,6 +114,7 @@ class InboxReport(TypedDict):
 
 class PersonalOpsActionReport(TypedDict):
     action_id: str
+    dismissal_key: str
     source: str
     project: str | None
     intent: str
@@ -120,10 +122,32 @@ class PersonalOpsActionReport(TypedDict):
     state: str
     title: str
     summary: str
+    signal_level: str
+    signal_body: str
     suggested_next_action: str
     evidence_event_id: str
     evidence_timestamp: str
     count: int
+
+
+class ActionProposalDismissalReport(TypedDict):
+    dismissal_key: str
+    dismissed_at: str
+    reason: str
+    source: str | None
+    project: str | None
+    intent: str | None
+    title: str | None
+    body: str | None
+    evidence_event_id: str | None
+
+
+class ActionProposalDismissReport(TypedDict):
+    status: str
+    path: str
+    dismissal: ActionProposalDismissalReport | None
+    applied: bool
+    error: str | None
 
 
 class PersonalOpsActionExportReport(TypedDict):
@@ -132,6 +156,8 @@ class PersonalOpsActionExportReport(TypedDict):
     generated_at: str
     hours: int
     actions: list[PersonalOpsActionReport]
+    dismissed_action_count: int
+    dismissals: list[ActionProposalDismissalReport]
     review_package: dict[str, object]
     inbox: InboxReport
     error: str | None
@@ -515,8 +541,10 @@ class CoordinationConsoleReport(TypedDict):
     action_count: int
     active_action_count: int
     handled_action_count: int
+    dismissal_count: int
     actions: list[CoordinationConsoleActionReport]
     handled_actions: list[CoordinationConsoleActionReport]
+    dismissals: list[ActionProposalDismissalReport]
     queue_health: PersonalOpsImportQueueHealthReport
     queued_items: list[PersonalOpsImportQueueItemReport]
     pending_promotion_items: list[PersonalOpsImportQueueItemReport]
@@ -534,6 +562,7 @@ BRIDGE_SNAPSHOT_RETENTION_PER_SYSTEM = 10
 ACTION_EXPORT_DIR = EVENTS_DIR / "action-exports"
 BURN_IN_REPORT_DIR = EVENTS_DIR / "burn-in-reports"
 PERSONAL_OPS_IMPORT_QUEUE = EVENTS_DIR / "personal-ops-import-queue.jsonl"
+ACTION_PROPOSAL_DISMISSALS = EVENTS_DIR / "action-proposal-dismissals.jsonl"
 ACTION_EXPORT_SCHEMA_VERSION = "notification-hub.personal_ops_action_export.v1"
 PERSONAL_OPS_IMPORT_QUEUE_SCHEMA_VERSION = "notification-hub.personal_ops_import_queue.v1"
 PERSONAL_OPS_QUEUE_STATUSES = {
@@ -579,6 +608,132 @@ def _as_str(value: object) -> str | None:
     if isinstance(value, str):
         return value
     return None
+
+
+def _jsonl_dicts(path: Path) -> list[dict[str, object]]:
+    if not path.exists():
+        return []
+    records: list[dict[str, object]] = []
+    with path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            try:
+                raw = json.loads(stripped)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(raw, dict):
+                records.append(cast(dict[str, object], raw))
+    return records
+
+
+def _jsonl_append(path: Path, record: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, sort_keys=True) + "\n")
+    os.chmod(path, 0o600)
+
+
+def _dismissal_report(raw: dict[str, object]) -> ActionProposalDismissalReport | None:
+    dismissal_key = _as_str(raw.get("dismissal_key"))
+    dismissed_at = _as_str(raw.get("dismissed_at"))
+    if dismissal_key is None or dismissed_at is None:
+        return None
+    return {
+        "dismissal_key": dismissal_key,
+        "dismissed_at": dismissed_at,
+        "reason": _as_str(raw.get("reason")) or "",
+        "source": _as_str(raw.get("source")),
+        "project": _as_str(raw.get("project")),
+        "intent": _as_str(raw.get("intent")),
+        "title": _as_str(raw.get("title")),
+        "body": _as_str(raw.get("body")),
+        "evidence_event_id": _as_str(raw.get("evidence_event_id")),
+    }
+
+
+def list_action_proposal_dismissals(
+    *, limit: int = 25, dismissals_path: Path | None = None
+) -> list[ActionProposalDismissalReport]:
+    """Return latest proposal dismissals first."""
+    path = dismissals_path or ACTION_PROPOSAL_DISMISSALS
+    records: list[ActionProposalDismissalReport] = []
+    seen: set[str] = set()
+    for raw in reversed(_jsonl_dicts(path)):
+        report = _dismissal_report(raw)
+        if report is None or report["dismissal_key"] in seen:
+            continue
+        seen.add(report["dismissal_key"])
+        records.append(report)
+        if len(records) >= max(limit, 1):
+            break
+    return records
+
+
+def _active_action_proposal_dismissals(
+    dismissals_path: Path | None = None,
+) -> dict[str, ActionProposalDismissalReport]:
+    return {
+        dismissal["dismissal_key"]: dismissal
+        for dismissal in list_action_proposal_dismissals(
+            limit=10_000, dismissals_path=dismissals_path
+        )
+    }
+
+
+def dismiss_action_proposal(
+    *,
+    dismissal_key: str,
+    reason: str,
+    source: str | None = None,
+    project: str | None = None,
+    intent: str | None = None,
+    title: str | None = None,
+    body: str | None = None,
+    evidence_event_id: str | None = None,
+    dismissals_path: Path | None = None,
+) -> ActionProposalDismissReport:
+    """Persist a local operator dismissal for a repeated action proposal."""
+    key = dismissal_key.strip()
+    if not key:
+        return {
+            "status": "degraded",
+            "path": str(dismissals_path or ACTION_PROPOSAL_DISMISSALS),
+            "dismissal": None,
+            "applied": False,
+            "error": "dismissal_key is required",
+        }
+    path = dismissals_path or ACTION_PROPOSAL_DISMISSALS
+    dismissed_at = datetime.now(timezone.utc).isoformat()
+    dismissal: ActionProposalDismissalReport = {
+        "dismissal_key": key,
+        "dismissed_at": dismissed_at,
+        "reason": reason.strip() or "dismissed as known repeated noise",
+        "source": source,
+        "project": project,
+        "intent": intent,
+        "title": title,
+        "body": body,
+        "evidence_event_id": evidence_event_id,
+    }
+    try:
+        _jsonl_append(path, dict(dismissal))
+    except OSError as exc:
+        return {
+            "status": "degraded",
+            "path": str(path),
+            "dismissal": None,
+            "applied": False,
+            "error": str(exc),
+        }
+    return {
+        "status": "ok",
+        "path": str(path),
+        "dismissal": dismissal,
+        "applied": False,
+        "error": None,
+    }
 
 
 def _save_bridge_snapshot(
@@ -806,6 +961,27 @@ def _suggested_action(intent: str, title: str) -> str:
     return f"Review repeated signal: {title}."
 
 
+def _proposal_dismissal_key(rollup: InboxRollupReport) -> str:
+    stable_parts = {
+        "source": rollup["source"],
+        "project": rollup["project"] or "",
+        "intent": rollup["intent"],
+        "level": rollup["level"],
+        "title": rollup["title"],
+        "body": rollup["body"],
+    }
+    digest = hashlib.sha256(
+        json.dumps(stable_parts, sort_keys=True).encode("utf-8")
+    ).hexdigest()[:16]
+    source_part = re.sub(r"[^a-z0-9]+", "-", rollup["source"].lower()).strip("-") or "source"
+    project_part = (
+        re.sub(r"[^a-z0-9]+", "-", (rollup["project"] or "general").lower()).strip("-")
+        or "general"
+    )
+    intent_part = re.sub(r"[^a-z0-9]+", "-", rollup["intent"].lower()).strip("-") or "intent"
+    return f"proposal:{source_part}:{project_part}:{intent_part}:{digest}"
+
+
 def _action_from_rollup(rollup: InboxRollupReport) -> PersonalOpsActionReport:
     project_part = rollup["project"] or "general"
     normalized_title = re.sub(r"[^a-z0-9]+", "-", rollup["title"].lower()).strip("-") or "signal"
@@ -818,6 +994,7 @@ def _action_from_rollup(rollup: InboxRollupReport) -> PersonalOpsActionReport:
     )
     return {
         "action_id": action_id,
+        "dismissal_key": _proposal_dismissal_key(rollup),
         "source": rollup["source"],
         "project": rollup["project"],
         "intent": rollup["intent"],
@@ -825,6 +1002,8 @@ def _action_from_rollup(rollup: InboxRollupReport) -> PersonalOpsActionReport:
         "state": _action_state(rollup["intent"]),
         "title": rollup["title"],
         "summary": f"{rollup['count']} repeated {rollup['source']} events: {rollup['body']}",
+        "signal_level": rollup["level"],
+        "signal_body": rollup["body"],
         "suggested_next_action": _suggested_action(rollup["intent"], rollup["title"]),
         "evidence_event_id": rollup["latest_event_id"],
         "evidence_timestamp": rollup["latest_timestamp"],
@@ -1987,6 +2166,41 @@ def _noise_rule_suggestions(noise_candidates: list[RepeatedSignatureReport]) -> 
     return suggestions
 
 
+def _noise_rule_matches_signature(rule: NoiseRule, item: RepeatedSignatureReport) -> bool:
+    title_text = item["title"].lower()
+    body_text = item["body"].lower()
+    combined_text = f"{title_text} {body_text}"
+    if rule.source is not None and rule.source != item["source"]:
+        return False
+    if rule.project is not None and rule.project != item["project"]:
+        return False
+    if rule.project_prefix is not None:
+        if item["project"] is None or not item["project"].startswith(rule.project_prefix):
+            return False
+    if rule.level is not None and rule.level != item["level"]:
+        return False
+    if rule.title_contains is not None and rule.title_contains not in title_text:
+        return False
+    if rule.body_contains is not None and rule.body_contains not in body_text:
+        return False
+    if rule.text_contains is not None and rule.text_contains not in combined_text:
+        return False
+    return True
+
+
+def _filter_known_noise_candidates(
+    repeated: list[RepeatedSignatureReport],
+) -> list[RepeatedSignatureReport]:
+    rules = get_policy_config().noise.rules
+    if not rules:
+        return repeated
+    return [
+        item
+        for item in repeated
+        if not any(_noise_rule_matches_signature(rule, item) for rule in rules)
+    ]
+
+
 def run_burn_in(*, minutes: int = 10, lines: int = 200) -> BurnInReport:
     """Summarize recent health failures and repeated/noisy event signatures."""
     window_minutes = max(minutes, 1)
@@ -2066,7 +2280,7 @@ def run_burn_in(*, minutes: int = 10, lines: int = 200) -> BurnInReport:
         and daemon_summary["slack_delivery_failure_count"] == 0
         else "degraded"
     )
-    noise_candidates = repeated[:10]
+    noise_candidates = _filter_known_noise_candidates(repeated)[:10]
     noise_rule_suggestions = _noise_rule_suggestions(noise_candidates)
     return {
         "status": "ok",
@@ -2084,7 +2298,7 @@ def run_burn_in(*, minutes: int = 10, lines: int = 200) -> BurnInReport:
         },
         "noise_candidates": noise_candidates,
         "noise_rule_suggestions": noise_rule_suggestions,
-        "repeated_signatures": noise_candidates,
+        "repeated_signatures": repeated[:10],
         "slack_eligible_events": sum(item["count"] for item in slack_volume),
         "slack_volume": slack_volume[:10],
         "daemon_summary": daemon_summary,
@@ -2238,13 +2452,15 @@ def run_personal_ops_action_export(
     limit: int = 10,
     save_review_package: bool = False,
     review_dir: Path | None = None,
+    dismissals_path: Path | None = None,
+    include_dismissed: bool = False,
 ) -> PersonalOpsActionExportReport:
     """Prepare personal-ops action proposals without mutating personal-ops."""
     window_hours = max(hours, 1)
     item_limit = max(limit, 1)
     generated_at = datetime.now(timezone.utc).isoformat()
     inbox = run_inbox(hours=window_hours, limit=item_limit)
-    actions = [
+    proposed_actions = [
         _action_from_rollup(rollup)
         for rollup in inbox["rollups"]
         if rollup["intent"]
@@ -2256,7 +2472,13 @@ def run_personal_ops_action_export(
             "ready_to_merge",
             "automation_failed",
         }
-    ][:item_limit]
+    ]
+    dismissals = _active_action_proposal_dismissals(dismissals_path)
+    active_actions = [
+        action for action in proposed_actions if action["dismissal_key"] not in dismissals
+    ]
+    actions = (proposed_actions if include_dismissed else active_actions)[:item_limit]
+    dismissed_action_count = len(proposed_actions) - len(active_actions)
 
     report: PersonalOpsActionExportReport = {
         "status": inbox["status"],
@@ -2264,6 +2486,8 @@ def run_personal_ops_action_export(
         "generated_at": generated_at,
         "hours": window_hours,
         "actions": actions,
+        "dismissed_action_count": dismissed_action_count,
+        "dismissals": list(dismissals.values())[:item_limit],
         "review_package": {
             "requested": False,
             "status": "not_requested",
@@ -3134,6 +3358,7 @@ def run_coordination_console(*, hours: int = 2, limit: int = 5) -> CoordinationC
     outcome_sync_reminder = run_personal_ops_outcome_sync_reminder(limit=safe_limit)
     burn_in_reports = list_personal_ops_queue_burn_in_reports(limit=safe_limit)
     proposal_lineage = _build_proposal_lineage(actions["actions"])
+    action_dismissals = actions.get("dismissals", [])
     active_actions = [
         action for action in proposal_lineage if action["lineage_status"] in {"new", "queued", "promoted"}
     ]
@@ -3182,8 +3407,10 @@ def run_coordination_console(*, hours: int = 2, limit: int = 5) -> CoordinationC
         "action_count": len(actions["actions"]),
         "active_action_count": len(active_actions),
         "handled_action_count": len(handled_actions),
+        "dismissal_count": len(action_dismissals),
         "actions": active_actions[:safe_limit],
         "handled_actions": handled_actions[:safe_limit],
+        "dismissals": action_dismissals[:safe_limit],
         "queue_health": queue_health,
         "queued_items": queue["queued_items"][:safe_limit],
         "pending_promotion_items": queue["pending_promotion_items"][:safe_limit],

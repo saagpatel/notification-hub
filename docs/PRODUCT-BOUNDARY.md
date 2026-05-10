@@ -50,4 +50,4 @@ The near-term product path is to keep the trust boundary visible while making th
 5. Save burn-in reports around real queue use so expansion decisions are based on observed operator
    volume instead of guesses.
 6. Treat `coordination-readiness` as the local gate before building broader coordination surfaces.
-7. Keep the compact `coordination-console` read-only, lineage-aware, and guide-only until repeated real use proves the next apply boundary.
+7. Keep the compact `coordination-console` read-only, lineage-aware, dismissal-aware, and guide-only until repeated real use proves the next apply boundary.

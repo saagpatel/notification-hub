@@ -35,6 +35,7 @@ notification-hub-coordination-readiness = "notification_hub.cli:coordination_rea
 notification-hub-coordination-console = "notification_hub.cli:coordination_console_main"
 notification-hub-personal-ops-actions = "notification_hub.cli:personal_ops_actions_main"
 notification-hub-validate-action-package = "notification_hub.cli:validate_action_package_main"
+notification-hub-action-proposal-dismiss = "notification_hub.cli:action_proposal_dismiss_main"
 notification-hub-personal-ops-import = "notification_hub.cli:personal_ops_import_main"
 notification-hub-personal-ops-queue-health = "notification_hub.cli:personal_ops_queue_health_main"
 notification-hub-personal-ops-queue-burn-in = "notification_hub.cli:personal_ops_queue_burn_in_main"

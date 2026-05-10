@@ -30,12 +30,14 @@ from notification_hub.operations import (
     PersonalOpsQueueBurnInReport,
     PersonalOpsQueueScenarioReport,
     ActionPackageValidationReport,
+    ActionProposalDismissReport,
     PolicyCheckReport,
     RetentionReport,
     SmokeReport,
     StatusReport,
     VerifyRuntimeReport,
     bootstrap_policy_config,
+    dismiss_action_proposal,
     run_burn_in,
     run_coordination_console,
     run_coordination_readiness,
@@ -335,6 +337,25 @@ def _build_parser(prog: str = "notification-hub") -> argparse.ArgumentParser:
         "--json",
         action="store_true",
         help="Emit the validation report as JSON.",
+    )
+
+    action_proposal_dismiss = subparsers.add_parser(
+        "action-proposal-dismiss",
+        help="Dismiss a repeated action proposal from the local coordination console.",
+    )
+    action_proposal_dismiss.add_argument(
+        "dismissal_key",
+        help="Stable dismissal key from a personal-ops action proposal.",
+    )
+    action_proposal_dismiss.add_argument(
+        "--reason",
+        default="dismissed as known repeated noise",
+        help="Operator note explaining why this proposal should stay hidden.",
+    )
+    action_proposal_dismiss.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the dismissal report as JSON.",
     )
 
     personal_ops_import = subparsers.add_parser(
@@ -751,6 +772,7 @@ def _print_personal_ops_action_export_report(report: PersonalOpsActionExportRepo
     print(f"- schema: {report['schema_version']}")
     print(f"- window: {report['hours']} hours")
     print(f"- actions: {len(report['actions'])}")
+    print(f"- dismissed: {report['dismissed_action_count']}")
     print(f"- review package: {report['review_package']['status']}")
     if report["review_package"]["path"] is not None:
         print(f"- review path: {report['review_package']['path']}")
@@ -763,6 +785,17 @@ def _print_personal_ops_action_export_report(report: PersonalOpsActionExportRepo
             f"{action['source']}{project}: {action['title']} x{action['count']}"
         )
         print(f"    next: {action['suggested_next_action']}")
+        print(f"    dismiss: uv run notification-hub action-proposal-dismiss {action['dismissal_key']}")
+
+
+def _print_action_proposal_dismiss_report(report: ActionProposalDismissReport) -> None:
+    print(f"notification-hub action-proposal-dismiss: {report['status']}")
+    print(f"- path: {report['path']}")
+    if report["dismissal"] is not None:
+        print(f"- dismissal: {report['dismissal']['dismissal_key']}")
+        print(f"- reason: {report['dismissal']['reason']}")
+    if report["error"] is not None:
+        print(f"- error: {report['error']}")
 
 
 def _print_action_package_validation_report(report: ActionPackageValidationReport) -> None:
@@ -1202,6 +1235,32 @@ def main(argv: Sequence[str] | None = None) -> int:
             _print_action_package_validation_report(report)
         return 0 if report["status"] == "ok" else 1
 
+    if args.command == "action-proposal-dismiss":
+        actions = run_personal_ops_action_export(hours=24, limit=100, include_dismissed=True)
+        matched = next(
+            (
+                action
+                for action in actions["actions"]
+                if action["dismissal_key"] == args.dismissal_key
+            ),
+            None,
+        )
+        report = dismiss_action_proposal(
+            dismissal_key=args.dismissal_key,
+            reason=args.reason,
+            source=matched["source"] if matched is not None else None,
+            project=matched["project"] if matched is not None else None,
+            intent=matched["intent"] if matched is not None else None,
+            title=matched["title"] if matched is not None else None,
+            body=matched["signal_body"] if matched is not None else None,
+            evidence_event_id=matched["evidence_event_id"] if matched is not None else None,
+        )
+        if args.json:
+            print(json.dumps(report, indent=2, sort_keys=True))
+        else:
+            _print_action_proposal_dismiss_report(report)
+        return 0 if report["status"] == "ok" else 1
+
     if args.command == "personal-ops-import":
         report = run_personal_ops_import_stub(
             path=Path(args.path),
@@ -1393,6 +1452,11 @@ def personal_ops_actions_main(argv: Sequence[str] | None = None) -> int:
 def validate_action_package_main(argv: Sequence[str] | None = None) -> int:
     forwarded = list(argv) if argv is not None else sys.argv[1:]
     return main(["validate-action-package", *forwarded])
+
+
+def action_proposal_dismiss_main(argv: Sequence[str] | None = None) -> int:
+    forwarded = list(argv) if argv is not None else sys.argv[1:]
+    return main(["action-proposal-dismiss", *forwarded])
 
 
 def personal_ops_import_main(argv: Sequence[str] | None = None) -> int:

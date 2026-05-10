@@ -39,6 +39,38 @@ level = "info"
 window_minutes = 10
 
 [[noise.rules]]
+source = "personal-ops"
+project = "mail"
+title_contains = "approval requested"
+body_contains = "test draft"
+level = "urgent"
+window_minutes = 30
+
+[[noise.rules]]
+source = "personal-ops"
+project = "mail"
+title_contains = "approval requested"
+body_contains = "console reply needed"
+level = "urgent"
+window_minutes = 30
+
+[[noise.rules]]
+source = "personal-ops"
+project = "mail"
+title_contains = "send succeeded"
+body_contains = "test draft"
+level = "info"
+window_minutes = 30
+
+[[noise.rules]]
+source = "personal-ops"
+project = "mail"
+title_contains = "draft ready"
+body_contains = "console reply needed"
+level = "info"
+window_minutes = 30
+
+[[noise.rules]]
 source = "codex"
 text_contains = "session complete"
 level = "info"

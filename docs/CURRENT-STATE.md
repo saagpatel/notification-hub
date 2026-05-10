@@ -155,6 +155,11 @@ tuning pass.
 - Added `notification-hub personal-ops-actions` as the first personal-ops handoff surface. It emits
   action proposals with priority, state, suggested next action, and evidence IDs, but does not mutate
   personal-ops.
+- Added stable action proposal dismissal keys plus `action-proposal-dismiss` and a `/review` Dismiss
+  control so known repeated proposals can be hidden locally without deleting event history or applying
+  downstream work.
+- Burn-in now keeps repeated signatures visible while filtering active noise candidates through the
+  configured `[[noise.rules]]`, which prevents already-tuned repeated signals from blocking readiness.
 - Added `personal-ops-actions --save-review-package` so action proposals can be saved for an
   operator-mediated import step.
 - Added `validate-action-package` so saved review packages can be checked for schema, required
@@ -221,6 +226,7 @@ uv run --frozen notification-hub coordination-snapshot --save-bridge-db
 uv run --frozen notification-hub coordination-readiness
 uv run --frozen notification-hub coordination-console
 uv run --frozen notification-hub personal-ops-actions
+uv run --frozen notification-hub action-proposal-dismiss DISMISSAL_KEY --reason "known repeated test signal"
 uv run --frozen notification-hub personal-ops-actions --save-review-package
 uv run --frozen notification-hub validate-action-package path/to/actions.json
 uv run --frozen notification-hub personal-ops-import path/to/actions.json
@@ -242,6 +248,7 @@ curl http://127.0.0.1:9199/review/package/personal-ops-actions-YYYYMMDD-HHMMSS.j
 curl -X POST http://127.0.0.1:9199/review/package/personal-ops-actions-YYYYMMDD-HHMMSS.json/queue
 curl http://127.0.0.1:9199/review/import-queue
 curl http://127.0.0.1:9199/review/outcome-sync-reminder
+curl -X POST http://127.0.0.1:9199/review/action-proposal/DISMISSAL_KEY/dismiss -H 'Content-Type: application/json' -d '{"reason":"known repeated test signal"}'
 curl -X PATCH http://127.0.0.1:9199/review/import-queue/QUEUE_ID -H 'Content-Type: application/json' -d '{"status":"reviewed","reason":"evidence checked"}'
 curl -X DELETE http://127.0.0.1:9199/review/package/personal-ops-actions-YYYYMMDD-HHMMSS.json
 uv run --frozen notification-hub burn-in --minutes 10
@@ -273,7 +280,9 @@ Expected current outcome:
   split into active actions and handled history so resolved or ignored work does not drive the next
   operator step, and the guide stage exposes exact safe next commands for the current handoff state
 - `notification-hub personal-ops-actions`: proposal-only action export derived from repeated inbox
-  rollups
+  rollups; known repeated proposals with local dismissal keys are filtered from active exports
+- `notification-hub action-proposal-dismiss`: records a local dismissal for one repeated proposal key
+  without deleting stored events or applying work in personal-ops
 - `notification-hub personal-ops-actions --save-review-package`: writes a local JSON review package
   without mutating personal-ops
 - `notification-hub validate-action-package`: validates a saved review package without importing it
@@ -289,19 +298,20 @@ Expected current outcome:
 - `notification-hub-personal-ops-outcome-sync-reminder`: script shortcut for the same reminder report
 - `notification-hub personal-ops-queue-burn-in`: checks queue health, temporary lifecycle scenario,
   runtime burn-in, outcome-sync posture, and live operator steps without applying personal-ops work;
-  `--save-report` writes a timestamped local JSON report when durable burn-in evidence is useful
+  `--save-report` writes a timestamped local JSON report when durable burn-in evidence is useful, and
+  policy-covered repeated signatures no longer count as active noise candidates
 - `notification-hub-personal-ops-queue-burn-in`: script shortcut for the same burn-in report
 - `/review/burn-in-reports` and `/review/burn-in-report/{name}`: list and inspect saved queue
   burn-in reports without applying work
 - `/review/coordination-readiness`: reports whether to fix noise, keep burning in, or start a
   small coordination expansion without applying work
 - `/review/coordination-console`: reports the compact coordination console payload, including active
-  and handled proposal counts plus guide steps, without applying work
+  and handled proposal counts plus dismissal counts and guide steps, without applying work
 - `notification-hub personal-ops-queue-scenario`: runs a temporary queue lifecycle and records a
   final accepted promotion outcome without touching runtime queue state
 - `/review`: localhost-only review UI for runtime state, Operator Focus, Coordination Readiness,
   Coordination Console operator guide, inbox rollups, action proposals, import queue health, saved
-  burn-in report history, and trust state
+  burn-in report history, proposal dismissal, and trust state
 - `/review/save-package` and `/review/validate-package`: review UI controls for staging and
   validating packages without importing or applying them
 - `/review/packages`: lists recent saved review packages and validation summaries without importing
@@ -378,12 +388,13 @@ It is not part of normal day-to-day work.
 Start future work from `main`, keep using the frozen verification commands, and treat the repo-owned
 runtime templates as the source of truth for live launcher and hook wiring.
 The next work here should keep `coordination-console` as the first expansion surface, run the
-operator guide through real handoff use, and keep apply behavior operator-mediated until the compact
-console proves it should own a broader workflow.
+operator guide through real handoff use, and watch whether proposal dismissals plus policy noise rules
+keep repeated mail/test signals quiet enough for broader coordination work. Keep apply behavior
+operator-mediated until the compact console proves it should own a broader workflow.
 
 ## Optional Follow-Up
 
 - Delete `archive/local-history-pre-import` later if that old local-only history is no longer needed.
 - Remove local untracked junk files like `.DS_Store` if you want a tidier working directory on disk.
-- Install or customize `~/.config/notification-hub/config.toml` from the refreshed
-  `config/policy.example.toml` when you want the sample repeated-event tuning in live policy.
+- Keep the live policy's narrow `personal-ops` mail approval noise rules aligned with
+  `config/policy.example.toml` when new repeated test signals appear.

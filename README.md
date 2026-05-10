@@ -112,10 +112,14 @@ validating, queueing, promoting, or outcome-syncing handoffs while keeping apply
 notification-hub.
 The personal-ops-actions command turns inbox rollups into action proposals for review. It does not
 write to personal-ops; pass `--output path/to/actions.json` when you want a handoff file.
+Each proposal now includes a stable dismissal key, and `action-proposal-dismiss` can hide a known
+repeated proposal from future console/action exports without deleting the underlying event log.
 Pass `--save-review-package` when you want notification-hub to stage a local review package under
 `~/.local/share/notification-hub/action-exports/`; this still does not import or apply actions.
 The validate-action-package command checks a saved review package before any future import/apply
 step consumes it.
+Burn-in keeps repeated signatures visible for inspection, but filters active noise candidates through
+the configured `[[noise.rules]]` so policy-covered repeats do not block coordination readiness.
 The personal-ops-import command validates the package and stops before mutation by default. Pass
 `--enqueue` to add valid action proposals to a local personal-ops import queue under
 notification-hub runtime state; queued items are handoff records only and are not personal-ops tasks,
@@ -357,6 +361,7 @@ uv run --frozen notification-hub coordination-snapshot --save-bridge-db
 uv run --frozen notification-hub coordination-readiness
 uv run --frozen notification-hub coordination-console
 uv run --frozen notification-hub personal-ops-actions
+uv run --frozen notification-hub action-proposal-dismiss DISMISSAL_KEY --reason "known repeated test signal"
 uv run --frozen notification-hub personal-ops-actions --save-review-package
 uv run --frozen notification-hub validate-action-package path/to/actions.json
 uv run --frozen notification-hub personal-ops-import path/to/actions.json
@@ -380,6 +385,9 @@ curl http://127.0.0.1:9199/review/import-queue
 curl http://127.0.0.1:9199/review/coordination-readiness
 curl http://127.0.0.1:9199/review/coordination-console
 curl http://127.0.0.1:9199/review/outcome-sync-reminder
+curl -X POST http://127.0.0.1:9199/review/action-proposal/DISMISSAL_KEY/dismiss \
+  -H 'Content-Type: application/json' \
+  -d '{"reason":"known repeated test signal"}'
 curl -X PATCH http://127.0.0.1:9199/review/import-queue/QUEUE_ID \
   -H 'Content-Type: application/json' \
   -d '{"status":"reviewed","reason":"evidence checked"}'
