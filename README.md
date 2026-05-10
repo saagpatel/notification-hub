@@ -105,7 +105,9 @@ report history into one compact expansion gate. It returns `fix_noise_first`, `k
 `ready_to_expand` without applying work.
 The coordination-console command is the first compact expansion after that gate. It brings
 readiness, action proposals, queue state, promoted-outcome reminders, burn-in report history, and
-the next safe action into one read-only summary.
+the next safe action into one read-only summary. It also classifies proposal lineage as new, queued,
+promoted, resolved, or ignored so already-handled proposals stay visible as history without being
+treated as fresh work.
 The personal-ops-actions command turns inbox rollups into action proposals for review. It does not
 write to personal-ops; pass `--output path/to/actions.json` when you want a handoff file.
 Pass `--save-review-package` when you want notification-hub to stage a local review package under

@@ -558,6 +558,8 @@ REVIEW_HTML = """<!doctype html>
         <div class="line"><span class="title">${esc(readiness.decision || "unknown")}</span><span class="meta">${esc(data.status || "unknown")}</span></div>
         <div class="badge-row">
           ${badge(`actions ${data.action_count ?? 0}`)}
+          ${warnBadge(`active ${data.active_action_count ?? 0}`, (data.active_action_count ?? 0) > 0)}
+          ${badge(`handled ${data.handled_action_count ?? 0}`)}
           ${warnBadge(`queued ${queue.queued_count ?? 0}`, (queue.queued_count ?? 0) > 0)}
           ${warnBadge(`pending ${queue.promoted_pending_count ?? 0}`, (queue.promoted_pending_count ?? 0) > 0)}
           ${warnBadge(`stale ${queue.promoted_pending_stale_count ?? 0}`, (queue.promoted_pending_stale_count ?? 0) > 0)}

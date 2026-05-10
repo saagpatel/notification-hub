@@ -781,7 +781,10 @@ async def test_review_coordination_console_endpoint_is_read_only(
                 "applied": False,
             },
             "action_count": 1,
+            "active_action_count": 1,
+            "handled_action_count": 0,
             "actions": [],
+            "handled_actions": [],
             "queue_health": {
                 "status": "ok",
                 "queue_path": "/tmp/queue.jsonl",

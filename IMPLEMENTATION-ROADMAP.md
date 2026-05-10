@@ -14,8 +14,8 @@ Current repo/runtime status:
 - An optional policy config can override classifier and suppression defaults
 - A doctor command is available for local operator checks
 - The current operator loop includes `/review` Operator Focus, Coordination Readiness,
-  Coordination Console, and saved queue burn-in report history for real-use evidence before broader
-  coordination expansion
+  Coordination Console with active/handled proposal lineage, and saved queue burn-in report history
+  for real-use evidence before broader coordination expansion
 
 For the best resume checkpoint, use `docs/CURRENT-STATE.md` first and treat the rest of this file
 as implementation history rather than the primary current-state source.

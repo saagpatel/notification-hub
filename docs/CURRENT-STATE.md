@@ -55,7 +55,8 @@ tuning pass.
   `fix_noise_first`, `keep_burning_in`, or `ready_to_expand` decision.
 - A compact `coordination-console` command and `/review/coordination-console` endpoint now summarize
   readiness, action proposals, queue state, promoted-outcome reminders, burn-in report history, and
-  the next safe action in one read-only view.
+  the next safe action in one read-only view. The console separates active proposal lineage from
+  handled history so resolved or ignored handoffs stop reappearing as fresh work.
 - The sample policy now includes the repeated `personal-ops` daemon-start and `notion-os`
   control-tower sync signals seen during live burn-in, keeping evidence-based noise tuning in the
   repo without changing machine-local config.
@@ -192,6 +193,8 @@ tuning pass.
   operator scans packages, rollups, or queue detail.
 - Added review UI queue-health summary and filters for pending outcome, stale outcome, queued,
   promoted, resolved, and open handoffs.
+- Added lineage-aware Coordination Console action counts so active proposals and handled proposal
+  history are visible separately in CLI, JSON, and `/review`.
 - Added `personal-ops-queue-scenario` as a temporary end-to-end lifecycle proof that does not touch
   the real operator queue.
 - Added `docs/PRODUCT-BOUNDARY.md` to keep notification-hub, personal-ops, and bridge-db ownership
@@ -249,7 +252,7 @@ uv run --frozen notification-hub retention --max-events 2000
 
 Expected current outcome:
 
-- `pytest`: 305 passed
+- `pytest`: 306 passed
 - `ruff`: clean
 - `pyright`: 0 errors
 - `/health/details`: `status: ok`, watcher active, push available, Slack configured
@@ -263,7 +266,9 @@ Expected current outcome:
 - `notification-hub coordination-readiness`: read-only expansion gate combining runtime status,
   queue state, and saved queue burn-in report history; current live decision is `ready_to_expand`
 - `notification-hub coordination-console`: read-only compact console for readiness, action proposals,
-  queue state, outcome reminders, saved burn-in evidence, and next safe action
+  queue state, outcome reminders, saved burn-in evidence, and next safe action; proposal lineage is
+  split into active actions and handled history so resolved or ignored work does not drive the next
+  operator step
 - `notification-hub personal-ops-actions`: proposal-only action export derived from repeated inbox
   rollups
 - `notification-hub personal-ops-actions --save-review-package`: writes a local JSON review package
@@ -287,8 +292,8 @@ Expected current outcome:
   burn-in reports without applying work
 - `/review/coordination-readiness`: reports whether to fix noise, keep burning in, or start a
   small coordination expansion without applying work
-- `/review/coordination-console`: reports the compact coordination console payload without applying
-  work
+- `/review/coordination-console`: reports the compact coordination console payload, including active
+  and handled proposal counts, without applying work
 - `notification-hub personal-ops-queue-scenario`: runs a temporary queue lifecycle and records a
   final accepted promotion outcome without touching runtime queue state
 - `/review`: localhost-only review UI for runtime state, Operator Focus, Coordination Readiness,
@@ -369,9 +374,9 @@ It is not part of normal day-to-day work.
 
 Start future work from `main`, keep using the frozen verification commands, and treat the repo-owned
 runtime templates as the source of truth for live launcher and hook wiring.
-The next work here should use `coordination-console` as the first expansion surface, keep all apply
-behavior operator-mediated, and only consider a higher-level coordination console after this compact
-view proves useful in real work.
+The next work here should keep `coordination-console` as the first expansion surface, run it through
+real operator use now that handled proposals are separated from active work, and keep apply behavior
+operator-mediated until the compact console proves it should own a broader guided workflow.
 
 ## Optional Follow-Up
 

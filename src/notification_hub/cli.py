@@ -732,7 +732,8 @@ def _print_coordination_console_report(report: CoordinationConsoleReport) -> Non
     queue = report["queue_health"]
     print(f"notification-hub coordination-console: {report['status']}")
     print(f"- readiness: {readiness['decision']}")
-    print(f"- actions: {report['action_count']}")
+    print(f"- active actions: {report['active_action_count']}")
+    print(f"- handled actions: {report['handled_action_count']}")
     print(f"- queued: {queue['queued_count']}")
     print(f"- promoted pending: {queue['promoted_pending_count']}")
     print(f"- promoted stale: {queue['promoted_pending_stale_count']}")

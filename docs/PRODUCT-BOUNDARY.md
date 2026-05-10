@@ -15,7 +15,7 @@ notification-hub is a localhost-only coordination sidecar. It collects local wor
 - Timestamped local burn-in report artifacts for operator-reviewed queue checks.
 - Review access to saved burn-in report history so expansion decisions can be based on local evidence.
 - Coordination-readiness reporting that turns local runtime, queue, and saved burn-in evidence into a deterministic expansion decision.
-- A compact coordination console summary that keeps readiness, proposals, queue state, outcome reminders, burn-in history, and next action read-only.
+- A compact coordination console summary that keeps readiness, proposal lineage, queue state, outcome reminders, burn-in history, and next action read-only.
 - Local review UI and API endpoints that inspect, queue, and mark handoff state without applying personal-ops work.
 
 ## personal-ops Owns
@@ -50,4 +50,4 @@ The near-term product path is to keep the trust boundary visible while making th
 5. Save burn-in reports around real queue use so expansion decisions are based on observed operator
    volume instead of guesses.
 6. Treat `coordination-readiness` as the local gate before building broader coordination surfaces.
-7. Keep the compact `coordination-console` read-only until repeated real use proves the next apply boundary.
+7. Keep the compact `coordination-console` read-only and lineage-aware until repeated real use proves the next apply boundary.

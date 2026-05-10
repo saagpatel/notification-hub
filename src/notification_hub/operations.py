@@ -490,11 +490,23 @@ class CoordinationReadinessReport(TypedDict):
     applied: bool
 
 
+class CoordinationConsoleActionReport(TypedDict):
+    action: PersonalOpsActionReport
+    lineage_status: str
+    queue_id: str | None
+    queue_status: str | None
+    promotion_outcome: str | None
+    promotion_target_id: str | None
+
+
 class CoordinationConsoleReport(TypedDict):
     status: str
     readiness: CoordinationReadinessReport
     action_count: int
-    actions: list[PersonalOpsActionReport]
+    active_action_count: int
+    handled_action_count: int
+    actions: list[CoordinationConsoleActionReport]
+    handled_actions: list[CoordinationConsoleActionReport]
     queue_health: PersonalOpsImportQueueHealthReport
     queued_items: list[PersonalOpsImportQueueItemReport]
     pending_promotion_items: list[PersonalOpsImportQueueItemReport]
@@ -2859,6 +2871,52 @@ def run_coordination_readiness(*, limit: int = 5) -> CoordinationReadinessReport
     }
 
 
+def _proposal_lineage_status(queue_item: PersonalOpsImportQueueItemReport | None) -> str:
+    if queue_item is None:
+        return "new"
+    if queue_item["status"] in {"queued", "reviewed", "snoozed"}:
+        return "queued"
+    if queue_item["status"] == "promoted":
+        outcome = queue_item["promotion_outcome"] or "pending"
+        return "promoted" if outcome == "pending" else "resolved"
+    return "ignored"
+
+
+def _build_proposal_lineage(
+    actions: list[PersonalOpsActionReport],
+) -> list[CoordinationConsoleActionReport]:
+    raw_items = _read_import_queue_items(PERSONAL_OPS_IMPORT_QUEUE)
+    queue_by_action_id: dict[str, PersonalOpsImportQueueItemReport] = {}
+    queue_by_evidence_id: dict[str, PersonalOpsImportQueueItemReport] = {}
+    for raw_item in reversed(raw_items):
+        item = _import_queue_item_report(raw_item)
+        if item["action_id"] and item["action_id"] not in queue_by_action_id:
+            queue_by_action_id[item["action_id"]] = item
+        if item["evidence_event_id"] and item["evidence_event_id"] not in queue_by_evidence_id:
+            queue_by_evidence_id[item["evidence_event_id"]] = item
+
+    reports: list[CoordinationConsoleActionReport] = []
+    for action in actions:
+        queue_item = queue_by_action_id.get(action["action_id"]) or queue_by_evidence_id.get(
+            action["evidence_event_id"]
+        )
+        reports.append(
+            {
+                "action": action,
+                "lineage_status": _proposal_lineage_status(queue_item),
+                "queue_id": queue_item["queue_id"] if queue_item is not None else None,
+                "queue_status": queue_item["status"] if queue_item is not None else None,
+                "promotion_outcome": queue_item["promotion_outcome"]
+                if queue_item is not None
+                else None,
+                "promotion_target_id": queue_item["promotion_target_id"]
+                if queue_item is not None
+                else None,
+            }
+        )
+    return reports
+
+
 def run_coordination_console(*, hours: int = 2, limit: int = 5) -> CoordinationConsoleReport:
     """Build one read-only coordination view after readiness has cleared expansion."""
     safe_hours = max(hours, 1)
@@ -2868,14 +2926,23 @@ def run_coordination_console(*, hours: int = 2, limit: int = 5) -> CoordinationC
     queue = run_personal_ops_import_queue_health_check(limit=safe_limit)
     outcome_sync_reminder = run_personal_ops_outcome_sync_reminder(limit=safe_limit)
     burn_in_reports = list_personal_ops_queue_burn_in_reports(limit=safe_limit)
+    proposal_lineage = _build_proposal_lineage(actions["actions"])
+    active_actions = [
+        action for action in proposal_lineage if action["lineage_status"] in {"new", "queued", "promoted"}
+    ]
+    handled_actions = [
+        action for action in proposal_lineage if action["lineage_status"] in {"resolved", "ignored"}
+    ]
 
     queue_health = queue["health"]
     if readiness["decision"] != "ready_to_expand":
         next_action = readiness["next_action"]
     elif queue_health["queued_count"] > 0 or queue_health["promoted_pending_count"] > 0:
         next_action = queue_health["next_action"]
-    elif actions["actions"]:
+    elif any(action["lineage_status"] == "new" for action in active_actions):
         next_action = "Save and validate a review package, then queue one handoff for operator review."
+    elif active_actions:
+        next_action = "Continue the queued or promoted handoff lifecycle before adding new work."
     else:
         next_action = "Monitor /review for the next real handoff signal."
 
@@ -2893,7 +2960,10 @@ def run_coordination_console(*, hours: int = 2, limit: int = 5) -> CoordinationC
         "status": status,
         "readiness": readiness,
         "action_count": len(actions["actions"]),
-        "actions": actions["actions"][:safe_limit],
+        "active_action_count": len(active_actions),
+        "handled_action_count": len(handled_actions),
+        "actions": active_actions[:safe_limit],
+        "handled_actions": handled_actions[:safe_limit],
         "queue_health": queue_health,
         "queued_items": queue["queued_items"][:safe_limit],
         "pending_promotion_items": queue["pending_promotion_items"][:safe_limit],
