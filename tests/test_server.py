@@ -1278,6 +1278,41 @@ async def test_review_operator_daily_state_endpoint_is_read_only(client: AsyncCl
     mock_daily_state.assert_called_once_with(hours=6, limit=3, save_report=False)
 
 
+async def test_review_operator_review_session_endpoint_is_read_only(client: AsyncClient) -> None:
+    with patch(
+        "notification_hub.server.run_operator_review_session",
+        return_value={
+            "status": "ok",
+            "generated_at": "2026-05-10T04:52:00+00:00",
+            "hours": 2,
+            "since": "2026-05-10T02:52:00+00:00",
+            "group_history_count": 1,
+            "queue_item_count": 1,
+            "saved_count": 1,
+            "queued_count": 0,
+            "dismissed_count": 0,
+            "outcome_count": 0,
+            "reviewed_count": 1,
+            "active_queue_count": 0,
+            "pending_promotion_count": 0,
+            "route_counts": {"promote": 1},
+            "group_summaries": [],
+            "recent_group_history": [],
+            "recent_queue_items": [],
+            "next_action": "Recent review activity is summarized.",
+            "applied": False,
+        },
+    ) as mock_review_session:
+        resp = await client.get("/review/operator-review-session?hours=4&limit=7")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert data["applied"] is False
+    assert data["route_counts"] == {"promote": 1}
+    mock_review_session.assert_called_once_with(hours=4, limit=7)
+
+
 async def test_review_operator_handoff_drill_endpoint_is_temporary(client: AsyncClient) -> None:
     with patch(
         "notification_hub.server.run_operator_handoff_drill",

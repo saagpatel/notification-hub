@@ -32,6 +32,7 @@ from notification_hub.operations import (
     run_inbox,
     run_operator_daily_state,
     run_operator_handoff_drill,
+    run_operator_review_session,
     run_personal_ops_action_export,
     run_personal_ops_import_queue_health_check,
     run_personal_ops_import_stub,
@@ -825,6 +826,8 @@ REVIEW_HTML = """<!doctype html>
     async function loadOperatorDailyState() {
       const res = await fetch("/review/operator-daily-state?hours=24&limit=5");
       const data = await res.json();
+      const sessionRes = await fetch("/review/operator-review-session?hours=2&limit=10");
+      const session = await sessionRes.json();
       const queue = (data.queue_health || {}).health || {};
       const signal = ((data.coordination_console || {}).next_signal) || {};
       operatorState.replaceChildren(
@@ -836,7 +839,18 @@ REVIEW_HTML = """<!doctype html>
           ${badge(`dismissals ${(data.dismissals || []).length}`)}
         </div>`),
         item(`<div class="next"><strong>Next signal</strong>: ${esc(signal.title || "unknown")}</div>`),
-        item(`<div class="next">${esc(data.next_action || "")}</div>`)
+        item(`<div class="next">${esc(data.next_action || "")}</div>`),
+        item(`<div class="line"><span class="title">Review session</span><span class="meta">${esc(session.status || "unknown")}</span></div>`),
+        item(`<div class="badge-row">
+          ${badge(`saved ${session.saved_count ?? 0}`)}
+          ${warnBadge(`queued ${session.queued_count ?? 0}`, (session.queued_count ?? 0) > 0)}
+          ${badge(`dismissed ${session.dismissed_count ?? 0}`)}
+          ${badge(`outcomes ${session.outcome_count ?? 0}`)}
+          ${badge(`reviewed ${session.reviewed_count ?? 0}`)}
+          ${warnBadge(`active ${session.active_queue_count ?? 0}`, (session.active_queue_count ?? 0) > 0)}
+          ${warnBadge(`pending ${session.pending_promotion_count ?? 0}`, (session.pending_promotion_count ?? 0) > 0)}
+        </div>`),
+        item(`<div class="next">${esc(session.next_action || "")}</div>`)
       );
     }
     async function runHandoffDrill() {
@@ -1543,6 +1557,20 @@ async def review_operator_daily_state(
         hours=max(hours, 1),
         limit=max(limit, 1),
         save_report=save_report,
+    )
+    return dict(report)
+
+
+@app.get("/review/operator-review-session")
+async def review_operator_review_session(
+    hours: int = 2,
+    limit: int = 25,
+) -> dict[str, object]:
+    """Summarize recent review-session activity without applying work."""
+    report = await asyncio.to_thread(
+        run_operator_review_session,
+        hours=max(hours, 1),
+        limit=max(limit, 1),
     )
     return dict(report)
 

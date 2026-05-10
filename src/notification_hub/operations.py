@@ -217,6 +217,40 @@ class ActionProposalGroupHistoryReport(TypedDict):
     error: str | None
 
 
+class OperatorReviewSessionGroupSummary(TypedDict):
+    group_key: str
+    saved_count: int
+    queued_count: int
+    dismissed_count: int
+    outcome_count: int
+    action_count: int
+    latest_event_type: str | None
+    latest_recorded_at: str | None
+    latest_outcome: str | None
+
+
+class OperatorReviewSessionReport(TypedDict):
+    status: str
+    generated_at: str
+    hours: int
+    since: str
+    group_history_count: int
+    queue_item_count: int
+    saved_count: int
+    queued_count: int
+    dismissed_count: int
+    outcome_count: int
+    reviewed_count: int
+    active_queue_count: int
+    pending_promotion_count: int
+    route_counts: dict[str, int]
+    group_summaries: list[OperatorReviewSessionGroupSummary]
+    recent_group_history: list[ActionProposalGroupHistoryReport]
+    recent_queue_items: list[PersonalOpsImportQueueItemReport]
+    next_action: str
+    applied: bool
+
+
 class PersonalOpsActionExportReport(TypedDict):
     status: str
     schema_version: str
@@ -840,6 +874,26 @@ def list_action_proposal_group_history(
         if report is None:
             continue
         if group_key is not None and report["group_key"] != group_key:
+            continue
+        records.append(report)
+        if len(records) >= max(limit, 1):
+            break
+    return records
+
+
+def _recent_group_history(
+    *,
+    since: datetime,
+    limit: int,
+    history_path: Path | None = None,
+) -> list[ActionProposalGroupHistoryReport]:
+    records: list[ActionProposalGroupHistoryReport] = []
+    for raw in reversed(_jsonl_dicts(history_path or ACTION_PROPOSAL_GROUP_HISTORY)):
+        report = _group_history_report(raw)
+        if report is None:
+            continue
+        recorded_at = _parse_iso_datetime(report["recorded_at"])
+        if recorded_at is None or recorded_at < since:
             continue
         records.append(report)
         if len(records) >= max(limit, 1):
@@ -1662,6 +1716,155 @@ def _parse_iso_datetime(value: str | None) -> datetime | None:
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=timezone.utc)
     return parsed
+
+
+def _queue_item_activity_datetime(item: PersonalOpsImportQueueItemReport) -> datetime | None:
+    return _parse_iso_datetime(
+        item["promotion_outcome_at"]
+        or item["promoted_at"]
+        or item["updated_at"]
+        or item["enqueued_at"]
+    )
+
+
+def _recent_queue_item_reports(
+    *,
+    since: datetime,
+    limit: int,
+    queue_path: Path | None = None,
+) -> list[PersonalOpsImportQueueItemReport]:
+    try:
+        raw_items = _read_import_queue_items(queue_path or PERSONAL_OPS_IMPORT_QUEUE)
+    except OSError:
+        raw_items = []
+    reports = [_import_queue_item_report(item) for item in raw_items]
+    recent: list[PersonalOpsImportQueueItemReport] = []
+    for item in reports:
+        activity_at = _queue_item_activity_datetime(item)
+        if activity_at is not None and activity_at >= since:
+            recent.append(item)
+    return sorted(
+        recent,
+        key=lambda item: _queue_item_activity_datetime(item) or datetime.min.replace(
+            tzinfo=timezone.utc
+        ),
+        reverse=True,
+    )[: max(limit, 1)]
+
+
+def _group_history_route(event_type: str) -> str:
+    for route in ("promote", "suppress", "follow_up"):
+        if event_type.endswith(f"_{route}"):
+            return route
+    return "all"
+
+
+def run_operator_review_session(
+    *,
+    hours: int = 2,
+    limit: int = 25,
+    queue_path: Path | None = None,
+    group_history_path: Path | None = None,
+) -> OperatorReviewSessionReport:
+    """Summarize recent local review activity without applying work."""
+    now = datetime.now(timezone.utc)
+    bounded_hours = max(hours, 1)
+    bounded_limit = max(limit, 1)
+    since = now - timedelta(hours=bounded_hours)
+    recent_group_history = _recent_group_history(
+        since=since,
+        limit=bounded_limit,
+        history_path=group_history_path,
+    )
+    recent_queue_items = _recent_queue_item_reports(
+        since=since,
+        limit=bounded_limit,
+        queue_path=queue_path,
+    )
+
+    saved_count = sum(1 for item in recent_group_history if item["event_type"].startswith("saved"))
+    queued_count = sum(
+        1 for item in recent_group_history if item["event_type"].startswith("queued")
+    )
+    dismissed_count = sum(
+        1 for item in recent_group_history if item["event_type"].startswith("dismissed")
+    )
+    outcome_count = sum(1 for item in recent_group_history if item["event_type"] == "outcome")
+    reviewed_count = sum(1 for item in recent_queue_items if item["status"] == "reviewed")
+    active_queue_count = sum(1 for item in recent_queue_items if item["status"] == "queued")
+    pending_promotion_count = sum(
+        1
+        for item in recent_queue_items
+        if item["status"] == "promoted" and (item["promotion_outcome"] or "pending") == "pending"
+    )
+
+    route_counts: dict[str, int] = {}
+    grouped: dict[str, OperatorReviewSessionGroupSummary] = {}
+    for item in recent_group_history:
+        route = _group_history_route(item["event_type"])
+        route_counts[route] = route_counts.get(route, 0) + 1
+        existing_summary = grouped.get(item["group_key"])
+        if existing_summary is None:
+            summary: OperatorReviewSessionGroupSummary = {
+                "group_key": item["group_key"],
+                "saved_count": 0,
+                "queued_count": 0,
+                "dismissed_count": 0,
+                "outcome_count": 0,
+                "action_count": 0,
+                "latest_event_type": item["event_type"],
+                "latest_recorded_at": item["recorded_at"],
+                "latest_outcome": item["outcome"],
+            }
+            grouped[item["group_key"]] = summary
+        else:
+            summary = existing_summary
+        if item["event_type"].startswith("saved"):
+            summary["saved_count"] += 1
+        elif item["event_type"].startswith("queued"):
+            summary["queued_count"] += 1
+        elif item["event_type"].startswith("dismissed"):
+            summary["dismissed_count"] += 1
+        elif item["event_type"] == "outcome":
+            summary["outcome_count"] += 1
+        summary["action_count"] += item["action_count"]
+        latest_recorded_at = summary["latest_recorded_at"]
+        if latest_recorded_at is None or item["recorded_at"] > latest_recorded_at:
+            summary["latest_event_type"] = item["event_type"]
+            summary["latest_recorded_at"] = item["recorded_at"]
+            summary["latest_outcome"] = item["outcome"]
+
+    status = "warn" if active_queue_count > 0 or pending_promotion_count > 0 else "ok"
+    if active_queue_count > 0:
+        next_action = "Review queued personal-ops handoff items from the local review queue."
+    elif pending_promotion_count > 0:
+        next_action = "Record outcomes for promoted personal-ops handoffs."
+    elif recent_group_history or recent_queue_items:
+        next_action = "Recent review activity is summarized; monitor /review for the next signal."
+    else:
+        next_action = "No recent review-session activity found in this window."
+
+    return {
+        "status": status,
+        "generated_at": now.isoformat(),
+        "hours": bounded_hours,
+        "since": since.isoformat(),
+        "group_history_count": len(recent_group_history),
+        "queue_item_count": len(recent_queue_items),
+        "saved_count": saved_count,
+        "queued_count": queued_count,
+        "dismissed_count": dismissed_count,
+        "outcome_count": outcome_count,
+        "reviewed_count": reviewed_count,
+        "active_queue_count": active_queue_count,
+        "pending_promotion_count": pending_promotion_count,
+        "route_counts": route_counts,
+        "group_summaries": list(grouped.values()),
+        "recent_group_history": recent_group_history,
+        "recent_queue_items": recent_queue_items,
+        "next_action": next_action,
+        "applied": False,
+    }
 
 
 def summarize_personal_ops_import_queue(

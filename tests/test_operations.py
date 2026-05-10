@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock, patch
@@ -44,6 +45,7 @@ from notification_hub.operations import (
     run_logs,
     run_operator_daily_state,
     run_operator_handoff_drill,
+    run_operator_review_session,
     run_personal_ops_action_export,
     run_personal_ops_import_stub,
     run_personal_ops_outcome_sync_reminder,
@@ -1385,6 +1387,120 @@ def test_action_proposal_group_package_can_enqueue_selected_group(tmp_path: Path
     )
     assert history[0]["event_type"] == "queued"
     assert history[0]["queued_count"] == 1
+
+
+def test_operator_review_session_summarizes_recent_group_and_queue_activity(
+    tmp_path: Path,
+) -> None:
+    now = datetime.now(timezone.utc)
+    group_history_path = tmp_path / "group-history.jsonl"
+    group_history_records = [
+        {
+            "group_key": "personal-ops:mail:waiting_on_user:high:waiting",
+            "event_type": "saved_promote",
+            "recorded_at": (now - timedelta(minutes=20)).isoformat(),
+            "status": "ok",
+            "action_count": 2,
+            "action_ids": ["action-1", "action-2"],
+            "package_path": "/tmp/promote.json",
+            "queued_count": None,
+            "dismissed_count": None,
+            "outcome": None,
+            "reason": None,
+            "error": None,
+        },
+        {
+            "group_key": "personal-ops:mail:waiting_on_user:high:waiting",
+            "event_type": "queued_promote",
+            "recorded_at": (now - timedelta(minutes=15)).isoformat(),
+            "status": "ok",
+            "action_count": 2,
+            "action_ids": ["action-1", "action-2"],
+            "package_path": "/tmp/promote.json",
+            "queued_count": 2,
+            "dismissed_count": None,
+            "outcome": None,
+            "reason": None,
+            "error": None,
+        },
+        {
+            "group_key": "personal-ops:mail:waiting_on_user:low:open",
+            "event_type": "dismissed_suppress",
+            "recorded_at": (now - timedelta(minutes=10)).isoformat(),
+            "status": "ok",
+            "action_count": 1,
+            "action_ids": ["action-3"],
+            "package_path": None,
+            "queued_count": None,
+            "dismissed_count": 1,
+            "outcome": None,
+            "reason": "known repeated mail workflow chatter",
+            "error": None,
+        },
+    ]
+    group_history_path.write_text(
+        "\n".join(json.dumps(record) for record in group_history_records) + "\n",
+        encoding="utf-8",
+    )
+    queue_path = tmp_path / "queue.jsonl"
+    queue_records = [
+        {
+            "queue_id": "queue-reviewed",
+            "status": "reviewed",
+            "enqueued_at": (now - timedelta(minutes=14)).isoformat(),
+            "updated_at": (now - timedelta(minutes=9)).isoformat(),
+            "source_package_name": "promote.json",
+            "source_package_path": "/tmp/promote.json",
+            "action_id": "action-1",
+            "action": {
+                "title": "Approval Requested",
+                "summary": "Repeated approval request.",
+                "priority": "high",
+                "state": "waiting",
+                "evidence_event_id": "event-1",
+            },
+            "applied": False,
+        },
+        {
+            "queue_id": "queue-active",
+            "status": "queued",
+            "enqueued_at": (now - timedelta(minutes=8)).isoformat(),
+            "updated_at": (now - timedelta(minutes=8)).isoformat(),
+            "source_package_name": "promote.json",
+            "source_package_path": "/tmp/promote.json",
+            "action_id": "action-2",
+            "action": {
+                "title": "Reply Requested",
+                "summary": "Repeated reply request.",
+                "priority": "medium",
+                "state": "waiting",
+                "evidence_event_id": "event-2",
+            },
+            "applied": False,
+        },
+    ]
+    queue_path.write_text(
+        "\n".join(json.dumps(record) for record in queue_records) + "\n",
+        encoding="utf-8",
+    )
+
+    report = run_operator_review_session(
+        hours=2,
+        limit=10,
+        queue_path=queue_path,
+        group_history_path=group_history_path,
+    )
+
+    assert report["status"] == "warn"
+    assert report["applied"] is False
+    assert report["saved_count"] == 1
+    assert report["queued_count"] == 1
+    assert report["dismissed_count"] == 1
+    assert report["reviewed_count"] == 1
+    assert report["active_queue_count"] == 1
+    assert report["route_counts"] == {"promote": 2, "suppress": 1}
+    assert len(report["group_summaries"]) == 2
+    assert report["recent_queue_items"][0]["queue_id"] == "queue-active"
 
 
 def test_action_proposal_group_dismisses_each_current_match(tmp_path: Path) -> None:

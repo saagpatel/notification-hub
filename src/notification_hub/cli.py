@@ -36,6 +36,7 @@ from notification_hub.operations import (
     ActionProposalGroupOutcomeReport,
     OperatorDailyStateReport,
     OperatorHandoffDrillReport,
+    OperatorReviewSessionReport,
     PolicyCheckReport,
     RetentionReport,
     SmokeReport,
@@ -53,6 +54,7 @@ from notification_hub.operations import (
     run_logs,
     run_operator_daily_state,
     run_operator_handoff_drill,
+    run_operator_review_session,
     run_personal_ops_action_export,
     run_personal_ops_import_queue_health_check,
     run_personal_ops_import_stub,
@@ -478,6 +480,28 @@ def _build_parser(prog: str = "notification-hub") -> argparse.ArgumentParser:
         "--json",
         action="store_true",
         help="Emit the operator daily state report as JSON.",
+    )
+
+    operator_review_session = subparsers.add_parser(
+        "operator-review-session",
+        help="Summarize recent local review-session activity.",
+    )
+    operator_review_session.add_argument(
+        "--hours",
+        type=int,
+        default=2,
+        help="Recent review-session window to summarize.",
+    )
+    operator_review_session.add_argument(
+        "--limit",
+        type=int,
+        default=25,
+        help="Maximum group-history and queue items to include.",
+    )
+    operator_review_session.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the operator review-session report as JSON.",
     )
 
     operator_handoff_drill = subparsers.add_parser(
@@ -1041,6 +1065,30 @@ def _print_operator_handoff_drill_report(report: OperatorHandoffDrillReport) -> 
         print(f"  - {step}")
 
 
+def _print_operator_review_session_report(report: OperatorReviewSessionReport) -> None:
+    print(f"notification-hub operator-review-session: {report['status']}")
+    print(f"- generated: {report['generated_at']}")
+    print(f"- window: {report['hours']} hours")
+    print(f"- group history: {report['group_history_count']}")
+    print(f"- queue items: {report['queue_item_count']}")
+    print(
+        "- saved/queued/dismissed/outcomes: "
+        f"{report['saved_count']}/{report['queued_count']}/"
+        f"{report['dismissed_count']}/{report['outcome_count']}"
+    )
+    print(
+        "- reviewed/active/pending: "
+        f"{report['reviewed_count']}/{report['active_queue_count']}/"
+        f"{report['pending_promotion_count']}"
+    )
+    if report["route_counts"]:
+        routes = ", ".join(
+            f"{route}={count}" for route, count in sorted(report["route_counts"].items())
+        )
+        print(f"- routes: {routes}")
+    print(f"- next action: {report['next_action']}")
+
+
 def _print_action_package_validation_report(report: ActionPackageValidationReport) -> None:
     print(f"notification-hub validate-action-package: {report['status']}")
     print(f"- path: {report['path']}")
@@ -1554,6 +1602,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             _print_operator_daily_state_report(report)
         return 0 if report["status"] == "ok" else 1
 
+    if args.command == "operator-review-session":
+        report = run_operator_review_session(hours=args.hours, limit=args.limit)
+        if args.json:
+            print(json.dumps(report, indent=2, sort_keys=True))
+        else:
+            _print_operator_review_session_report(report)
+        return 0 if report["status"] == "ok" else 1
+
     if args.command == "operator-handoff-drill":
         report = run_operator_handoff_drill(
             save_burn_in_report=args.save_burn_in_report,
@@ -1776,6 +1832,11 @@ def action_proposal_undismiss_main(argv: Sequence[str] | None = None) -> int:
 def operator_daily_state_main(argv: Sequence[str] | None = None) -> int:
     forwarded = list(argv) if argv is not None else sys.argv[1:]
     return main(["operator-daily-state", *forwarded])
+
+
+def operator_review_session_main(argv: Sequence[str] | None = None) -> int:
+    forwarded = list(argv) if argv is not None else sys.argv[1:]
+    return main(["operator-review-session", *forwarded])
 
 
 def operator_handoff_drill_main(argv: Sequence[str] | None = None) -> int:

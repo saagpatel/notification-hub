@@ -62,6 +62,7 @@ uv run notification-hub action-proposal-dismissals
 uv run notification-hub action-proposal-undismiss DISMISSAL_KEY --reason "signal is useful again"
 uv run notification-hub action-proposal-group-outcome GROUP_KEY --outcome needs_follow_up --reason "operator follow-up needed"
 uv run notification-hub operator-daily-state
+uv run notification-hub operator-review-session
 uv run notification-hub operator-handoff-drill
 uv run notification-hub personal-ops-actions --save-review-package
 uv run notification-hub validate-action-package path/to/actions.json
@@ -138,6 +139,9 @@ history.
 The operator-daily-state command builds a resume-ready local snapshot across runtime health, queue
 health, Coordination Console next signal, burn-in, and dismissals. Pass `--save-report` when you want
 a timestamped JSON report under `~/.local/share/notification-hub/operator-state-reports/`.
+The operator-review-session command summarizes recent local review activity, including grouped
+proposal saves, queues, dismissals, outcomes, and queue follow-through. It is read-only and mirrors
+the review-session summary shown in `/review`.
 The operator-handoff-drill command runs the temporary queue lifecycle plus queue burn-in as a
 non-applying rehearsal before using the same review flow for a real handoff.
 Pass `--save-review-package` when you want notification-hub to stage a local review package under
@@ -416,6 +420,7 @@ uv run --frozen notification-hub-personal-ops-queue-burn-in --json
 uv run --frozen notification-hub personal-ops-queue-burn-in --save-report
 uv run --frozen notification-hub personal-ops-queue-scenario
 uv run --frozen notification-hub operator-daily-state
+uv run --frozen notification-hub operator-review-session
 uv run --frozen notification-hub operator-handoff-drill
 uv run --frozen notification-hub logs
 curl http://127.0.0.1:9199/review
@@ -434,6 +439,7 @@ curl -X POST http://127.0.0.1:9199/review/action-proposal/DISMISSAL_KEY/undismis
   -H 'Content-Type: application/json' \
   -d '{"reason":"signal is useful again"}'
 curl http://127.0.0.1:9199/review/operator-daily-state
+curl http://127.0.0.1:9199/review/operator-review-session
 curl -X POST http://127.0.0.1:9199/review/operator-handoff-drill
 curl -X PATCH http://127.0.0.1:9199/review/import-queue/QUEUE_ID \
   -H 'Content-Type: application/json' \
