@@ -1684,8 +1684,7 @@ def _empty_package_validation(path: Path, error: str) -> ActionPackageValidation
 def _is_safe_action_review_package_name(name: str) -> bool:
     return (
         Path(name).name == name
-        and re.fullmatch(r"personal-ops-actions-\d{8}-\d{6}(?:-\d{6})?\.json", name)
-        is not None
+        and re.fullmatch(r"personal-ops-actions-\d{8}-\d{6}(?:-\d{6})?\.json", name) is not None
     )
 
 
@@ -1933,8 +1932,8 @@ def _recent_queue_item_reports(
             recent.append(item)
     return sorted(
         recent,
-        key=lambda item: _queue_item_activity_datetime(item) or datetime.min.replace(
-            tzinfo=timezone.utc
+        key=lambda item: (
+            _queue_item_activity_datetime(item) or datetime.min.replace(tzinfo=timezone.utc)
         ),
         reverse=True,
     )[: max(limit, 1)]
@@ -3200,9 +3199,7 @@ def _validate_action_record(action: object, *, index: int) -> list[str]:
                     errors.append(f"actions[{index}].evidence_context keys must be strings")
                     break
                 if not isinstance(value, (str, int, float, bool)) and value is not None:
-                    errors.append(
-                        f"actions[{index}].evidence_context.{key} must be a scalar value"
-                    )
+                    errors.append(f"actions[{index}].evidence_context.{key} must be a scalar value")
                     break
     return errors
 
@@ -3982,7 +3979,9 @@ def save_action_proposal_group_package(
                 status = status_value
             error_value = import_result.get("error")
             error = error_value if isinstance(error_value, str) else error
-            next_action = str(import_result.get("next_action") or "Review the queued group handoff.")
+            next_action = str(
+                import_result.get("next_action") or "Review the queued group handoff."
+            )
             queued_count = _as_int(import_result.get("queued_count"))
             event_type = "queued"
         else:
@@ -3998,7 +3997,9 @@ def save_action_proposal_group_package(
             event_type=event_type if status == "ok" else f"{event_type}_failed",
             status=status,
             actions=actions,
-            package_path=review_package["path"] if isinstance(review_package["path"], str) else None,
+            package_path=review_package["path"]
+            if isinstance(review_package["path"], str)
+            else None,
             queued_count=queued_count,
             error=error,
             history_path=group_history_path,
@@ -4293,9 +4294,7 @@ def run_personal_ops_queue_scenario() -> PersonalOpsQueueScenarioReport:
         final_item = accepted["item"] or promoted["item"] or reviewed["item"]
         final_health = summarize_personal_ops_import_queue(queue_path=queue_path)
         evidence_quality = (
-            _evidence_quality(final_item["evidence_context"])
-            if final_item is not None
-            else "rich"
+            _evidence_quality(final_item["evidence_context"]) if final_item is not None else "rich"
         )
         status = (
             "ok"
@@ -4491,10 +4490,14 @@ def _build_policy_drift_report(policy: PolicyConfig) -> PolicyDriftReport:
     live_signatures = {_noise_rule_signature(rule) for rule in live_policy.noise.rules}
     sample_signatures = {_noise_rule_signature(rule) for rule in sample_policy.noise.rules}
     missing_sample_rules = [
-        rule for rule in sample_policy.noise.rules if _noise_rule_signature(rule) not in live_signatures
+        rule
+        for rule in sample_policy.noise.rules
+        if _noise_rule_signature(rule) not in live_signatures
     ]
     extra_live_rules = [
-        rule for rule in live_policy.noise.rules if _noise_rule_signature(rule) not in sample_signatures
+        rule
+        for rule in live_policy.noise.rules
+        if _noise_rule_signature(rule) not in sample_signatures
     ]
 
     missing_count = len(missing_sample_rules)
@@ -4914,7 +4917,9 @@ def _proposal_lineage_next_action(status: str) -> str:
 
 def _latest_follow_up_action_markers(
     group_history: list[ActionProposalGroupHistoryReport],
-) -> tuple[dict[str, ActionProposalGroupHistoryReport], dict[str, ActionProposalGroupHistoryReport]]:
+) -> tuple[
+    dict[str, ActionProposalGroupHistoryReport], dict[str, ActionProposalGroupHistoryReport]
+]:
     """Return action IDs and stable keys covered by latest follow-up outcomes."""
     seen_outcome_groups: set[str] = set()
     follow_up_action_ids: dict[str, ActionProposalGroupHistoryReport] = {}
@@ -4924,10 +4929,7 @@ def _latest_follow_up_action_markers(
         if group_key in seen_outcome_groups or item["event_type"] != "outcome":
             continue
         seen_outcome_groups.add(group_key)
-        if (
-            item["status"] == "ok"
-            and item["outcome"] == "needs_follow_up"
-        ):
+        if item["status"] == "ok" and item["outcome"] == "needs_follow_up":
             for action_id in item["action_ids"]:
                 follow_up_action_ids[action_id] = item
             for action_key in item["action_keys"]:
@@ -5110,9 +5112,7 @@ def _finalize_outcome_quality_bucket(
 ) -> HandoffOutcomeQualityBucket:
     resolved = bucket["accepted"] + bucket["rejected"] + bucket["ignored"]
     bucket["resolved"] = resolved
-    bucket["acceptance_rate"] = (
-        round(bucket["accepted"] / resolved, 2) if resolved > 0 else None
-    )
+    bucket["acceptance_rate"] = round(bucket["accepted"] / resolved, 2) if resolved > 0 else None
     return bucket
 
 
@@ -5500,9 +5500,7 @@ def _build_proposal_review(
     new_count = sum(1 for item in active_actions if item["lineage_status"] == "new")
     queued_count = sum(1 for item in active_actions if item["lineage_status"] == "queued")
     promoted_count = sum(1 for item in active_actions if item["lineage_status"] == "promoted")
-    reviewed_only_count = sum(
-        1 for item in handled_actions if item["lineage_status"] == "reviewed"
-    )
+    reviewed_only_count = sum(1 for item in handled_actions if item["lineage_status"] == "reviewed")
     follow_up_count = sum(1 for item in handled_actions if item["lineage_status"] == "follow_up")
     snoozed_count = sum(1 for item in handled_actions if item["lineage_status"] == "snoozed")
     resolved_count = sum(1 for item in handled_actions if item["lineage_status"] == "resolved")
@@ -5511,7 +5509,9 @@ def _build_proposal_review(
     handled_mail_rich_count = sum(
         1 for item in handled_mail if _action_evidence_quality(item["action"]) == "rich"
     )
-    handled_stable_key_match_count = sum(1 for item in handled_actions if item["stable_key_matched"])
+    handled_stable_key_match_count = sum(
+        1 for item in handled_actions if item["stable_key_matched"]
+    )
     handled_evidence_rotation_count = sum(
         1 for item in handled_actions if item["evidence_event_rotated"]
     )
@@ -5548,7 +5548,9 @@ def _build_proposal_review(
     elif new_count == 1:
         mode = "single_review"
         summary = "One new proposal is ready for operator review."
-        next_action = "Save and validate a review package, then queue the handoff if the evidence is right."
+        next_action = (
+            "Save and validate a review package, then queue the handoff if the evidence is right."
+        )
     elif queued_count or promoted_count:
         mode = "lifecycle"
         summary = "A proposal is already in the queue or promotion lifecycle."
@@ -5571,7 +5573,9 @@ def _build_proposal_review(
             if handled_history_summary is not None and handled_mail:
                 summary = f"{handled_history_summary}{suffix}"
             else:
-                summary = f"{len(handled_actions)} handled proposal(s) are visible as history{suffix}."
+                summary = (
+                    f"{len(handled_actions)} handled proposal(s) are visible as history{suffix}."
+                )
         else:
             summary = "No active proposals are waiting."
         next_action = "Monitor for the next real proposal."
@@ -5775,7 +5779,9 @@ def _build_coordination_console_guide(
             ],
         )
 
-    handled_summary = _handled_history_summary(handled_actions) or "No active proposals are waiting."
+    handled_summary = (
+        _handled_history_summary(handled_actions) or "No active proposals are waiting."
+    )
     return (
         "monitor",
         [
@@ -5928,7 +5934,9 @@ def run_operator_daily_state(
         else "warn"
     )
     next_action = coordination_console["next_action"]
-    outcome_quality = coordination_console.get("outcome_quality") or _build_handoff_outcome_quality([])
+    outcome_quality = coordination_console.get("outcome_quality") or _build_handoff_outcome_quality(
+        []
+    )
     report: OperatorDailyStateReport = {
         "status": status,
         "generated_at": generated_at,
