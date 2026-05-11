@@ -5,9 +5,15 @@ from __future__ import annotations
 from notification_hub.models import Event, Intent
 
 _INTENT_KEYWORDS: tuple[tuple[Intent, tuple[str, ...]], ...] = (
-    ("automation_failed", ("automation failed", "workflow failed", "verification fail", "test regression")),
+    (
+        "automation_failed",
+        ("automation failed", "workflow failed", "verification fail", "test regression"),
+    ),
     ("blocked", ("blocked", "stuck", "cannot proceed", "failed to")),
-    ("waiting_on_user", ("waiting on user", "approval needed", "approval requested", "needs approval")),
+    (
+        "waiting_on_user",
+        ("waiting on user", "approval needed", "approval requested", "needs approval"),
+    ),
     ("ready_to_merge", ("ready to merge", "merge ready", "land it", "ship it")),
     ("ready_to_review", ("ready to review", "review ready", "needs review")),
     ("handoff_created", ("handoff created", "handoff ready", "restart prompt")),

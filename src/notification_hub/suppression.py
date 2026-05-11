@@ -12,9 +12,7 @@ from notification_hub.models import Level, StoredEvent
 logger = logging.getLogger(__name__)
 
 PACIFIC = ZoneInfo("America/Los_Angeles")
-DEFAULT_NOISE_RULES = (
-    NoiseRule(source="personal-ops", window_minutes=5),
-)
+DEFAULT_NOISE_RULES = (NoiseRule(source="personal-ops", window_minutes=5),)
 
 
 def _noise_rule_matches(rule: NoiseRule, event: StoredEvent, effective_level: Level) -> bool:

@@ -494,9 +494,7 @@ def analyze_policy_config(policy: PolicyConfig | None = None) -> tuple[str, ...]
             )
 
         if rule.force_level is None and not rule.disable_push and not rule.disable_slack:
-            warnings.append(
-                f"routing rule {index} does not change level or delivery behavior"
-            )
+            warnings.append(f"routing rule {index} does not change level or delivery behavior")
 
         if rule.continue_matching and evaluation_position == total_rules:
             warnings.append(

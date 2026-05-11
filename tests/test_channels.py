@@ -113,7 +113,10 @@ def test_stored_event_has_ids() -> None:
 
 class TestPushNotifierDiscovery:
     def test_finds_notifier_from_path(self) -> None:
-        with patch("notification_hub.channels.shutil.which", return_value="/usr/local/bin/terminal-notifier"):
+        with patch(
+            "notification_hub.channels.shutil.which",
+            return_value="/usr/local/bin/terminal-notifier",
+        ):
             assert channels_mod.find_push_notifier() == "/usr/local/bin/terminal-notifier"
 
     def test_finds_notifier_from_common_location(self) -> None:

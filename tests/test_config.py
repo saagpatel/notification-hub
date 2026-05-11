@@ -161,7 +161,9 @@ window_minutes = 10
 
 
 class TestPolicyConfig:
-    def test_defaults_when_config_missing(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_defaults_when_config_missing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setattr(config_mod, "POLICY_CONFIG", tmp_path / "missing.toml")
 
         policy = get_policy_config()
@@ -307,11 +309,11 @@ text_contains = "session complete"
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         config_path = tmp_path / "config.toml"
-        config_path.write_text("[classifier]\nurgent_keywords = [\"alpha\"]\n", encoding="utf-8")
+        config_path.write_text('[classifier]\nurgent_keywords = ["alpha"]\n', encoding="utf-8")
         monkeypatch.setattr(config_mod, "POLICY_CONFIG", config_path)
 
         first = get_policy_config()
-        config_path.write_text("[classifier]\nurgent_keywords = [\"beta\"]\n", encoding="utf-8")
+        config_path.write_text('[classifier]\nurgent_keywords = ["beta"]\n', encoding="utf-8")
         second = get_policy_config()
 
         assert first.classification.urgent_keywords == ("alpha",)
@@ -345,8 +347,14 @@ class TestPolicyAnalysis:
 
         warnings = analyze_policy_config(policy)
 
-        assert any("routing rule 1 does not change level or delivery behavior" in warning for warning in warnings)
-        assert any("routing rule 2 is shadowed by earlier evaluation rule 1" in warning for warning in warnings)
+        assert any(
+            "routing rule 1 does not change level or delivery behavior" in warning
+            for warning in warnings
+        )
+        assert any(
+            "routing rule 2 is shadowed by earlier evaluation rule 1" in warning
+            for warning in warnings
+        )
 
     def test_warns_on_overlapping_classifier_keywords(self) -> None:
         policy = PolicyConfig(
@@ -398,7 +406,10 @@ class TestPolicyAnalysis:
 
         warnings = analyze_policy_config(policy)
 
-        assert any("routing rule 2 is shadowed by earlier evaluation rule 1" in warning for warning in warnings)
+        assert any(
+            "routing rule 2 is shadowed by earlier evaluation rule 1" in warning
+            for warning in warnings
+        )
 
     def test_continue_matching_rule_does_not_shadow_later_rule(self) -> None:
         policy = PolicyConfig(
@@ -481,8 +492,7 @@ class TestPolicyAnalysis:
         warnings = analyze_policy_config(policy)
 
         assert any(
-            "routing rules 1, 2 share priority 10; file order still decides between them"
-            in warning
+            "routing rules 1, 2 share priority 10; file order still decides between them" in warning
             for warning in warnings
         )
 
