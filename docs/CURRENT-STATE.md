@@ -1,6 +1,30 @@
 # Current State
 
-Last updated: 2026-05-10
+Last updated: 2026-05-11
+
+## Truth-Gap Status (2026-05-11)
+
+The original "rich 0/0 resolved" outcome-quality gap was investigated and split into two layers:
+
+- **Visibility (fixed)**: `coordination-console` and `/review/coordination-console` previously
+  defaulted to a 2-hour proposal window while `personal-ops-actions` used 24 hours, so proposals
+  whose latest evidence aged past 2 hours silently disappeared from the operator surface. The
+  default is now 24 hours across CLI, function, and review endpoint.
+- **Real producer signal (still pending)**: every event currently carrying `evidence_context`
+  uses `mailbox: machine@example.com` and synthetic thread IDs (`thread-reply-refresh`,
+  `thread-phase32-review-approval-flow`, etc.). These are personal-ops burn-in test fixtures, not
+  real Gmail signal. The real personal-ops mail producer is not yet emitting `evidence_context`
+  to notification-hub, so no real rich-evidence handoff exists to walk through save → queue →
+  promote → outcome. The pipeline is wired end-to-end and verified against synthetic data;
+  closing the gap requires the upstream personal-ops mail integration to start emitting context
+  for real mailbox events.
+- **Lineage subsumption (open design question)**: the prior `needs_follow_up` group outcome on
+  `personal-ops:mail:waiting_on_user:high:waiting` (recorded 2026-05-10 14:56Z) covers stable
+  proposal keys that current synthetic rich proposals share. The lineage logic correctly classifies
+  them as continuations of that follow-up, honoring the operator's explicit "preserve follow-up
+  state across evidence-event rotation" intent. Whether an evidence-quality upgrade from thin to
+  rich should supersede a prior `needs_follow_up` outcome is deferred until a real rich proposal
+  arrives and the operator has a concrete case to decide on.
 
 ## Snapshot
 
