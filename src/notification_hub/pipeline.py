@@ -232,7 +232,9 @@ def _flush_overflow() -> None:
         # Preserve overflow when digest delivery fails so a later event can retry.
         for event in overflow:
             _suppression.add_to_overflow(event)
-        logger.warning("Failed to flush overflow digest; returning %d events to buffer", len(overflow))
+        logger.warning(
+            "Failed to flush overflow digest; returning %d events to buffer", len(overflow)
+        )
 
 
 def _drain_quiet_queue_if_needed() -> None:

@@ -86,13 +86,17 @@ class TestDedup:
 class TestBurstDedup:
     def test_default_noise_rule_suppresses_exact_personal_ops_duplicate(self) -> None:
         engine = SuppressionEngine()
-        event = _stored(source="personal-ops", project="personal-ops", title="Approval expires soon")
+        event = _stored(
+            source="personal-ops", project="personal-ops", title="Approval expires soon"
+        )
 
         assert engine.is_burst_duplicate(event) is False
         assert engine.is_burst_duplicate(event) is True
         assert engine.snapshot()["burst_duplicates"] == 1
 
-    def test_configured_noise_rule_can_match_notion_syncs(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_configured_noise_rule_can_match_notion_syncs(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         policy = PolicyConfig(
             noise=NoisePolicy(
                 rules=(
@@ -118,11 +122,11 @@ class TestBurstDedup:
         assert engine.is_burst_duplicate(event) is False
         assert engine.is_burst_duplicate(event) is True
 
-    def test_configured_noise_rule_does_not_match_different_level(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_configured_noise_rule_does_not_match_different_level(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         policy = PolicyConfig(
-            noise=NoisePolicy(
-                rules=(NoiseRule(source="codex", level="info", window_minutes=10),)
-            )
+            noise=NoisePolicy(rules=(NoiseRule(source="codex", level="info", window_minutes=10),))
         )
         monkeypatch.setattr("notification_hub.suppression.get_policy_config", lambda: policy)
         engine = SuppressionEngine()
@@ -178,9 +182,7 @@ class TestQuietHours:
         assert engine.is_quiet_hours(ten_59_pm) is False
 
     def test_same_day_quiet_window(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        policy = PolicyConfig(
-            suppression=SuppressionPolicy(quiet_start_hour=9, quiet_end_hour=17)
-        )
+        policy = PolicyConfig(suppression=SuppressionPolicy(quiet_start_hour=9, quiet_end_hour=17))
         monkeypatch.setattr("notification_hub.suppression.get_policy_config", lambda: policy)
         engine = SuppressionEngine()
 
@@ -196,9 +198,7 @@ class TestQuietHours:
     def test_matching_start_and_end_disables_quiet_hours(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        policy = PolicyConfig(
-            suppression=SuppressionPolicy(quiet_start_hour=7, quiet_end_hour=7)
-        )
+        policy = PolicyConfig(suppression=SuppressionPolicy(quiet_start_hour=7, quiet_end_hour=7))
         monkeypatch.setattr("notification_hub.suppression.get_policy_config", lambda: policy)
         engine = SuppressionEngine()
 

@@ -25,6 +25,7 @@ class ObserverHandle(Protocol):
 
     def join(self, timeout: float | None = None) -> None: ...
 
+
 # Pattern for activity log entries:
 # - [YYYY-MM-DD] [optional-tag] project-name: summary (branch)
 _ACTIVITY_LINE = re.compile(
