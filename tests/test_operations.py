@@ -3086,6 +3086,74 @@ def test_personal_ops_import_queue_lifecycle_and_health(tmp_path: Path) -> None:
     assert health_after["needs_review"] is False
 
 
+def test_import_queue_item_report_surfaces_evidence_quality(tmp_path: Path) -> None:
+    """Queue listing must surface evidence_quality so operators see rich vs thin without
+    drilling into evidence_context.
+
+    Why: when validating the first real rich-evidence cycle (2026-05-11), the queue listing
+    returned no quality signal even though the JSONL had it. Internal scorers already
+    compute it via _raw_queue_item_evidence_quality; the gap is purely surface.
+    """
+    package_path = tmp_path / "actions.json"
+    queue_path = tmp_path / "queue.jsonl"
+    package_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "notification-hub.personal_ops_action_export.v1",
+                "actions": [
+                    {
+                        "action_id": "notification-hub:personal-ops:mail:waiting_on_user:rich",
+                        "source": "personal-ops",
+                        "project": "mail",
+                        "intent": "waiting_on_user",
+                        "priority": "high",
+                        "state": "waiting",
+                        "title": "Approval Requested",
+                        "summary": "rich evidence proposal",
+                        "suggested_next_action": "Review.",
+                        "evidence_event_id": "rich-event-1",
+                        "evidence_timestamp": "2026-05-11T00:00:00+00:00",
+                        "evidence_context": {
+                            "thread_id": "thread-real-1",
+                            "draft_id": "draft-real-1",
+                            "approval_id": "approval-real-1",
+                            "mailbox": "real@example.com",
+                        },
+                        "evidence_quality": "rich",
+                        "count": 2,
+                    },
+                    {
+                        "action_id": "notification-hub:personal-ops:mail:waiting_on_user:thin",
+                        "source": "personal-ops",
+                        "project": "mail",
+                        "intent": "waiting_on_user",
+                        "priority": "high",
+                        "state": "waiting",
+                        "title": "Approval Requested",
+                        "summary": "thin evidence proposal",
+                        "suggested_next_action": "Review.",
+                        "evidence_event_id": "thin-event-1",
+                        "evidence_timestamp": "2026-05-11T00:00:00+00:00",
+                        "evidence_context": {},
+                        "evidence_quality": "thin",
+                        "count": 2,
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    run_personal_ops_import_stub(path=package_path, enqueue=True, queue_path=queue_path)
+
+    items = list_personal_ops_import_queue(queue_path=queue_path)
+    by_action = {item["action_id"]: item for item in items}
+    rich = by_action["notification-hub:personal-ops:mail:waiting_on_user:rich"]
+    thin = by_action["notification-hub:personal-ops:mail:waiting_on_user:thin"]
+
+    assert rich["evidence_quality"] == "rich"
+    assert thin["evidence_quality"] == "thin"
+
+
 def test_personal_ops_queue_review_groups_queued_handoffs(tmp_path: Path) -> None:
     package_path = tmp_path / "actions.json"
     queue_path = tmp_path / "queue.jsonl"

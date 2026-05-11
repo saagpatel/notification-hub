@@ -393,6 +393,7 @@ class PersonalOpsImportQueueItemReport(TypedDict):
     state: str
     evidence_event_id: str
     evidence_context: dict[str, object]
+    evidence_quality: str
     applied: bool
     snoozed_until: str | None
     outcome_reason: str | None
@@ -1881,6 +1882,7 @@ def _import_queue_item_report(item: dict[str, object]) -> PersonalOpsImportQueue
         "state": _as_str(action.get("state")) or "",
         "evidence_event_id": _as_str(action.get("evidence_event_id")) or "",
         "evidence_context": _as_dict(action.get("evidence_context")),
+        "evidence_quality": _raw_queue_item_evidence_quality(item),
         "applied": bool(item.get("applied")),
         "snoozed_until": _as_str(item.get("snoozed_until")),
         "outcome_reason": _as_str(item.get("outcome_reason")),
