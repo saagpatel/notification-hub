@@ -1032,10 +1032,7 @@ def _print_coordination_console_report(report: CoordinationConsoleReport) -> Non
         print("- handled history:")
         for item in report["handled_actions"][:3]:
             action = item["action"]
-            print(
-                "  - "
-                f"{action['title']}: {item['lineage_label']} - {item['lineage_reason']}"
-            )
+            print(f"  - {action['title']}: {item['lineage_label']} - {item['lineage_reason']}")
     if proposal_review["group_history"]:
         print("- recent group history:")
         for item in proposal_review["group_history"][:3]:
@@ -1320,10 +1317,7 @@ def _print_personal_ops_queue_review_report(report: PersonalOpsQueueReviewReport
         return
     print("- batches:")
     for batch in report["batches"]:
-        print(
-            f"  - {batch['item_count']}x {batch['title']} "
-            f"({batch['priority']}/{batch['state']})"
-        )
+        print(f"  - {batch['item_count']}x {batch['title']} ({batch['priority']}/{batch['state']})")
         if batch["first_queue_id"] is not None:
             print(f"    first queue id: {batch['first_queue_id']}")
         for summary in batch["summaries"][:3]:
