@@ -324,7 +324,7 @@ def test_coordination_console_summarizes_ready_expansion(tmp_path: Path) -> None
                         "evidence_context": {},
                         "evidence_quality": "thin",
                         "count": 2,
-                    }
+                    },
                 ],
                 "review_package": {"status": "not_requested"},
                 "inbox": {},
@@ -379,8 +379,9 @@ def test_coordination_console_summarizes_ready_expansion(tmp_path: Path) -> None
     assert report["proposal_review"]["groups"][0]["promotion_readiness"] == "split_required"
     assert report["proposal_review"]["groups"][0]["promotion_ready_action_ids"] == ["action-1"]
     assert report["proposal_review"]["groups"][0]["promotion_blocked_action_ids"] == ["action-2"]
-    assert "Queue only the rich promote route" in (
-        report["proposal_review"]["groups"][0]["promotion_readiness_summary"]
+    assert (
+        "Queue only the rich promote route"
+        in (report["proposal_review"]["groups"][0]["promotion_readiness_summary"])
     )
     assert report["proposal_review"]["groups"][0]["newest_evidence_timestamp"] == (
         "2026-05-10T04:42:00+00:00"
@@ -422,6 +423,91 @@ def test_coordination_console_summarizes_ready_expansion(tmp_path: Path) -> None
     mock_queue.assert_called_once_with(limit=3)
     mock_reminder.assert_called_once_with(limit=3)
     mock_reports.assert_called_once_with(limit=3)
+
+
+def test_coordination_console_default_hours_matches_action_export() -> None:
+    """The default console window must match personal-ops-actions (24h).
+
+    Why: a narrower default silently hides proposals whose latest evidence has
+    aged past the window, defeating the operator handoff path before it can be
+    exercised. See investigation 2026-05-11 where 3 rich-evidence approvals
+    aged ~6 h were invisible under the prior 2 h default.
+    """
+    empty_action_export: dict[str, object] = {
+        "status": "ok",
+        "schema_version": "notification-hub.personal_ops_action_export.v1",
+        "generated_at": "2026-05-11T00:00:00+00:00",
+        "hours": 24,
+        "actions": [],
+        "dismissed_action_count": 0,
+        "dismissals": [],
+        "review_package": {
+            "requested": False,
+            "status": "not_requested",
+            "path": None,
+            "error": None,
+        },
+        "inbox": {},
+        "error": None,
+    }
+    with (
+        patch(
+            "notification_hub.operations.run_coordination_readiness",
+            return_value={
+                "status": "ok",
+                "decision": "ready_to_expand",
+                "summary": "ready.",
+                "queue_status": "ok",
+                "queued_count": 0,
+                "pending_count": 0,
+                "stale_count": 0,
+                "saved_burn_in_reports": 1,
+                "latest_burn_in_ready": True,
+                "latest_burn_in_noise_candidates": 0,
+                "runtime_status": "ok",
+                "policy_warning_count": 0,
+                "next_action": "Plan the next compact coordination console slice.",
+                "evidence": [],
+                "applied": False,
+            },
+        ),
+        patch(
+            "notification_hub.operations.run_personal_ops_action_export",
+            return_value=empty_action_export,
+        ) as mock_actions,
+        patch(
+            "notification_hub.operations.run_personal_ops_import_queue_health_check",
+            return_value={
+                "status": "ok",
+                "health": _coordination_status()["import_queue"],
+                "queued_items": [],
+                "pending_promotion_items": [],
+                "next_commands": [],
+                "applied": False,
+            },
+        ),
+        patch(
+            "notification_hub.operations.run_personal_ops_outcome_sync_reminder",
+            return_value={
+                "status": "ok",
+                "should_remind": False,
+                "pending_count": 0,
+                "stale_count": 0,
+                "reminders": [],
+                "next_commands": [],
+                "next_action": "No pending.",
+                "applied": False,
+            },
+        ),
+        patch(
+            "notification_hub.operations.list_personal_ops_queue_burn_in_reports",
+            return_value=[_coordination_burn_in_report()],
+        ),
+        patch("notification_hub.operations._read_import_queue_items", return_value=[]),
+    ):
+        run_coordination_console()
+
+    mock_actions.assert_called_once_with(hours=24, limit=5)
 
 
 def test_coordination_console_keeps_thin_mail_promote_cues_in_follow_up(
@@ -1929,7 +2015,9 @@ def test_action_proposal_group_package_can_save_selected_group(tmp_path: Path) -
     assert report["action_count"] == 2
     package_path = Path(str(report["review_package"]["path"]))
     payload = json.loads(package_path.read_text(encoding="utf-8"))
-    assert payload["selected_group"]["group_key"] == "personal-ops:mail:waiting_on_user:high:waiting"
+    assert (
+        payload["selected_group"]["group_key"] == "personal-ops:mail:waiting_on_user:high:waiting"
+    )
     assert payload["selected_group"]["route"] == "all"
     assert [action["evidence_event_id"] for action in payload["actions"]] == ["abc123", "def456"]
     assert report["group_history"] is not None
@@ -2337,7 +2425,9 @@ def test_list_and_load_operator_review_session_reports(tmp_path: Path) -> None:
     detail = load_operator_review_session_report_detail(
         name=report_path.name, report_dir=report_dir
     )
-    invalid = load_operator_review_session_report_detail(name="../events.jsonl", report_dir=tmp_path)
+    invalid = load_operator_review_session_report_detail(
+        name="../events.jsonl", report_dir=tmp_path
+    )
 
     assert reports[0]["name"] == report_path.name
     assert reports[0]["group_history_count"] == 3

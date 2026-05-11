@@ -1784,7 +1784,7 @@ async def review_coordination_readiness(limit: int = 5) -> dict[str, object]:
 
 
 @app.get("/review/coordination-console")
-async def review_coordination_console(hours: int = 2, limit: int = 5) -> dict[str, object]:
+async def review_coordination_console(hours: int = 24, limit: int = 5) -> dict[str, object]:
     """Return one compact coordination console summary without applying work."""
     report = await asyncio.to_thread(
         run_coordination_console,

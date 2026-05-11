@@ -5801,7 +5801,7 @@ def _build_coordination_console_guide(
 
 def run_coordination_console(
     *,
-    hours: int = 2,
+    hours: int = 24,
     limit: int = 5,
     group_history_path: Path | None = None,
 ) -> CoordinationConsoleReport:

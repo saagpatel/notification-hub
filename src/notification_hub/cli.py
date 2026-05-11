@@ -291,7 +291,7 @@ def _build_parser(prog: str = "notification-hub") -> argparse.ArgumentParser:
     coordination_console.add_argument(
         "--hours",
         type=int,
-        default=2,
+        default=24,
         help="Recent action-proposal window to summarize.",
     )
     coordination_console.add_argument(
