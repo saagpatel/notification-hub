@@ -10,14 +10,24 @@ The original "rich 0/0 resolved" outcome-quality gap was investigated and split 
   defaulted to a 2-hour proposal window while `personal-ops-actions` used 24 hours, so proposals
   whose latest evidence aged past 2 hours silently disappeared from the operator surface. The
   default is now 24 hours across CLI, function, and review endpoint.
-- **Real producer signal (still pending)**: every event currently carrying `evidence_context`
-  uses `mailbox: machine@example.com` and synthetic thread IDs (`thread-reply-refresh`,
-  `thread-phase32-review-approval-flow`, etc.). These are personal-ops burn-in test fixtures, not
-  real Gmail signal. The real personal-ops mail producer is not yet emitting `evidence_context`
-  to notification-hub, so no real rich-evidence handoff exists to walk through save → queue →
-  promote → outcome. The pipeline is wired end-to-end and verified against synthetic data;
-  closing the gap requires the upstream personal-ops mail integration to start emitting context
-  for real mailbox events.
+- **Real producer signal (validated 2026-05-11)**: two operator-mediated approval requests on
+  pre-existing assistant-generated reply drafts produced the first ever
+  `mailbox: jayday1104@gmail.com` events in notification-hub, each carrying a real
+  `thread_id` (`19d2305f402a9cb3`, `19d0e84571202070`) plus `draft_id`, `provider_draft_id`,
+  `approval_id`, `group_id`. They formed a `count=2` "Approval Requested / Security alert"
+  rollup that produced the first real `evidence_quality: rich` proposal
+  (`action_id ...:approval-requested:497f27949e37`). The proposal was saved (review package
+  `personal-ops-actions-20260511-043245-053387.json`), enqueued (queue id `bc3ad1589f83d5dd`),
+  and closed via the `reviewed` lane — **deliberately not promoted**, because no operator-mediated
+  personal-ops task suggestion was created downstream. `outcome_quality.rich` remains 0/0 by
+  design; promotion is reserved for a real handoff that will actually be acted on downstream.
+  The wiring is now empirically validated end-to-end: real producer → real event → rich score →
+  rollup → proposal → save → queue → reviewed closeout.
+- **Rollup-of-2 constraint**: `_build_inbox_rollups` (operations.py:1484) requires at least 2
+  events of the same `(source, project, intent, level, title, body)` signature before a rollup
+  is emitted. Single events never reach the proposal pipeline. This is intentional repeat-noise
+  detection, but it does mean that the first signal of a kind is invisible until a second one
+  matches. Worth keeping in mind when designing future evidence-quality tests.
 - **Lineage subsumption (open design question)**: the prior `needs_follow_up` group outcome on
   `personal-ops:mail:waiting_on_user:high:waiting` (recorded 2026-05-10 14:56Z) covers stable
   proposal keys that current synthetic rich proposals share. The lineage logic correctly classifies
