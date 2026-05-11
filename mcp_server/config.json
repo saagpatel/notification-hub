@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "notification-hub-mcp": {
+
+      "command": "uv",
+      "args": ["--directory", ".", "run", "python", "server.py"]
+
+    }
+  }
+}
