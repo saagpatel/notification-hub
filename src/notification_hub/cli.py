@@ -929,6 +929,13 @@ def _print_inbox_report(report: InboxReport) -> None:
         project = f" ({item['project']})" if item["project"] else ""
         print(f"  - x{item['count']} [{item['intent']}] {item['source']}{project}: {item['title']}")
 
+    print("- near-rollup singles (first-occurrence, not yet repeated):")
+    if not report["near_rollup_singles"]:
+        print("  none")
+    for item in report["near_rollup_singles"]:
+        project = f" ({item['project']})" if item["project"] else ""
+        print(f"  - [{item['intent']}] {item['source']}{project}: {item['title']}")
+
 
 def _print_status_report(report: StatusReport) -> None:
     print(f"notification-hub status: {report['status']}")

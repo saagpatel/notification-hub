@@ -111,6 +111,7 @@ class InboxReport(TypedDict):
     ready: list[InboxItemReport]
     completed: list[InboxItemReport]
     rollups: list[InboxRollupReport]
+    near_rollup_singles: list[InboxRollupReport]
     noise_candidates: list[RepeatedSignatureReport]
     error: str | None
 
@@ -1521,6 +1522,37 @@ def _build_inbox_rollups(events: list[StoredEvent]) -> list[InboxRollupReport]:
         key=lambda item: (item["count"], item["latest_timestamp"]),
         reverse=True,
     )
+
+
+def _build_near_rollup_singles(events: list[StoredEvent]) -> list[InboxRollupReport]:
+    """Return events that appear exactly once — invisible to the rollup pipeline but worth surfacing."""
+    grouped: dict[tuple[str, str | None, str, str, str, str], list[StoredEvent]] = {}
+    for event in events:
+        intent = infer_intent(event)
+        key = (event.source, event.project, intent, event.level, event.title, event.body)
+        grouped.setdefault(key, []).append(event)
+
+    singles: list[InboxRollupReport] = []
+    for (source, project, intent, level, title, body), items in grouped.items():
+        if len(items) != 1:
+            continue
+        item = items[0]
+        singles.append(
+            {
+                "count": 1,
+                "source": source,
+                "project": project,
+                "intent": intent,
+                "level": level,
+                "title": title,
+                "body": body,
+                "latest_timestamp": item.timestamp.isoformat(),
+                "latest_event_id": item.event_id,
+                "latest_context": dict(item.context),
+            }
+        )
+
+    return sorted(singles, key=lambda item: item["latest_timestamp"], reverse=True)
 
 
 def _action_priority(intent: str, level: str) -> str:
@@ -3617,6 +3649,7 @@ def run_inbox(*, hours: int = 24, limit: int = 10) -> InboxReport:
             "ready": [],
             "completed": [],
             "rollups": [],
+            "near_rollup_singles": [],
             "noise_candidates": [],
             "error": str(exc),
         }
@@ -3642,6 +3675,7 @@ def run_inbox(*, hours: int = 24, limit: int = 10) -> InboxReport:
         "ready": buckets["ready"][:item_limit],
         "completed": buckets["completed"][:item_limit],
         "rollups": _build_inbox_rollups(stored_events)[:item_limit],
+        "near_rollup_singles": _build_near_rollup_singles(stored_events)[:item_limit],
         "noise_candidates": burn_in["noise_candidates"][:item_limit],
         "error": None,
     }

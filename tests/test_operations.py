@@ -38,6 +38,7 @@ from notification_hub.operations import (
     load_action_review_package_detail,
     load_operator_review_session_report_detail,
     load_personal_ops_queue_burn_in_report_detail,
+    _build_near_rollup_singles,
     prune_action_export_files,
     prune_operator_review_session_reports,
     review_latest_noise_candidates,
@@ -1446,6 +1447,136 @@ def test_inbox_rollup_carries_latest_event_context() -> None:
         "thread_id": "thread-new",
         "draft_id": "draft-new",
     }
+
+
+def test_near_rollup_singles_returns_count_one_events() -> None:
+    now = datetime.now(timezone.utc)
+    repeated = StoredEvent(
+        source="cc",
+        level="info",
+        title="Build done",
+        body="ok",
+        project="proj",
+        timestamp=now - timedelta(minutes=10),
+    )
+    repeated2 = StoredEvent(
+        source="cc",
+        level="info",
+        title="Build done",
+        body="ok",
+        project="proj",
+        timestamp=now - timedelta(minutes=5),
+    )
+    unique = StoredEvent(
+        source="personal-ops",
+        level="urgent",
+        title="Approval Requested",
+        body="One-off event",
+        project="mail",
+        timestamp=now - timedelta(minutes=3),
+    )
+
+    rollups = _build_near_rollup_singles([repeated, repeated2, unique])
+
+    assert len(rollups) == 1
+    assert rollups[0]["source"] == "personal-ops"
+    assert rollups[0]["count"] == 1
+    assert rollups[0]["title"] == "Approval Requested"
+
+
+def test_near_rollup_singles_excludes_repeated_events() -> None:
+    now = datetime.now(timezone.utc)
+    e1 = StoredEvent(
+        source="cc",
+        level="info",
+        title="X",
+        body="Y",
+        project=None,
+        timestamp=now - timedelta(minutes=5),
+    )
+    e2 = StoredEvent(
+        source="cc",
+        level="info",
+        title="X",
+        body="Y",
+        project=None,
+        timestamp=now - timedelta(minutes=2),
+    )
+
+    singles = _build_near_rollup_singles([e1, e2])
+
+    assert singles == []
+
+
+def test_run_inbox_includes_near_rollup_singles() -> None:
+    now = datetime.now(timezone.utc)
+    unique = StoredEvent(
+        source="codex",
+        level="info",
+        title="Deploy finished",
+        body="success",
+        project="api",
+        timestamp=now - timedelta(minutes=5),
+    )
+    repeated_a = StoredEvent(
+        source="cc",
+        level="info",
+        title="Test passed",
+        body="all green",
+        project="app",
+        timestamp=now - timedelta(minutes=10),
+    )
+    repeated_b = StoredEvent(
+        source="cc",
+        level="info",
+        title="Test passed",
+        body="all green",
+        project="app",
+        timestamp=now - timedelta(minutes=4),
+    )
+    burn_in_stub: dict[str, object] = {
+        "status": "ok",
+        "minutes": 1440,
+        "events_seen": 3,
+        "accepted_event_posts": 3,
+        "rejected_event_posts": 0,
+        "validation_error_count": 0,
+        "health": {
+            "accepted_event_posts": 3,
+            "rejected_event_posts": 0,
+            "validation_error_count": 0,
+            "slack_delivery_failure_count": 0,
+            "status": "ok",
+        },
+        "noise_candidates": [],
+        "repeated_signatures": [],
+        "slack_eligible_events": 0,
+        "slack_volume": [],
+        "daemon_summary": {
+            "access_status_counts": {},
+            "accepted_event_posts": 0,
+            "rejected_event_posts": 0,
+            "validation_error_count": 0,
+            "recent_validation_errors": [],
+            "slack_delivery_failure_count": 0,
+            "recent_slack_delivery_failures": [],
+        },
+        "error": None,
+    }
+
+    with (
+        patch(
+            "notification_hub.operations.read_jsonl", return_value=[unique, repeated_a, repeated_b]
+        ),
+        patch("notification_hub.operations.run_burn_in", return_value=burn_in_stub),
+    ):
+        report = run_inbox(hours=24, limit=10)
+
+    assert len(report["rollups"]) == 1
+    assert report["rollups"][0]["source"] == "cc"
+    assert len(report["near_rollup_singles"]) == 1
+    assert report["near_rollup_singles"][0]["source"] == "codex"
+    assert report["near_rollup_singles"][0]["count"] == 1
 
 
 def test_coordination_snapshot_wraps_inbox_and_runtime_for_bridge_db() -> None:
