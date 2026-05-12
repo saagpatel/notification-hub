@@ -37,6 +37,7 @@ from notification_hub.operations import (
     ActionProposalGroupOutcomeReport,
     OperatorDailyStateReport,
     OperatorHandoffDrillReport,
+    ActionExportRetentionReport,
     OperatorReviewSessionRetentionReport,
     OperatorReviewSessionReport,
     PolicyCheckReport,
@@ -75,6 +76,7 @@ from notification_hub.operations import (
     run_status,
     run_verify_runtime,
     record_action_proposal_group_outcome,
+    prune_action_export_files,
     prune_operator_review_session_reports,
 )
 from notification_hub.pipeline import build_event_explanation_report
@@ -540,6 +542,31 @@ def _build_parser(prog: str = "notification-hub") -> argparse.ArgumentParser:
         "--json",
         action="store_true",
         help="Emit the review-session retention report as JSON.",
+    )
+
+    action_export_retention = subparsers.add_parser(
+        "action-export-retention",
+        help="Prune older saved action-export files.",
+    )
+    action_export_retention.add_argument(
+        "--keep",
+        type=int,
+        default=20,
+        help="Keep this many newest action-export files.",
+    )
+    action_export_retention.add_argument(
+        "--apply",
+        action="store_true",
+        help="Delete older files. Without this, only show prune candidates.",
+    )
+    action_export_retention.add_argument(
+        "--export-dir",
+        help="Optional directory for saved action-export files.",
+    )
+    action_export_retention.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the retention report as JSON.",
     )
 
     operator_handoff_drill = subparsers.add_parser(
@@ -1206,6 +1233,24 @@ def _print_operator_review_session_retention_report(
     print(f"- next action: {report['next_action']}")
 
 
+def _print_action_export_retention_report(report: ActionExportRetentionReport) -> None:
+    mode = "dry run" if report["dry_run"] else "apply"
+    print(f"notification-hub action-export-retention: {report['status']}")
+    print(f"- mode: {mode}")
+    print(f"- export dir: {report['export_dir']}")
+    print(f"- keep: {report['keep']}")
+    print(f"- total files: {report['total_count']}")
+    print(f"- prune candidates: {report['candidate_count']}")
+    print(f"- deleted: {report['deleted_count']}")
+    if report["candidate_files"]:
+        print("- oldest candidates:")
+        for name in report["candidate_files"][:5]:
+            print(f"  - {name}")
+    if report["error"] is not None:
+        print(f"- error: {report['error']}")
+    print(f"- next action: {report['next_action']}")
+
+
 def _print_action_package_validation_report(report: ActionPackageValidationReport) -> None:
     print(f"notification-hub validate-action-package: {report['status']}")
     print(f"- path: {report['path']}")
@@ -1764,6 +1809,18 @@ def main(argv: Sequence[str] | None = None) -> int:
             _print_operator_review_session_report(report)
         return 0 if report["status"] == "ok" else 1
 
+    if args.command == "action-export-retention":
+        report = prune_action_export_files(
+            keep=args.keep,
+            dry_run=not args.apply,
+            export_dir=Path(args.export_dir).expanduser() if args.export_dir else None,
+        )
+        if args.json:
+            print(json.dumps(report, indent=2, sort_keys=True))
+        else:
+            _print_action_export_retention_report(report)
+        return 0 if report["status"] == "ok" else 1
+
     if args.command == "operator-review-session-retention":
         report = prune_operator_review_session_reports(
             keep=args.keep,
@@ -2020,6 +2077,11 @@ def operator_review_session_main(argv: Sequence[str] | None = None) -> int:
 def operator_review_session_retention_main(argv: Sequence[str] | None = None) -> int:
     forwarded = list(argv) if argv is not None else sys.argv[1:]
     return main(["operator-review-session-retention", *forwarded])
+
+
+def action_export_retention_main(argv: Sequence[str] | None = None) -> int:
+    forwarded = list(argv) if argv is not None else sys.argv[1:]
+    return main(["action-export-retention", *forwarded])
 
 
 def operator_handoff_drill_main(argv: Sequence[str] | None = None) -> int:
