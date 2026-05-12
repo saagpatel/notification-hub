@@ -1,6 +1,41 @@
 # Current State
 
-Last updated: 2026-05-11
+Last updated: 2026-05-12
+
+## Session Update (2026-05-12)
+
+**What shipped:**
+
+- **`mcp_server/` stdio MCP wrapper** — scaffolded via mcpforge, wraps the daemon's localhost
+  HTTP API at `:9199`. Tools: `post_event`, `get_health`, `get_health_details`, `get_review_data`,
+  `get_coordination_readiness`, `get_import_queue`, `get_burn_in_reports`. Wired to Hermes via
+  FastMCP 3.2.4, stdio transport. Lives in `mcp_server/` as a standalone uv project.
+- **Dev-dependency regression fixed** — pytest/ruff/pyright were declared in
+  `[project.optional-dependencies]` and dropped from the venv when `mcp_server/pyproject.toml`
+  triggered a bare `uv sync`. Migrated to `[dependency-groups]` so `uv sync` always installs them.
+- **Stale-timestamp test fixed** — `test_inbox_rollup_carries_latest_event_context` used hardcoded
+  `2026-05-10` timestamps; `run_inbox(hours=24)` filtered them out. Replaced with
+  `now - timedelta(minutes=N)` so the test is time-stable.
+- **370 tests passing** (up from 346 at last stable baseline).
+- `main` is at `26780cd`, clean and aligned with `origin/main`.
+
+**Active backlog (priority order):**
+
+1. Action-export retention/pruning — 40 files in `action-exports/`, accumulating since May 9.
+   `operator-review-session-retention` exists but covers review-session reports, not action-exports.
+   Need either automatic pruning or an explicit `--keep N` policy for action-export files.
+2. Single-event visibility surface — `_build_inbox_rollups` (operations.py) requires count ≥ 2.
+   Single real events are invisible to the proposal pipeline. A read-only lane showing near-rollup
+   singles would close this observability gap.
+3. `mcp_server/` maintenance — thin scaffold; one minimal `test_server.py`. If Hermes use grows,
+   add a connection/health smoke test. No urgency until real usage patterns emerge.
+4. `aa8fd718` Gmail draft cleanup — test draft "Rich-evidence pipeline test — 2026-05-11" still in
+   Drafts. Manual action via Gmail web UI or rejection workaround via `approval_request_create`.
+5. `docs/CURRENT-STATE.md` sync — done (this update).
+
+**`outcome_quality.rich` remains 0/0 by design.** No organic rich handoff has been promoted.
+
+---
 
 ## Truth-Gap Status (2026-05-11)
 
@@ -424,7 +459,7 @@ uv run --frozen notification-hub retention --max-events 2000
 
 Expected current outcome:
 
-- `pytest`: 346 passed
+- `pytest`: 370 passed
 - `ruff`: clean
 - `pyright`: 0 errors
 - `/health/details`: `status: ok`, watcher active, push available, Slack configured
@@ -587,12 +622,10 @@ It is not part of normal day-to-day work.
 
 ## Safest Next Step
 
-Start future work from `main`, keep using the frozen verification commands, and treat the repo-owned
-runtime templates as the source of truth for live launcher and hook wiring.
-The next work here should keep `coordination-console` as the first expansion surface, use proposal
-groups during real handoff review, and use the new group history to confirm saved, queued, and
-dismissed groups do not reappear as confusing fresh work. Keep apply behavior operator-mediated until
-the compact console proves it should own a broader workflow.
+Start future work from `main` (`26780cd`). The confirmed next-session backlog is in the
+Session Update section above. Work in priority order:
+action-export retention → single-event visibility → mcp_server smoke test → aa8fd718 draft cleanup.
+Keep apply behavior operator-mediated until the compact console proves it should own a broader workflow.
 
 ## Optional Follow-Up
 
