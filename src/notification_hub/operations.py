@@ -306,6 +306,22 @@ class OperatorReviewSessionRetentionReport(TypedDict):
     error: str | None
 
 
+class ActionExportRetentionReport(TypedDict):
+    status: str
+    export_dir: str
+    keep: int
+    dry_run: bool
+    total_count: int
+    kept_count: int
+    candidate_count: int
+    deleted_count: int
+    candidate_files: list[str]
+    deleted_files: list[str]
+    next_action: str
+    applied: bool
+    error: str | None
+
+
 class PersonalOpsActionExportReport(TypedDict):
     status: str
     schema_version: str
@@ -1666,6 +1682,73 @@ def list_action_review_packages(
             }
         )
     return reports
+
+
+def prune_action_export_files(
+    *,
+    keep: int = 20,
+    dry_run: bool = True,
+    export_dir: Path | None = None,
+) -> ActionExportRetentionReport:
+    """Prune older saved action-export files, keeping the newest N."""
+    target_dir = export_dir or ACTION_EXPORT_DIR
+    safe_keep = max(keep, 1)
+    try:
+        all_files = sorted(
+            target_dir.glob("personal-ops-actions-*.json"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+    except OSError:
+        all_files = []
+
+    to_delete = all_files[safe_keep:]
+    deleted_files: list[str] = []
+    error: str | None = None
+    status = "ok"
+
+    if not dry_run:
+        for path in to_delete:
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                continue
+            except OSError as exc:
+                status = "degraded"
+                error = str(exc)
+                break
+            deleted_files.append(path.name)
+
+    if dry_run:
+        next_action = (
+            "Run again with --apply to delete older action-export files."
+            if to_delete
+            else "No action-export files need pruning."
+        )
+    elif status == "ok":
+        next_action = (
+            "Older action-export files were pruned."
+            if deleted_files
+            else "No action-export files needed pruning."
+        )
+    else:
+        next_action = "Fix the file deletion error, then rerun retention."
+
+    return {
+        "status": status,
+        "export_dir": str(target_dir),
+        "keep": safe_keep,
+        "dry_run": dry_run,
+        "total_count": len(all_files),
+        "kept_count": min(len(all_files), safe_keep),
+        "candidate_count": len(to_delete),
+        "deleted_count": len(deleted_files),
+        "candidate_files": [p.name for p in to_delete],
+        "deleted_files": deleted_files,
+        "next_action": next_action,
+        "applied": not dry_run,
+        "error": error,
+    }
 
 
 def _empty_package_validation(path: Path, error: str) -> ActionPackageValidationReport:

@@ -38,6 +38,7 @@ from notification_hub.operations import (
     load_action_review_package_detail,
     load_operator_review_session_report_detail,
     load_personal_ops_queue_burn_in_report_detail,
+    prune_action_export_files,
     prune_operator_review_session_reports,
     review_latest_noise_candidates,
     run_action_proposal_dismissal_list,
@@ -2490,6 +2491,62 @@ def test_prune_operator_review_session_reports_keeps_newest(tmp_path: Path) -> N
     assert not paths[0].exists()
     assert paths[1].exists()
     assert paths[2].exists()
+
+
+def test_prune_action_export_files_dry_run_keeps_all(tmp_path: Path) -> None:
+    export_dir = tmp_path / "action-exports"
+    export_dir.mkdir()
+    files = [export_dir / f"personal-ops-actions-2026050{i}-120000.json" for i in range(1, 6)]
+    for index, path in enumerate(files):
+        path.write_text("{}", encoding="utf-8")
+        os.utime(path, (100 + index, 100 + index))
+
+    report = prune_action_export_files(keep=3, export_dir=export_dir)
+
+    assert report["status"] == "ok"
+    assert report["dry_run"] is True
+    assert report["applied"] is False
+    assert report["total_count"] == 5
+    assert report["candidate_count"] == 2
+    assert report["deleted_count"] == 0
+    assert all(p.exists() for p in files)
+
+
+def test_prune_action_export_files_apply_deletes_oldest(tmp_path: Path) -> None:
+    export_dir = tmp_path / "action-exports"
+    export_dir.mkdir()
+    files = [export_dir / f"personal-ops-actions-2026050{i}-120000.json" for i in range(1, 6)]
+    for index, path in enumerate(files):
+        path.write_text("{}", encoding="utf-8")
+        os.utime(path, (100 + index, 100 + index))
+
+    report = prune_action_export_files(keep=3, dry_run=False, export_dir=export_dir)
+
+    assert report["status"] == "ok"
+    assert report["applied"] is True
+    assert report["deleted_count"] == 2
+    assert report["kept_count"] == 3
+    # oldest two (lowest mtime) should be gone
+    assert not files[0].exists()
+    assert not files[1].exists()
+    assert files[2].exists()
+    assert files[3].exists()
+    assert files[4].exists()
+
+
+def test_prune_action_export_files_noop_when_under_limit(tmp_path: Path) -> None:
+    export_dir = tmp_path / "action-exports"
+    export_dir.mkdir()
+    path = export_dir / "personal-ops-actions-20260501-120000.json"
+    path.write_text("{}", encoding="utf-8")
+
+    report = prune_action_export_files(keep=20, dry_run=False, export_dir=export_dir)
+
+    assert report["status"] == "ok"
+    assert report["candidate_count"] == 0
+    assert report["deleted_count"] == 0
+    assert path.exists()
+    assert "No action-export files needed pruning." in report["next_action"]
 
 
 def test_action_proposal_group_dismisses_each_current_match(tmp_path: Path) -> None:
