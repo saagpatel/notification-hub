@@ -1384,6 +1384,7 @@ def test_inbox_groups_recent_events_by_coordination_intent() -> None:
 
 
 def test_inbox_rollup_carries_latest_event_context() -> None:
+    now = datetime.now(timezone.utc)
     older = StoredEvent(
         source="personal-ops",
         level="urgent",
@@ -1391,7 +1392,7 @@ def test_inbox_rollup_carries_latest_event_context() -> None:
         body="Real reply needed",
         project="mail",
         context={"thread_id": "thread-old", "draft_id": "draft-old"},
-        timestamp=datetime(2026, 5, 10, 14, 0, tzinfo=timezone.utc),
+        timestamp=now - timedelta(minutes=10),
     )
     newer = StoredEvent(
         source="personal-ops",
@@ -1400,7 +1401,7 @@ def test_inbox_rollup_carries_latest_event_context() -> None:
         body="Real reply needed",
         project="mail",
         context={"thread_id": "thread-new", "draft_id": "draft-new"},
-        timestamp=datetime(2026, 5, 10, 14, 5, tzinfo=timezone.utc),
+        timestamp=now - timedelta(minutes=5),
     )
 
     with (
