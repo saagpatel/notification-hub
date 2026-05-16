@@ -33,6 +33,11 @@ Last updated: 2026-05-16 (real-use burn-in closeout)
   personal-ops mailbox/task-suggestion signatures as noise/watch items.
 - `near_rollup_singles` proved useful in real use: it surfaced count=1 Notion and real-mail
   signals that would not enter the repeat-rollup proposal pipeline.
+- Follow-up proposal review: saved and validated
+  `personal-ops-actions-20260516-193841-085944.json`, then locally dismissed three stale recovered
+  thin-evidence proposals: two personal-ops mailbox-sync signatures and one Hermes watchdog
+  connectivity signature. The Coordination Console is back in monitor mode with `active_action_count:
+  0`; the queue remains clean.
 
 **Current repo posture:**
 
@@ -46,14 +51,11 @@ Last updated: 2026-05-16 (real-use burn-in closeout)
 
 **Active backlog (priority order):**
 
-1. Watch current adjacent-system signals — notification-hub is healthy, but Coordination Console
-   still sees fresh personal-ops mailbox-sync and Hermes watchdog proposals. Treat these as source
-   system/operator-surface follow-up unless repeated checks show a notification-hub defect.
-2. `aa8fd718` Gmail draft cleanup — test draft "Rich-evidence pipeline test — 2026-05-11" still in
+1. `aa8fd718` Gmail draft cleanup — test draft "Rich-evidence pipeline test — 2026-05-11" still in
    Drafts. Manual action via Gmail web UI or rejection workaround via `approval_request_create`.
-3. Resolve ADR 0001 — lineage rich-vs-thin supersession remains deferred until a real promoted or
+2. Resolve ADR 0001 — lineage rich-vs-thin supersession remains deferred until a real promoted or
    resolved rich handoff appears under a prior `needs_follow_up` stable key.
-4. Continue observing `near_rollup_singles` and tune suppression policy based on actual volume.
+3. Continue observing `near_rollup_singles` and tune suppression policy based on actual volume.
 
 **`outcome_quality.rich` remains 0/0 by design.** No organic rich handoff has been promoted.
 
