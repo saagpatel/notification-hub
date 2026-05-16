@@ -105,6 +105,20 @@ Until then:
   preserved even if active classification isn't changed.
 - This ADR is the record of the question and the deferral.
 
+### Recheck — 2026-05-16
+
+The real-use burn-in pass did not change the decision. It produced useful
+live evidence for queue review, `near_rollup_singles`, and repeated
+personal-ops sync-degraded noise, but it did not produce an organic
+promoted or resolved rich handoff under a prior `needs_follow_up` stable
+key.
+
+The console did show handled mail follow-up history with rich evidence, and
+`near_rollup_singles` exposed real count=1 mail signals, but those cases do
+not answer the supersession question. Keep Option B as the current behavior:
+operator-recorded `needs_follow_up` stays sticky until an explicit later
+operator outcome changes it.
+
 ## Triggers to re-open
 
 Re-open this decision when **any** of the following happens:

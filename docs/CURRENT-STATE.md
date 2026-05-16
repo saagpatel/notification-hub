@@ -1,6 +1,6 @@
 # Current State
 
-Last updated: 2026-05-16 (next-pass refresh)
+Last updated: 2026-05-16 (real-use burn-in closeout)
 
 ## Session Update (2026-05-16)
 
@@ -17,23 +17,43 @@ Last updated: 2026-05-16 (next-pass refresh)
   doctor, policy check, runtime wiring, queue health, and recent runtime health are OK.
 - Coordination readiness: `ready_to_expand`; runtime, queue, and saved burn-in evidence are ready
   for the next compact coordination-console slice.
+- Real-use burn-in closeout: `notification-hub status --json`, `personal-ops-queue-health --json`,
+  `coordination-readiness --json`, and a 60-minute `burn-in --json` all report notification-hub
+  health OK. The local handoff queue is clean (`queued_count: 0`, `promoted_pending_count: 0`).
+- The saved review packages from the live personal-ops sync-degraded pass are intentionally kept
+  under `/Users/d/.local/share/notification-hub/action-exports/`:
+  `personal-ops-actions-20260516-091230-479634.json`,
+  `personal-ops-actions-20260516-091259-180792.json`, and
+  `personal-ops-actions-20260516-091315-947184.json`.
+- That live pass queued two local notification-hub handoff items for mailbox/calendar sync
+  degradation, then marked both reviewed after source checks recovered enough that no downstream
+  personal-ops promotion was appropriate.
+- The latest 60-minute burn-in is delivery-clean (`rejected_event_posts: 0`,
+  `validation_error_count: 0`, `slack_delivery_failure_count: 0`) but still shows repeated
+  personal-ops mailbox/task-suggestion signatures as noise/watch items.
+- `near_rollup_singles` proved useful in real use: it surfaced count=1 Notion and real-mail
+  signals that would not enter the repeat-rollup proposal pipeline.
 
 **Current repo posture:**
 
-- `main` is at `6d1864c`, aligned with `origin/main` before the local next-step changes.
+- `main` is at `b870b44`, aligned with `origin/main` before this documentation closeout.
 - PR #40 closed the prior MCP server smoke-test backlog with 9 in-process FastMCP wrapper tests.
 - The follow-up CI coverage gap is now closed locally by adding the MCP server smoke test command to
   `.github/workflows/ci.yml`; the workflow install step now uses the repo's dependency-group syntax.
 - The earlier `action-export-retention` and `near_rollup_singles` work remains shipped.
-- Local artifacts `.claude/` and `HANDOFF.md` are present and being kept intentionally.
+- `HANDOFF.md` is now a tracked restart artifact. Local `.claude/` remains untracked and contains
+  only ignored machine-local state.
 
 **Active backlog (priority order):**
 
-1. `aa8fd718` Gmail draft cleanup — test draft "Rich-evidence pipeline test — 2026-05-11" still in
+1. Watch current adjacent-system signals — notification-hub is healthy, but Coordination Console
+   still sees fresh personal-ops mailbox-sync and Hermes watchdog proposals. Treat these as source
+   system/operator-surface follow-up unless repeated checks show a notification-hub defect.
+2. `aa8fd718` Gmail draft cleanup — test draft "Rich-evidence pipeline test — 2026-05-11" still in
    Drafts. Manual action via Gmail web UI or rejection workaround via `approval_request_create`.
-2. Resolve ADR 0001 — lineage rich-vs-thin supersession remains deferred until a real burn-in
-   session produces enough signal.
-3. Observe `near_rollup_singles` in real use and tune suppression policy based on actual volume.
+3. Resolve ADR 0001 — lineage rich-vs-thin supersession remains deferred until a real promoted or
+   resolved rich handoff appears under a prior `needs_follow_up` stable key.
+4. Continue observing `near_rollup_singles` and tune suppression policy based on actual volume.
 
 **`outcome_quality.rich` remains 0/0 by design.** No organic rich handoff has been promoted.
 
