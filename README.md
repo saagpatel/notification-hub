@@ -462,12 +462,15 @@ continue-matching chain, and same-priority rules where file order is still break
 ```bash
 uv lock --check
 uv run --frozen pytest
+uv run --directory mcp_server --frozen pytest
 uv run --frozen ruff check
 uv run --frozen pyright
 ```
 
-The test suite uses temporary runtime paths, so local verification does not write into the live
-machine event log or watch the real bridge file.
+The root test suite uses temporary runtime paths, so local verification does not write into the live
+machine event log or watch the real bridge file. The MCP server smoke tests live in a separate uv
+project under `mcp_server/`, so they are run with `uv run --directory mcp_server --frozen pytest`
+locally and in CI.
 The committed `uv.lock` file keeps local installs and CI in sync.
 
 Runtime diagnostics:

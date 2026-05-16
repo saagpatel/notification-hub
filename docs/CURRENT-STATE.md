@@ -1,6 +1,41 @@
 # Current State
 
-Last updated: 2026-05-12 (session 2)
+Last updated: 2026-05-16 (next-pass refresh)
+
+## Session Update (2026-05-16)
+
+**Current verification:**
+
+- Root test suite: 376 passed.
+- MCP server smoke tests: 9 passed.
+- Ruff: passed.
+- Pyright: current pass refreshed after the near-rollup private-helper test import was marked as
+  an intentional test-only exception.
+- CI workflow: root tests, MCP server smoke tests, Ruff, and Pyright are all wired into GitHub
+  Actions.
+- Runtime verification: `notification-hub verify-runtime --json` reports `status: ok`; daemon,
+  doctor, policy check, runtime wiring, queue health, and recent runtime health are OK.
+- Coordination readiness: `ready_to_expand`; runtime, queue, and saved burn-in evidence are ready
+  for the next compact coordination-console slice.
+
+**Current repo posture:**
+
+- `main` is at `6d1864c`, aligned with `origin/main` before the local next-step changes.
+- PR #40 closed the prior MCP server smoke-test backlog with 9 in-process FastMCP wrapper tests.
+- The follow-up CI coverage gap is now closed locally by adding the MCP server smoke test command to
+  `.github/workflows/ci.yml`.
+- The earlier `action-export-retention` and `near_rollup_singles` work remains shipped.
+- Local artifacts `.claude/` and `HANDOFF.md` are present and being kept intentionally.
+
+**Active backlog (priority order):**
+
+1. `aa8fd718` Gmail draft cleanup — test draft "Rich-evidence pipeline test — 2026-05-11" still in
+   Drafts. Manual action via Gmail web UI or rejection workaround via `approval_request_create`.
+2. Resolve ADR 0001 — lineage rich-vs-thin supersession remains deferred until a real burn-in
+   session produces enough signal.
+3. Observe `near_rollup_singles` in real use and tune suppression policy based on actual volume.
+
+**`outcome_quality.rich` remains 0/0 by design.** No organic rich handoff has been promoted.
 
 ## Session Update (2026-05-12, session 2)
 
@@ -390,6 +425,7 @@ The following checks were re-run after cleanup and merge:
 ```bash
 uv lock --check
 uv run --frozen pytest
+uv run --directory mcp_server --frozen pytest
 uv run --frozen ruff check
 uv run --frozen pyright
 curl http://127.0.0.1:9199/health/details

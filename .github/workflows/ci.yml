@@ -26,6 +26,9 @@ jobs:
       - name: Run tests
         run: uv run --frozen pytest
 
+      - name: Run MCP server smoke tests
+        run: uv run --directory mcp_server --frozen pytest
+
       - name: Run Ruff
         run: uv run --frozen ruff check
 

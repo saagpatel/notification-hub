@@ -38,7 +38,7 @@ from notification_hub.operations import (
     load_action_review_package_detail,
     load_operator_review_session_report_detail,
     load_personal_ops_queue_burn_in_report_detail,
-    _build_near_rollup_singles,
+    _build_near_rollup_singles,  # pyright: ignore[reportPrivateUsage]
     prune_action_export_files,
     prune_operator_review_session_reports,
     review_latest_noise_candidates,
