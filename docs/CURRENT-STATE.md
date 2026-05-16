@@ -11,8 +11,8 @@ Last updated: 2026-05-16 (next-pass refresh)
 - Ruff: passed.
 - Pyright: current pass refreshed after the near-rollup private-helper test import was marked as
   an intentional test-only exception.
-- CI workflow: root tests, MCP server smoke tests, Ruff, and Pyright are all wired into GitHub
-  Actions.
+- CI workflow: dependency-group install, root tests, MCP server smoke tests, Ruff, and Pyright are
+  all wired into GitHub Actions.
 - Runtime verification: `notification-hub verify-runtime --json` reports `status: ok`; daemon,
   doctor, policy check, runtime wiring, queue health, and recent runtime health are OK.
 - Coordination readiness: `ready_to_expand`; runtime, queue, and saved burn-in evidence are ready
@@ -23,7 +23,7 @@ Last updated: 2026-05-16 (next-pass refresh)
 - `main` is at `6d1864c`, aligned with `origin/main` before the local next-step changes.
 - PR #40 closed the prior MCP server smoke-test backlog with 9 in-process FastMCP wrapper tests.
 - The follow-up CI coverage gap is now closed locally by adding the MCP server smoke test command to
-  `.github/workflows/ci.yml`.
+  `.github/workflows/ci.yml`; the workflow install step now uses the repo's dependency-group syntax.
 - The earlier `action-export-retention` and `near_rollup_singles` work remains shipped.
 - Local artifacts `.claude/` and `HANDOFF.md` are present and being kept intentionally.
 

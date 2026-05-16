@@ -34,7 +34,7 @@ Core modules:
 ## Local Development
 
 ```bash
-uv sync --frozen --extra dev
+uv sync --frozen --group dev
 uv run --frozen uvicorn notification_hub.server:app --host 127.0.0.1 --port 9199 --reload
 ```
 
