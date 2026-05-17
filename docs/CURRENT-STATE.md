@@ -1,6 +1,6 @@
 # Current State
 
-Last updated: 2026-05-17 (stale draft cleanup)
+Last updated: 2026-05-17 (post-cleanup observation)
 
 ## Session Update (2026-05-17)
 
@@ -29,12 +29,19 @@ Last updated: 2026-05-17 (stale draft cleanup)
 - Post-cleanup checks stayed clean: personal-ops health ready, notification-hub status OK,
   personal-ops queue health OK, and Coordination Console in monitor mode with `active_action_count:
   0`, no queued handoffs, and no pending promoted outcomes.
+- Follow-up observation stayed quiet: Coordination Console still has no active proposals, queued
+  handoffs, or pending promoted outcomes. `outcome_quality.rich` remains 0/0 resolved, so ADR 0001
+  still has no real promoted/resolved rich handoff trigger.
+- `near_rollup_singles` currently surfaces one cleanup echo from the resolved rich-evidence draft
+  approval request plus low-volume informational first occurrences. This is useful visibility but
+  not enough volume to justify suppression or a code change yet.
 
 **Active backlog (priority order):**
 
 1. Resolve ADR 0001 — lineage rich-vs-thin supersession remains deferred until a real promoted or
    resolved rich handoff appears under a prior `needs_follow_up` stable key.
-2. Continue observing `near_rollup_singles` and tune suppression policy based on actual volume.
+2. Continue observing `near_rollup_singles`; tune only if one-off resolved echoes or informational
+   first occurrences become repeated operator noise.
 
 ## Session Update (2026-05-16)
 

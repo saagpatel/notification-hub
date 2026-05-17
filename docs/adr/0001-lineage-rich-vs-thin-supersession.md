@@ -119,6 +119,19 @@ not answer the supersession question. Keep Option B as the current behavior:
 operator-recorded `needs_follow_up` stays sticky until an explicit later
 operator outcome changes it.
 
+### Recheck — 2026-05-17
+
+The post-cleanup observation pass still does not change the decision. The
+Coordination Console is in monitor mode with no active proposals, no queued
+handoffs, and no pending promoted outcomes. `outcome_quality.rich` remains
+0/0 resolved, so there is still no real promoted/resolved rich handoff case
+to use for this ADR.
+
+`near_rollup_singles` did surface the one-off approval request created while
+resolving the stale rich-evidence test draft. That is a useful visibility
+artifact, but it is a cleanup echo rather than a recurring operator signal.
+No supersession behavior should change from this evidence alone.
+
 ## Triggers to re-open
 
 Re-open this decision when **any** of the following happens:
