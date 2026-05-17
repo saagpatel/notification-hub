@@ -1028,10 +1028,12 @@ def _print_coordination_console_report(report: CoordinationConsoleReport) -> Non
     print(f"- review mode: {proposal_review['mode']}")
     print(f"- proposal groups: {proposal_review['group_count']}")
     print(f"- handled mail: {proposal_review['handled_mail_count']}")
+    print(f"- rich follow-up review: {proposal_review['rich_follow_up_review_count']}")
     print(f"- stable-key history: {proposal_review['handled_stable_key_match_count']}")
     print(f"- evidence rotations: {proposal_review['handled_evidence_rotation_count']}")
     print(f"- outcome quality: {outcome_quality['summary']}")
     print(f"- watch posture: {next_signal['watch_posture']}")
+    print(f"- next signal: {next_signal['title']} ({next_signal['status']})")
     print(f"- guide stage: {report['guide_stage']}")
     print(f"- next action: {report['next_action']}")
     if proposal_review["groups"]:

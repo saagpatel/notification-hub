@@ -1,6 +1,6 @@
 # Current State
 
-Last updated: 2026-05-17 (post-cleanup observation)
+Last updated: 2026-05-17 (rich follow-up re-review lane)
 
 ## Session Update (2026-05-17)
 
@@ -35,11 +35,16 @@ Last updated: 2026-05-17 (post-cleanup observation)
 - `near_rollup_singles` currently surfaces one cleanup echo from the resolved rich-evidence draft
   approval request plus low-volume informational first occurrences. This is useful visibility but
   not enough volume to justify suppression or a code change yet.
+- ADR 0001 follow-up shipped the middle path: rich evidence under handled `needs_follow_up` history
+  remains lineage status `follow_up`, but Coordination Console now exposes it as
+  `follow_up_review` with `rich_follow_up_review_count`, a `next_signal` status of `review`, and a
+  guide stage of `rich_follow_up_review`. This makes the evidence visible without automatic
+  promotion or downstream personal-ops mutation.
 
 **Active backlog (priority order):**
 
-1. Resolve ADR 0001 — lineage rich-vs-thin supersession remains deferred until a real promoted or
-   resolved rich handoff appears under a prior `needs_follow_up` stable key.
+1. Run one live observation pass after the next real rich handled follow-up appears, then decide
+   whether the re-review lane is sufficient or too noisy.
 2. Continue observing `near_rollup_singles`; tune only if one-off resolved echoes or informational
    first occurrences become repeated operator noise.
 
@@ -151,13 +156,12 @@ The original "rich 0/0 resolved" outcome-quality gap was investigated and split 
   is emitted. Single events never reach the proposal pipeline. This is intentional repeat-noise
   detection, but it does mean that the first signal of a kind is invisible until a second one
   matches. Worth keeping in mind when designing future evidence-quality tests.
-- **Lineage subsumption (open design question)**: the prior `needs_follow_up` group outcome on
+- **Lineage subsumption (resolved as sticky plus visible re-review)**: the prior `needs_follow_up` group outcome on
   `personal-ops:mail:waiting_on_user:high:waiting` (recorded 2026-05-10 14:56Z) covers stable
   proposal keys that current synthetic rich proposals share. The lineage logic correctly classifies
   them as continuations of that follow-up, honoring the operator's explicit "preserve follow-up
-  state across evidence-event rotation" intent. Whether an evidence-quality upgrade from thin to
-  rich should supersede a prior `needs_follow_up` outcome is deferred until a real rich proposal
-  arrives and the operator has a concrete case to decide on.
+  state across evidence-event rotation" intent. Rich handled follow-up now gets a separate
+  operator-visible re-review signal instead of automatic supersession.
 
 ## Snapshot
 

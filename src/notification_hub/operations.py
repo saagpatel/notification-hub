@@ -809,6 +809,8 @@ class CoordinationProposalReviewReport(TypedDict):
     handled_mail_thin_count: int
     handled_stable_key_match_count: int
     handled_evidence_rotation_count: int
+    rich_follow_up_review_count: int
+    rich_follow_up_action_ids: list[str]
     handled_history_summary: str | None
     group_count: int
     primary_action_id: str | None
@@ -837,6 +839,7 @@ class CoordinationNextSignalReport(TypedDict):
     qualifying_intents: list[str]
     hidden_action_count: int
     dismissed_count: int
+    rich_follow_up_review_count: int
     policy_covered_repeated_count: int
     policy_covered_signatures: list[RepeatedSignatureReport]
     dismissed_proposals: list[ActionProposalDismissalReport]
@@ -4932,6 +4935,7 @@ def _build_next_signal_report(
     readiness: CoordinationReadinessReport,
     actions: PersonalOpsActionExportReport,
     active_actions: list[CoordinationConsoleActionReport],
+    handled_actions: list[CoordinationConsoleActionReport],
     queue_health: PersonalOpsImportQueueHealthReport,
     dismissals: list[ActionProposalDismissalReport],
     limit: int,
@@ -4946,7 +4950,9 @@ def _build_next_signal_report(
         "pending_promoted_outcomes",
         "runtime_degradation",
         "repeated_personal_ops_diagnostic_echo",
+        "rich_handled_follow_up_recheck",
     ]
+    rich_follow_up_actions = _rich_handled_follow_up_actions(handled_actions)
     if active_actions:
         title = "Active proposal waiting"
         summary = "The next real signal is already visible as an action proposal."
@@ -4970,6 +4976,19 @@ def _build_next_signal_report(
         watch_posture = "notify_now"
         quiet_reason = None
         next_action = readiness["next_action"]
+    elif rich_follow_up_actions:
+        title = "Rich handled follow-up needs re-review"
+        summary = (
+            "Rich evidence arrived under a prior needs-follow-up decision; "
+            "the operator should decide whether to keep it parked or record a new outcome."
+        )
+        status = "review"
+        watch_posture = "notify_review"
+        quiet_reason = None
+        next_action = (
+            "Review the rich handled follow-up history and record an explicit group outcome "
+            "before queueing or promotion."
+        )
     else:
         title = "Waiting for next real signal"
         summary = (
@@ -4995,6 +5014,7 @@ def _build_next_signal_report(
         "qualifying_intents": sorted(ACTION_PROPOSAL_INTENTS),
         "hidden_action_count": int(actions.get("dismissed_action_count", 0)),
         "dismissed_count": len(dismissals),
+        "rich_follow_up_review_count": len(rich_follow_up_actions),
         "policy_covered_repeated_count": len(policy_covered),
         "policy_covered_signatures": policy_covered,
         "dismissed_proposals": dismissals[:limit],
@@ -5608,6 +5628,17 @@ def _handled_mail_actions(
     ]
 
 
+def _rich_handled_follow_up_actions(
+    handled_actions: list[CoordinationConsoleActionReport],
+) -> list[CoordinationConsoleActionReport]:
+    return [
+        item
+        for item in handled_actions
+        if item["lineage_status"] == "follow_up"
+        and _action_evidence_quality(item["action"]) == "rich"
+    ]
+
+
 def _handled_history_summary(
     handled_actions: list[CoordinationConsoleActionReport],
 ) -> str | None:
@@ -5650,6 +5681,7 @@ def _build_proposal_review(
     handled_evidence_rotation_count = sum(
         1 for item in handled_actions if item["evidence_event_rotated"]
     )
+    rich_follow_up_actions = _rich_handled_follow_up_actions(handled_actions)
     handled_history_summary = _handled_history_summary(handled_actions)
     grouped: dict[tuple[str, str | None, str, str, str], list[CoordinationConsoleActionReport]] = {}
     for item in active_actions:
@@ -5690,6 +5722,14 @@ def _build_proposal_review(
         mode = "lifecycle"
         summary = "A proposal is already in the queue or promotion lifecycle."
         next_action = "Finish the queued or promoted handoff before staging more work."
+    elif rich_follow_up_actions:
+        mode = "follow_up_review"
+        summary = (
+            f"{len(rich_follow_up_actions)} rich handled follow-up item(s) need operator re-review."
+        )
+        next_action = (
+            "Review the rich handled follow-up history and record an explicit group outcome."
+        )
     else:
         mode = "monitor"
         if handled_actions:
@@ -5732,6 +5772,10 @@ def _build_proposal_review(
         "handled_mail_thin_count": len(handled_mail) - handled_mail_rich_count,
         "handled_stable_key_match_count": handled_stable_key_match_count,
         "handled_evidence_rotation_count": handled_evidence_rotation_count,
+        "rich_follow_up_review_count": len(rich_follow_up_actions),
+        "rich_follow_up_action_ids": [
+            item["action"]["action_id"] for item in rich_follow_up_actions
+        ],
         "handled_history_summary": handled_history_summary,
         "group_count": len(groups),
         "primary_action_id": primary_action_id,
@@ -5897,6 +5941,32 @@ def _build_coordination_console_guide(
             ],
         )
 
+    rich_follow_up_actions = _rich_handled_follow_up_actions(handled_actions)
+    if rich_follow_up_actions:
+        action = rich_follow_up_actions[0]["action"]
+        group_key = _action_group_label(_action_group_key(action))
+        return (
+            "rich_follow_up_review",
+            [
+                _console_guide_step(
+                    step=1,
+                    title="Review rich handled follow-up",
+                    status="current",
+                    summary=(
+                        "Rich evidence is present under handled follow-up history; decide whether "
+                        "to keep it parked or record a new local group outcome."
+                    ),
+                    commands=[
+                        "uv run notification-hub coordination-console",
+                        "uv run notification-hub action-proposal-group-outcome "
+                        f"{group_key} "
+                        '--outcome needs_follow_up --reason "rich evidence reviewed; keep parked"',
+                    ],
+                    action_id=action["action_id"],
+                )
+            ],
+        )
+
     if active_actions:
         active = active_actions[0]
         return (
@@ -5978,6 +6048,7 @@ def run_coordination_console(
         readiness=readiness,
         actions=actions,
         active_actions=active_actions,
+        handled_actions=handled_actions,
         queue_health=queue_health,
         dismissals=action_dismissals,
         limit=safe_limit,
@@ -6005,6 +6076,11 @@ def run_coordination_console(
         )
     elif active_actions:
         next_action = "Continue the queued or promoted handoff lifecycle before adding new work."
+    elif _rich_handled_follow_up_actions(handled_actions):
+        next_action = (
+            "Review rich handled follow-up history and record an explicit group outcome if it "
+            "should re-open."
+        )
     else:
         next_action = "Monitor /review for the next real handoff signal."
 
