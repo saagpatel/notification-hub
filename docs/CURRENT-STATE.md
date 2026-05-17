@@ -1,6 +1,6 @@
 # Current State
 
-Last updated: 2026-05-17 (action package validation split)
+Last updated: 2026-05-17 (action package storage split)
 
 ## Session Update (2026-05-17)
 
@@ -110,6 +110,9 @@ Last updated: 2026-05-17 (action package validation split)
 - Action package validation cleanup is complete locally: saved action package schema validation,
   action-record validation, and payload action extraction moved out of `operations.py` into
   `operations_packages.py`, while existing CLI/server imports continue through `operations.py`.
+- Action package storage cleanup is complete locally: review package writing, listing, safe-name
+  path resolution, deletion, and action-export retention moved into `operations_packages.py`,
+  while existing CLI/server imports continue through `operations.py`.
 - Generic error hardening is complete locally: policy config load failures, doctor local API
   failures, smoke/log/burn-in failures, queue/report file IO failures, and package/report parsing
   failures now return stable operator-facing error messages instead of raw local exception text.

@@ -40,10 +40,17 @@ from notification_hub.operations_logs import (
     tail_text_file,
 )
 from notification_hub.operations_packages import (
+    ACTION_EXPORT_DIR,
     ACTION_EXPORT_SCHEMA_VERSION,
     action_dicts_from_payload as _action_dicts_from_payload,
+    action_review_package_path_for_name,
+    delete_action_review_package as delete_action_review_package,
+    empty_package_validation as _empty_package_validation,
+    list_action_review_packages as list_action_review_packages,
     load_action_package_payload as _load_action_package_payload,
+    prune_action_export_files as prune_action_export_files,
     validate_action_package as validate_action_package,
+    write_action_review_package as _write_action_review_package,
 )
 from notification_hub.operations_proposals import (
     active_action_proposal_dismissals as _active_action_proposal_dismissals,
@@ -129,7 +136,6 @@ _GENERIC_OPERATION_ERROR = "operation failed; inspect local logs for details"
 
 DEFAULT_BRIDGE_DB_PATH = Path.home() / ".local" / "share" / "bridge-db" / "bridge.db"
 BRIDGE_SNAPSHOT_RETENTION_PER_SYSTEM = 10
-ACTION_EXPORT_DIR = EVENTS_DIR / "action-exports"
 BURN_IN_REPORT_DIR = EVENTS_DIR / "burn-in-reports"
 OPERATOR_STATE_REPORT_DIR = EVENTS_DIR / "operator-state-reports"
 OPERATOR_REVIEW_SESSION_REPORT_DIR = EVENTS_DIR / "operator-review-session-reports"
@@ -438,172 +444,6 @@ def _action_proposal_candidate_limit(limit: int) -> int:
     )
 
 
-def _write_action_review_package(
-    report: dict[str, object],
-    *,
-    output_dir: Path | None = None,
-) -> dict[str, object]:
-    target_dir = output_dir or ACTION_EXPORT_DIR
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-%f")
-    target_path = target_dir / f"personal-ops-actions-{timestamp}.json"
-    try:
-        target_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-        target_path.write_text(
-            json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-        )
-        os.chmod(target_path, 0o600)
-    except OSError:
-        return {
-            "requested": True,
-            "status": "degraded",
-            "path": str(target_path),
-            "error": _GENERIC_OPERATION_ERROR,
-        }
-    return {
-        "requested": True,
-        "status": "ok",
-        "path": str(target_path),
-        "error": None,
-    }
-
-
-def list_action_review_packages(
-    *,
-    review_dir: Path | None = None,
-    limit: int = 10,
-) -> list[ActionReviewPackageReport]:
-    """List recent saved action review packages without importing or applying them."""
-    target_dir = review_dir or ACTION_EXPORT_DIR
-    try:
-        candidates = sorted(
-            target_dir.glob("personal-ops-actions-*.json"),
-            key=lambda path: path.stat().st_mtime,
-            reverse=True,
-        )
-    except OSError:
-        return []
-
-    reports: list[ActionReviewPackageReport] = []
-    for path in candidates[: max(limit, 1)]:
-        try:
-            stat = path.stat()
-        except OSError:
-            continue
-        validation = validate_action_package(path)
-        reports.append(
-            {
-                "path": str(path),
-                "name": path.name,
-                "modified_at": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
-                "size_bytes": stat.st_size,
-                "validation_status": validation["status"],
-                "action_count": validation["action_count"],
-                "valid_action_count": validation["valid_action_count"],
-                "error_count": validation["error_count"],
-            }
-        )
-    return reports
-
-
-def prune_action_export_files(
-    *,
-    keep: int = 20,
-    dry_run: bool = True,
-    export_dir: Path | None = None,
-) -> ActionExportRetentionReport:
-    """Prune older saved action-export files, keeping the newest N."""
-    target_dir = export_dir or ACTION_EXPORT_DIR
-    safe_keep = max(keep, 1)
-    try:
-        all_files = sorted(
-            target_dir.glob("personal-ops-actions-*.json"),
-            key=lambda p: p.stat().st_mtime,
-            reverse=True,
-        )
-    except OSError:
-        all_files = []
-
-    to_delete = all_files[safe_keep:]
-    deleted_files: list[str] = []
-    error: str | None = None
-    status = "ok"
-
-    if not dry_run:
-        for path in to_delete:
-            try:
-                path.unlink()
-            except FileNotFoundError:
-                continue
-            except OSError:
-                status = "degraded"
-                error = _GENERIC_OPERATION_ERROR
-                break
-            deleted_files.append(path.name)
-
-    if dry_run:
-        next_action = (
-            "Run again with --apply to delete older action-export files."
-            if to_delete
-            else "No action-export files need pruning."
-        )
-    elif status == "ok":
-        next_action = (
-            "Older action-export files were pruned."
-            if deleted_files
-            else "No action-export files needed pruning."
-        )
-    else:
-        next_action = "Fix the file deletion error, then rerun retention."
-
-    return {
-        "status": status,
-        "export_dir": str(target_dir),
-        "keep": safe_keep,
-        "dry_run": dry_run,
-        "total_count": len(all_files),
-        "kept_count": min(len(all_files), safe_keep),
-        "candidate_count": len(to_delete),
-        "deleted_count": len(deleted_files),
-        "candidate_files": [p.name for p in to_delete],
-        "deleted_files": deleted_files,
-        "next_action": next_action,
-        "applied": not dry_run,
-        "error": error,
-    }
-
-
-def _empty_package_validation(path: Path, error: str) -> ActionPackageValidationReport:
-    return {
-        "status": "degraded",
-        "path": str(path),
-        "schema_version": None,
-        "action_count": 0,
-        "valid_action_count": 0,
-        "warning_count": 0,
-        "error_count": 1,
-        "warnings": [],
-        "errors": [error],
-    }
-
-
-def _is_safe_action_review_package_name(name: str) -> bool:
-    return (
-        Path(name).name == name
-        and re.fullmatch(r"personal-ops-actions-\d{8}-\d{6}(?:-\d{6})?\.json", name) is not None
-    )
-
-
-def action_review_package_path_for_name(
-    *,
-    name: str,
-    review_dir: Path | None = None,
-) -> Path | None:
-    """Build a review package path from a validated package filename."""
-    if not _is_safe_action_review_package_name(name):
-        return None
-    return (review_dir or ACTION_EXPORT_DIR) / name
-
-
 def load_action_review_package_detail(
     *,
     name: str,
@@ -683,54 +523,6 @@ def load_action_review_package_detail(
         "validation": validation,
         "applied": False,
         "error": None if validation["status"] == "ok" else "package validation failed",
-    }
-
-
-def delete_action_review_package(
-    *,
-    name: str,
-    review_dir: Path | None = None,
-) -> ActionReviewPackageDeleteReport:
-    """Delete one saved review package without importing or applying it."""
-    target_dir = review_dir or ACTION_EXPORT_DIR
-    target_path = action_review_package_path_for_name(name=name, review_dir=target_dir)
-    if target_path is None:
-        display_path = target_dir / name
-        return {
-            "status": "degraded",
-            "path": str(display_path),
-            "name": name,
-            "deleted": False,
-            "applied": False,
-            "error": "invalid review package name",
-        }
-    try:
-        target_path.unlink()
-    except FileNotFoundError:
-        return {
-            "status": "degraded",
-            "path": str(target_path),
-            "name": name,
-            "deleted": False,
-            "applied": False,
-            "error": "review package not found",
-        }
-    except OSError:
-        return {
-            "status": "degraded",
-            "path": str(target_path),
-            "name": name,
-            "deleted": False,
-            "applied": False,
-            "error": _GENERIC_OPERATION_ERROR,
-        }
-    return {
-        "status": "ok",
-        "path": str(target_path),
-        "name": name,
-        "deleted": True,
-        "applied": False,
-        "error": None,
     }
 
 
