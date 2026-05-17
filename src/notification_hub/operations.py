@@ -34,6 +34,11 @@ from notification_hub.config import (
 from notification_hub.coordination import infer_intent
 from notification_hub.diagnostics import collect_doctor_report
 from notification_hub.models import Event, Intent, StoredEvent
+from notification_hub.operations_logs import (
+    event_report,
+    summarize_daemon_logs,
+    tail_text_file,
+)
 from notification_hub.operations_types import (
     SmokeReport as SmokeReport,
     DeliveryCheckReport as DeliveryCheckReport,
@@ -578,82 +583,6 @@ def _save_bridge_snapshot(
             "snapshot_date": snapshot_date,
             "error": _GENERIC_OPERATION_ERROR,
         }
-
-
-def _tail_text_file(path: Path, *, lines: int) -> list[str]:
-    if lines <= 0 or not path.exists():
-        return []
-    with path.open("r", encoding="utf-8", errors="replace") as handle:
-        return [line.rstrip("\n") for line in handle.readlines()[-lines:]]
-
-
-_EVENT_ACCESS_RE = re.compile(r'"POST /events HTTP/1\.1" (?P<status>\d{3})')
-_DAEMON_START_MARKERS = (
-    "INFO:     Started server process",
-    "INFO:     Uvicorn running on ",
-)
-_SLACK_DELIVERY_FAILURE_PREFIXES = (
-    "Slack send failed",
-    "Slack digest failed",
-    "Slack webhook returned",
-    "Slack digest webhook returned",
-)
-
-
-def _lines_since_latest_daemon_start(lines: list[str]) -> list[str]:
-    """Return log lines scoped to the latest visible daemon start marker."""
-    latest_start_index: int | None = None
-    for index, line in enumerate(lines):
-        if any(line.startswith(marker) for marker in _DAEMON_START_MARKERS):
-            latest_start_index = index
-    if latest_start_index is None:
-        return lines
-    return lines[latest_start_index + 1 :]
-
-
-def _summarize_daemon_logs(stdout_tail: list[str], stderr_tail: list[str]) -> DaemonLogSummary:
-    status_counts: dict[str, int] = {}
-    for line in stdout_tail:
-        match = _EVENT_ACCESS_RE.search(line)
-        if match is None:
-            continue
-        status = match.group("status")
-        status_counts[status] = status_counts.get(status, 0) + 1
-
-    current_stderr_tail = _lines_since_latest_daemon_start(stderr_tail)
-    validation_errors = [
-        line for line in current_stderr_tail if line.startswith("Rejected event payload")
-    ]
-    slack_delivery_failures = [
-        line
-        for line in current_stderr_tail
-        if any(line.startswith(prefix) for prefix in _SLACK_DELIVERY_FAILURE_PREFIXES)
-    ]
-    return {
-        "access_status_counts": status_counts,
-        "accepted_event_posts": sum(
-            count for status, count in status_counts.items() if status.startswith("2")
-        ),
-        "rejected_event_posts": status_counts.get("422", 0),
-        "validation_error_count": len(validation_errors),
-        "recent_validation_errors": validation_errors[-5:],
-        "slack_delivery_failure_count": len(slack_delivery_failures),
-        "recent_slack_delivery_failures": slack_delivery_failures[-5:],
-    }
-
-
-def _event_report(event: StoredEvent) -> RecentEventReport:
-    return {
-        "event_id": event.event_id,
-        "timestamp": event.timestamp.isoformat(),
-        "source": event.source,
-        "level": event.level,
-        "classified_level": event.classified_level,
-        "project": event.project,
-        "title": event.title,
-        "body": event.body,
-        "intent": infer_intent(event),
-    }
 
 
 def _inbox_item(event: StoredEvent) -> InboxItemReport:
@@ -2711,9 +2640,9 @@ def run_logs(*, events: int = 5, lines: int = 20) -> LogsReport:
         stored_events = read_jsonl(path=EVENTS_LOG)
         event_limit = max(events, 0)
         recent_stored_events = stored_events[-event_limit:] if event_limit else []
-        recent_events = [_event_report(event) for event in recent_stored_events]
-        stdout_tail = _tail_text_file(DAEMON_STDOUT_LOG, lines=lines)
-        stderr_tail = _tail_text_file(DAEMON_STDERR_LOG, lines=lines)
+        recent_events = [event_report(event) for event in recent_stored_events]
+        stdout_tail = tail_text_file(DAEMON_STDOUT_LOG, lines=lines)
+        stderr_tail = tail_text_file(DAEMON_STDERR_LOG, lines=lines)
     except (OSError, ValueError):
         return {
             "status": "degraded",
@@ -2721,7 +2650,7 @@ def run_logs(*, events: int = 5, lines: int = 20) -> LogsReport:
             "stdout_log": str(DAEMON_STDOUT_LOG),
             "stderr_log": str(DAEMON_STDERR_LOG),
             "recent_events": [],
-            "daemon_summary": _summarize_daemon_logs([], []),
+            "daemon_summary": summarize_daemon_logs([], []),
             "stdout_tail": [],
             "stderr_tail": [],
             "missing_paths": missing_paths,
@@ -2734,7 +2663,7 @@ def run_logs(*, events: int = 5, lines: int = 20) -> LogsReport:
         "stdout_log": str(DAEMON_STDOUT_LOG),
         "stderr_log": str(DAEMON_STDERR_LOG),
         "recent_events": recent_events,
-        "daemon_summary": _summarize_daemon_logs(stdout_tail, stderr_tail),
+        "daemon_summary": summarize_daemon_logs(stdout_tail, stderr_tail),
         "stdout_tail": stdout_tail,
         "stderr_tail": stderr_tail,
         "missing_paths": missing_paths,
@@ -2837,9 +2766,9 @@ def run_burn_in(*, minutes: int = 10, lines: int = 200) -> BurnInReport:
             for (source, level), count in slack_counts.items()
         ]
         slack_volume.sort(key=lambda item: item["count"], reverse=True)
-        stdout_tail = _tail_text_file(DAEMON_STDOUT_LOG, lines=tail_lines)
-        stderr_tail = _tail_text_file(DAEMON_STDERR_LOG, lines=tail_lines)
-        daemon_summary = _summarize_daemon_logs(stdout_tail, stderr_tail)
+        stdout_tail = tail_text_file(DAEMON_STDOUT_LOG, lines=tail_lines)
+        stderr_tail = tail_text_file(DAEMON_STDERR_LOG, lines=tail_lines)
+        daemon_summary = summarize_daemon_logs(stdout_tail, stderr_tail)
     except (OSError, ValueError):
         return {
             "status": "degraded",
@@ -2860,7 +2789,7 @@ def run_burn_in(*, minutes: int = 10, lines: int = 200) -> BurnInReport:
             "repeated_signatures": [],
             "slack_eligible_events": 0,
             "slack_volume": [],
-            "daemon_summary": _summarize_daemon_logs([], []),
+            "daemon_summary": summarize_daemon_logs([], []),
             "error": _GENERIC_OPERATION_ERROR,
         }
 

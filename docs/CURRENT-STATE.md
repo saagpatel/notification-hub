@@ -1,6 +1,6 @@
 # Current State
 
-Last updated: 2026-05-17 (operation report type split)
+Last updated: 2026-05-17 (runtime log helper split)
 
 ## Session Update (2026-05-17)
 
@@ -101,6 +101,9 @@ Last updated: 2026-05-17 (operation report type split)
 - Operation report type cleanup is complete locally: the large `TypedDict` report-shape block moved
   out of `operations.py` into `operations_types.py`, while `operations.py` still re-exports those
   names for existing imports.
+- Runtime log helper cleanup is complete locally: daemon log tailing, daemon summary parsing, and
+  stored-event report shaping moved out of `operations.py` into `operations_logs.py`, while public
+  `run_logs` and `run_burn_in` behavior stays in `operations.py`.
 - Generic error hardening is complete locally: policy config load failures, doctor local API
   failures, smoke/log/burn-in failures, queue/report file IO failures, and package/report parsing
   failures now return stable operator-facing error messages instead of raw local exception text.
