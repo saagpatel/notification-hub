@@ -1,6 +1,6 @@
 # Current State
 
-Last updated: 2026-05-17 (README command inventory guardrail)
+Last updated: 2026-05-17 (action review package test split)
 
 ## Session Update (2026-05-17)
 
@@ -35,6 +35,9 @@ Last updated: 2026-05-17 (README command inventory guardrail)
 - README command inventory coverage is complete locally: documented notification-hub command
   examples in bash blocks are checked against the real `pyproject.toml` script inventory and CLI
   subcommand inventory so operator-facing command docs are less likely to drift.
+- Action review package test cleanup is complete locally: saved review package, validation, package
+  listing, detail loading, and safe deletion tests moved out of the large operations test file into
+  a dedicated package-focused test module without changing runtime behavior.
 - Compact expansion shipped locally: proposal lineage now treats terminal local group outcomes as
   handled history. `needs_follow_up` remains follow-up, `snoozed` remains snoozed, `accepted` is
   resolved history, and `rejected` / `superseded` are closed history. Matching action IDs or stable
