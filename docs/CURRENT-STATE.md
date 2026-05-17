@@ -1,6 +1,6 @@
 # Current State
 
-Last updated: 2026-05-17 (CLI wrapper test split)
+Last updated: 2026-05-17 (review endpoint test split)
 
 ## Session Update (2026-05-17)
 
@@ -92,6 +92,10 @@ Last updated: 2026-05-17 (CLI wrapper test split)
   listing/detail/delete, package queueing, import queue, import queue review, and burn-in report
   endpoint tests moved out of the broad review endpoint test file into a dedicated review package
   endpoint test module without changing runtime behavior.
+- Review endpoint test cleanup is complete locally: proposal-group/dismissal endpoints and
+  operator/session/queue endpoints moved out of the broad review endpoint test file into dedicated
+  review endpoint modules, with the shared async review client fixture moved into test isolation
+  setup without changing runtime behavior.
 - Compact expansion shipped locally: proposal lineage now treats terminal local group outcomes as
   handled history. `needs_follow_up` remains follow-up, `snoozed` remains snoozed, `accepted` is
   resolved history, and `rejected` / `superseded` are closed history. Matching action IDs or stable
