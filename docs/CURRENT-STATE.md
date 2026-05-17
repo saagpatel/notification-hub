@@ -1,6 +1,6 @@
 # Current State
 
-Last updated: 2026-05-17 (CLI parser split)
+Last updated: 2026-05-17 (CLI wrapper forwarding cleanup)
 
 ## Session Update (2026-05-17)
 
@@ -92,6 +92,9 @@ Last updated: 2026-05-17 (CLI parser split)
 - CLI parser cleanup is complete locally: command-line parser construction moved out of `cli.py`
   into `cli_parser.py`, leaving command dispatch and script-wrapper entrypoints in `cli.py`
   without changing command behavior.
+- CLI wrapper cleanup is complete locally: script-wrapper entrypoints now share one forwarding
+  helper in `cli.py`, keeping each public wrapper command mapped to the same subcommand without
+  repeating `sys.argv` handling.
 - Generic error hardening is complete locally: policy config load failures, doctor local API
   failures, smoke/log/burn-in failures, queue/report file IO failures, and package/report parsing
   failures now return stable operator-facing error messages instead of raw local exception text.

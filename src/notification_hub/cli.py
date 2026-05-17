@@ -476,146 +476,122 @@ def main(argv: Sequence[str] | None = None) -> int:
     return 0 if report["status"] == "ok" else 1
 
 
-def doctor_main(argv: Sequence[str] | None = None) -> int:
+def _forward_to_command(command: str, argv: Sequence[str] | None) -> int:
     forwarded = list(argv) if argv is not None else sys.argv[1:]
-    return main(["doctor", *forwarded])
+    return main([command, *forwarded])
+
+
+def doctor_main(argv: Sequence[str] | None = None) -> int:
+    return _forward_to_command("doctor", argv)
 
 
 def smoke_main(argv: Sequence[str] | None = None) -> int:
-    forwarded = list(argv) if argv is not None else sys.argv[1:]
-    return main(["smoke", *forwarded])
+    return _forward_to_command("smoke", argv)
 
 
 def status_main(argv: Sequence[str] | None = None) -> int:
-    forwarded = list(argv) if argv is not None else sys.argv[1:]
-    return main(["status", *forwarded])
+    return _forward_to_command("status", argv)
 
 
 def logs_main(argv: Sequence[str] | None = None) -> int:
-    forwarded = list(argv) if argv is not None else sys.argv[1:]
-    return main(["logs", *forwarded])
+    return _forward_to_command("logs", argv)
 
 
 def burn_in_main(argv: Sequence[str] | None = None) -> int:
-    forwarded = list(argv) if argv is not None else sys.argv[1:]
-    return main(["burn-in", *forwarded])
+    return _forward_to_command("burn-in", argv)
 
 
 def verify_runtime_main(argv: Sequence[str] | None = None) -> int:
-    forwarded = list(argv) if argv is not None else sys.argv[1:]
-    return main(["verify-runtime", *forwarded])
+    return _forward_to_command("verify-runtime", argv)
 
 
 def delivery_check_main(argv: Sequence[str] | None = None) -> int:
-    forwarded = list(argv) if argv is not None else sys.argv[1:]
-    return main(["delivery-check", *forwarded])
+    return _forward_to_command("delivery-check", argv)
 
 
 def inbox_main(argv: Sequence[str] | None = None) -> int:
-    forwarded = list(argv) if argv is not None else sys.argv[1:]
-    return main(["inbox", *forwarded])
+    return _forward_to_command("inbox", argv)
 
 
 def coordination_snapshot_main(argv: Sequence[str] | None = None) -> int:
-    forwarded = list(argv) if argv is not None else sys.argv[1:]
-    return main(["coordination-snapshot", *forwarded])
+    return _forward_to_command("coordination-snapshot", argv)
 
 
 def coordination_readiness_main(argv: Sequence[str] | None = None) -> int:
-    forwarded = list(argv) if argv is not None else sys.argv[1:]
-    return main(["coordination-readiness", *forwarded])
+    return _forward_to_command("coordination-readiness", argv)
 
 
 def coordination_console_main(argv: Sequence[str] | None = None) -> int:
-    forwarded = list(argv) if argv is not None else sys.argv[1:]
-    return main(["coordination-console", *forwarded])
+    return _forward_to_command("coordination-console", argv)
 
 
 def personal_ops_actions_main(argv: Sequence[str] | None = None) -> int:
-    forwarded = list(argv) if argv is not None else sys.argv[1:]
-    return main(["personal-ops-actions", *forwarded])
+    return _forward_to_command("personal-ops-actions", argv)
 
 
 def validate_action_package_main(argv: Sequence[str] | None = None) -> int:
-    forwarded = list(argv) if argv is not None else sys.argv[1:]
-    return main(["validate-action-package", *forwarded])
+    return _forward_to_command("validate-action-package", argv)
 
 
 def action_proposal_dismiss_main(argv: Sequence[str] | None = None) -> int:
-    forwarded = list(argv) if argv is not None else sys.argv[1:]
-    return main(["action-proposal-dismiss", *forwarded])
+    return _forward_to_command("action-proposal-dismiss", argv)
 
 
 def action_proposal_dismissals_main(argv: Sequence[str] | None = None) -> int:
-    forwarded = list(argv) if argv is not None else sys.argv[1:]
-    return main(["action-proposal-dismissals", *forwarded])
+    return _forward_to_command("action-proposal-dismissals", argv)
 
 
 def action_proposal_undismiss_main(argv: Sequence[str] | None = None) -> int:
-    forwarded = list(argv) if argv is not None else sys.argv[1:]
-    return main(["action-proposal-undismiss", *forwarded])
+    return _forward_to_command("action-proposal-undismiss", argv)
 
 
 def operator_daily_state_main(argv: Sequence[str] | None = None) -> int:
-    forwarded = list(argv) if argv is not None else sys.argv[1:]
-    return main(["operator-daily-state", *forwarded])
+    return _forward_to_command("operator-daily-state", argv)
 
 
 def operator_review_session_main(argv: Sequence[str] | None = None) -> int:
-    forwarded = list(argv) if argv is not None else sys.argv[1:]
-    return main(["operator-review-session", *forwarded])
+    return _forward_to_command("operator-review-session", argv)
 
 
 def operator_review_session_retention_main(argv: Sequence[str] | None = None) -> int:
-    forwarded = list(argv) if argv is not None else sys.argv[1:]
-    return main(["operator-review-session-retention", *forwarded])
+    return _forward_to_command("operator-review-session-retention", argv)
 
 
 def action_export_retention_main(argv: Sequence[str] | None = None) -> int:
-    forwarded = list(argv) if argv is not None else sys.argv[1:]
-    return main(["action-export-retention", *forwarded])
+    return _forward_to_command("action-export-retention", argv)
 
 
 def operator_handoff_drill_main(argv: Sequence[str] | None = None) -> int:
-    forwarded = list(argv) if argv is not None else sys.argv[1:]
-    return main(["operator-handoff-drill", *forwarded])
+    return _forward_to_command("operator-handoff-drill", argv)
 
 
 def personal_ops_import_main(argv: Sequence[str] | None = None) -> int:
-    forwarded = list(argv) if argv is not None else sys.argv[1:]
-    return main(["personal-ops-import", *forwarded])
+    return _forward_to_command("personal-ops-import", argv)
 
 
 def personal_ops_queue_health_main(argv: Sequence[str] | None = None) -> int:
-    forwarded = list(argv) if argv is not None else sys.argv[1:]
-    return main(["personal-ops-queue-health", *forwarded])
+    return _forward_to_command("personal-ops-queue-health", argv)
 
 
 def personal_ops_queue_burn_in_main(argv: Sequence[str] | None = None) -> int:
-    forwarded = list(argv) if argv is not None else sys.argv[1:]
-    return main(["personal-ops-queue-burn-in", *forwarded])
+    return _forward_to_command("personal-ops-queue-burn-in", argv)
 
 
 def personal_ops_outcome_sync_reminder_main(argv: Sequence[str] | None = None) -> int:
-    forwarded = list(argv) if argv is not None else sys.argv[1:]
-    return main(["personal-ops-outcome-sync-reminder", *forwarded])
+    return _forward_to_command("personal-ops-outcome-sync-reminder", argv)
 
 
 def policy_check_main(argv: Sequence[str] | None = None) -> int:
-    forwarded = list(argv) if argv is not None else sys.argv[1:]
-    return main(["policy-check", *forwarded])
+    return _forward_to_command("policy-check", argv)
 
 
 def explain_main(argv: Sequence[str] | None = None) -> int:
-    forwarded = list(argv) if argv is not None else sys.argv[1:]
-    return main(["explain", *forwarded])
+    return _forward_to_command("explain", argv)
 
 
 def retention_main(argv: Sequence[str] | None = None) -> int:
-    forwarded = list(argv) if argv is not None else sys.argv[1:]
-    return main(["retention", *forwarded])
+    return _forward_to_command("retention", argv)
 
 
 def bootstrap_config_main(argv: Sequence[str] | None = None) -> int:
-    forwarded = list(argv) if argv is not None else sys.argv[1:]
-    return main(["bootstrap-config", *forwarded])
+    return _forward_to_command("bootstrap-config", argv)
