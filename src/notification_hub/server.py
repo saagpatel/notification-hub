@@ -57,6 +57,16 @@ from notification_hub.watcher import ObserverHandle, start_watcher
 
 logger = logging.getLogger(__name__)
 
+_REVIEW_GENERIC_ERROR = "operation failed; inspect local logs for details"
+_REVIEW_SAFE_ERROR_MESSAGES = {
+    "group_key is required",
+    "invalid review package name",
+    "missing status",
+    "no review package has been saved in this server session",
+    "package validation failed",
+    "review package path missing",
+}
+
 _start_time: float = 0.0
 _event_count: int = 0
 _observer: ObserverHandle | None = None
@@ -1559,6 +1569,34 @@ def _validation_error_summary(errors: Sequence[Any]) -> list[dict[str, object]]:
     return summary
 
 
+def _safe_review_error(value: object) -> object:
+    if value is None:
+        return None
+    if isinstance(value, str) and value in _REVIEW_SAFE_ERROR_MESSAGES:
+        return value
+    return _REVIEW_GENERIC_ERROR
+
+
+def _review_response(value: object) -> object:
+    if isinstance(value, dict):
+        safe: dict[str, object] = {}
+        typed_value = cast(dict[object, object], value)
+        for raw_key, nested_value in typed_value.items():
+            key = str(raw_key)
+            if key in {"error", "load_error"}:
+                safe[key] = _safe_review_error(nested_value)
+            elif key == "errors" and isinstance(nested_value, list):
+                typed_errors = cast(list[object], nested_value)
+                safe[key] = [_safe_review_error(error) for error in typed_errors]
+            else:
+                safe[key] = _review_response(nested_value)
+        return safe
+    if isinstance(value, list):
+        typed_items = cast(list[object], value)
+        return [_review_response(item) for item in typed_items]
+    return value
+
+
 @app.exception_handler(RequestValidationError)
 async def request_validation_exception_handler(
     request: Request,
@@ -1662,7 +1700,7 @@ async def review_data(hours: int = 2, limit: int = 6) -> dict[str, object]:
             "action_count": len(actions["actions"]),
         }
     )
-    return {
+    return cast(dict[str, object], _review_response({
         "status": "ok"
         if (
             inbox["status"] == "ok"
@@ -1691,7 +1729,7 @@ async def review_data(hours: int = 2, limit: int = 6) -> dict[str, object]:
             "next_action": "Save and validate a review package before any personal-ops import step.",
         },
         "review_package": _review_package_state(),
-    }
+    }))
 
 
 @app.post("/review/save-package")
@@ -1706,28 +1744,28 @@ async def review_save_package(hours: int = 2, limit: int = 6) -> dict[str, objec
     path = report["review_package"]["path"]
     _latest_review_package_path = path if isinstance(path, str) else None
     _latest_review_package_validation_status = None
-    return {
+    return cast(dict[str, object], _review_response({
         "status": report["status"],
         "applied": False,
         "review_package": report["review_package"],
         "action_count": len(report["actions"]),
-    }
+    }))
 
 
 @app.get("/review/packages")
 async def review_packages(limit: int = 10) -> dict[str, object]:
     """List recent saved review packages without importing or applying them."""
-    return {
+    return cast(dict[str, object], _review_response({
         "status": "ok",
         "packages": list_action_review_packages(limit=max(limit, 1)),
         "applied": False,
-    }
+    }))
 
 
 @app.get("/review/package/{name}")
 async def review_package_detail(name: str) -> dict[str, object]:
     """Inspect one saved review package without importing or applying it."""
-    return dict(load_action_review_package_detail(name=name))
+    return cast(dict[str, object], _review_response(load_action_review_package_detail(name=name)))
 
 
 @app.post("/review/package/{name}/queue")
@@ -1736,7 +1774,7 @@ async def review_queue_package(name: str) -> dict[str, object]:
     detail = load_action_review_package_detail(name=name)
     package_path = action_review_package_path_for_name(name=name)
     if package_path is None:
-        return {
+        return cast(dict[str, object], _review_response({
             "status": "degraded",
             "path": str(detail["path"]),
             "dry_run": True,
@@ -1748,9 +1786,9 @@ async def review_queue_package(name: str) -> dict[str, object]:
             "validation": detail["validation"],
             "next_action": "Choose a valid saved review package before queueing it.",
             "error": "invalid review package name",
-        }
+        }))
     report = run_personal_ops_import_stub(path=package_path, enqueue=True)
-    return dict(report)
+    return cast(dict[str, object], _review_response(report))
 
 
 @app.get("/review/import-queue")
@@ -1763,14 +1801,14 @@ async def review_import_queue(limit: int = 10, stale_after_hours: float = 4.0) -
         limit=max(limit, 1),
         stale_after_hours=stale_after_hours,
     )
-    return {
+    return cast(dict[str, object], _review_response({
         "status": "ok",
         "items": list_personal_ops_import_queue(limit=max(limit, 1)),
         "health": queue_health["health"],
         "next_commands": queue_health["next_commands"],
         "outcome_sync_reminder": outcome_sync_reminder,
         "applied": False,
-    }
+    }))
 
 
 @app.get("/review/import-queue-review")
@@ -1784,37 +1822,40 @@ async def review_import_queue_review(
         limit=max(limit, 1),
         stale_after_hours=stale_after_hours,
     )
-    return dict(report)
+    return cast(dict[str, object], _review_response(report))
 
 
 @app.get("/review/burn-in-reports")
 async def review_burn_in_reports(limit: int = 10) -> dict[str, object]:
     """List saved queue burn-in reports without applying work."""
-    return {
+    return cast(dict[str, object], _review_response({
         "status": "ok",
         "reports": list_personal_ops_queue_burn_in_reports(limit=max(limit, 1)),
         "applied": False,
-    }
+    }))
 
 
 @app.get("/review/burn-in-report/{name}")
 async def review_burn_in_report_detail(name: str) -> dict[str, object]:
     """Inspect one saved queue burn-in report without applying work."""
-    return dict(load_personal_ops_queue_burn_in_report_detail(name=name))
+    return cast(
+        dict[str, object],
+        _review_response(load_personal_ops_queue_burn_in_report_detail(name=name)),
+    )
 
 
 @app.get("/review/noise-candidates")
 async def review_noise_candidates(limit: int = 10) -> dict[str, object]:
     """Summarize the latest saved burn-in noise candidates without applying work."""
     report = await asyncio.to_thread(review_latest_noise_candidates, limit=max(limit, 1))
-    return dict(report)
+    return cast(dict[str, object], _review_response(report))
 
 
 @app.get("/review/coordination-readiness")
 async def review_coordination_readiness(limit: int = 5) -> dict[str, object]:
     """Summarize coordination expansion readiness without applying work."""
     report = await asyncio.to_thread(run_coordination_readiness, limit=max(limit, 1))
-    return dict(report)
+    return cast(dict[str, object], _review_response(report))
 
 
 @app.get("/review/coordination-console")
@@ -1825,14 +1866,14 @@ async def review_coordination_console(hours: int = 24, limit: int = 5) -> dict[s
         hours=max(hours, 1),
         limit=max(limit, 1),
     )
-    return dict(report)
+    return cast(dict[str, object], _review_response(report))
 
 
 @app.get("/review/policy-check")
 async def review_policy_check() -> dict[str, object]:
     """Return live policy diagnostics for the local review surface."""
     report = await asyncio.to_thread(run_policy_check)
-    return dict(report)
+    return cast(dict[str, object], _review_response(report))
 
 
 async def _action_proposal_group_body(request: Request) -> dict[str, object]:
@@ -1859,7 +1900,7 @@ async def review_save_action_proposal_group(request: Request) -> dict[str, objec
         limit=int(limit) if isinstance(limit, int) else 25,
         enqueue=False,
     )
-    return dict(report)
+    return cast(dict[str, object], _review_response(report))
 
 
 @app.post("/review/action-proposal-group/queue")
@@ -1878,7 +1919,7 @@ async def review_queue_action_proposal_group(request: Request) -> dict[str, obje
         limit=int(limit) if isinstance(limit, int) else 25,
         enqueue=True,
     )
-    return dict(report)
+    return cast(dict[str, object], _review_response(report))
 
 
 @app.post("/review/action-proposal-group/dismiss")
@@ -1900,7 +1941,7 @@ async def review_dismiss_action_proposal_group(request: Request) -> dict[str, ob
         hours=int(hours) if isinstance(hours, int) else ACTION_PROPOSAL_REVIEW_WINDOW_HOURS,
         limit=int(limit) if isinstance(limit, int) else 25,
     )
-    return dict(report)
+    return cast(dict[str, object], _review_response(report))
 
 
 @app.post("/review/action-proposal-group/outcome")
@@ -1922,7 +1963,7 @@ async def review_record_action_proposal_group_outcome(request: Request) -> dict[
         hours=int(hours) if isinstance(hours, int) else ACTION_PROPOSAL_REVIEW_WINDOW_HOURS,
         limit=int(limit) if isinstance(limit, int) else 25,
     )
-    return dict(report)
+    return cast(dict[str, object], _review_response(report))
 
 
 @app.post("/review/action-proposal/{dismissal_key}/dismiss")
@@ -1959,10 +2000,10 @@ async def review_dismiss_action_proposal(dismissal_key: str, request: Request) -
         body=matched["signal_body"] if matched is not None else None,
         evidence_event_id=matched["evidence_event_id"] if matched is not None else None,
     )
-    return {
+    return cast(dict[str, object], _review_response({
         **dict(report),
         "next_action": "Proposal dismissed from the local console. Future matching proposals stay hidden until the dismissal file is edited.",
-    }
+    }))
 
 
 @app.get("/review/action-proposal-dismissals")
@@ -1978,7 +2019,7 @@ async def review_action_proposal_dismissals(
         dismissal_key=dismissal_key,
         include_inactive=include_inactive,
     )
-    return dict(report)
+    return cast(dict[str, object], _review_response(report))
 
 
 @app.post("/review/action-proposal/{dismissal_key}/undismiss")
@@ -1999,10 +2040,10 @@ async def review_undismiss_action_proposal(
         else "Review UI reactivated this proposal."
     )
     report = undismiss_action_proposal(dismissal_key=dismissal_key, reason=reason)
-    return {
+    return cast(dict[str, object], _review_response({
         **dict(report),
         "next_action": "Proposal reactivated. Matching future proposals can appear in the local console again.",
-    }
+    }))
 
 
 @app.get("/review/operator-daily-state")
@@ -2018,7 +2059,7 @@ async def review_operator_daily_state(
         limit=max(limit, 1),
         save_report=save_report,
     )
-    return dict(report)
+    return cast(dict[str, object], _review_response(report))
 
 
 @app.get("/review/operator-review-session")
@@ -2034,17 +2075,17 @@ async def review_operator_review_session(
         limit=max(limit, 1),
         save_report=save_report,
     )
-    return dict(report)
+    return cast(dict[str, object], _review_response(report))
 
 
 @app.get("/review/operator-review-session-reports")
 async def review_operator_review_session_reports(limit: int = 10) -> dict[str, object]:
     """List saved review-session reports without applying work."""
-    return {
+    return cast(dict[str, object], _review_response({
         "status": "ok",
         "reports": list_operator_review_session_reports(limit=max(limit, 1)),
         "applied": False,
-    }
+    }))
 
 
 @app.get("/review/operator-review-session-retention")
@@ -2055,13 +2096,16 @@ async def review_operator_review_session_retention(keep: int = 20) -> dict[str, 
         keep=max(keep, 1),
         dry_run=True,
     )
-    return dict(report)
+    return cast(dict[str, object], _review_response(report))
 
 
 @app.get("/review/operator-review-session-report/{name}")
 async def review_operator_review_session_report_detail(name: str) -> dict[str, object]:
     """Inspect one saved review-session report without applying work."""
-    return dict(load_operator_review_session_report_detail(name=name))
+    return cast(
+        dict[str, object],
+        _review_response(load_operator_review_session_report_detail(name=name)),
+    )
 
 
 @app.post("/review/operator-handoff-drill")
@@ -2071,7 +2115,7 @@ async def review_operator_handoff_drill(save_burn_in_report: bool = False) -> di
         run_operator_handoff_drill,
         save_burn_in_report=save_burn_in_report,
     )
-    return dict(report)
+    return cast(dict[str, object], _review_response(report))
 
 
 @app.get("/review/outcome-sync-reminder")
@@ -2080,12 +2124,12 @@ async def review_outcome_sync_reminder(
     stale_after_hours: float = 4.0,
 ) -> dict[str, object]:
     """Report promoted handoffs that still need outcome sync without applying work."""
-    return dict(
+    return cast(dict[str, object], _review_response(
         run_personal_ops_outcome_sync_reminder(
             limit=max(limit, 1),
             stale_after_hours=stale_after_hours,
         )
-    )
+    ))
 
 
 @app.patch("/review/import-queue/{queue_id}")
@@ -2094,14 +2138,14 @@ async def review_update_import_queue(queue_id: str, request: Request) -> dict[st
     body = cast(dict[str, object], await request.json())
     status = body.get("status")
     if not isinstance(status, str):
-        return {
+        return cast(dict[str, object], _review_response({
             "status": "degraded",
             "queue_id": queue_id,
             "updated": False,
             "item": None,
             "next_action": "Choose a lifecycle status before updating this queue item.",
             "error": "missing status",
-        }
+        }))
     reason_value = body.get("reason")
     snoozed_until_value = body.get("snoozed_until")
     promotion_target_value = body.get("promotion_target")
@@ -2126,7 +2170,7 @@ async def review_update_import_queue(queue_id: str, request: Request) -> dict[st
         if isinstance(promotion_outcome_note_value, str)
         else None,
     )
-    return dict(report)
+    return cast(dict[str, object], _review_response(report))
 
 
 @app.delete("/review/package/{name}")
@@ -2137,7 +2181,7 @@ async def review_delete_package(name: str) -> dict[str, object]:
     if report["deleted"] and _latest_review_package_path == report["path"]:
         _latest_review_package_path = None
         _latest_review_package_validation_status = None
-    return dict(report)
+    return cast(dict[str, object], _review_response(report))
 
 
 @app.post("/review/validate-package")
@@ -2155,12 +2199,12 @@ async def review_validate_package() -> dict[str, object]:
             _latest_review_package_path = package_path
     if package_path is None:
         _latest_review_package_validation_status = "not_found"
-        return {
+        return cast(dict[str, object], _review_response({
             "status": "degraded",
             "applied": False,
             "error": "no review package has been saved in this server session",
             "review_package": _review_package_state("not_found"),
-        }
+        }))
     safe_package_path = (
         action_review_package_path_for_name(name=package_name)
         if isinstance(package_name, str)
@@ -2168,17 +2212,17 @@ async def review_validate_package() -> dict[str, object]:
     )
     if safe_package_path is None:
         _latest_review_package_validation_status = "invalid"
-        return {
+        return cast(dict[str, object], _review_response({
             "status": "degraded",
             "applied": False,
             "error": "invalid review package name",
             "review_package": _review_package_state("invalid"),
-        }
+        }))
     validation = validate_action_package(safe_package_path)
     _latest_review_package_validation_status = validation["status"]
-    return {
+    return cast(dict[str, object], _review_response({
         "status": validation["status"],
         "applied": False,
         "validation": validation,
         "review_package": _review_package_state(validation["status"]),
-    }
+    }))

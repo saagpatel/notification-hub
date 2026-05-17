@@ -1,6 +1,6 @@
 # Current State
 
-Last updated: 2026-05-17 (retention policy test split)
+Last updated: 2026-05-17 (review endpoint test split)
 
 ## Session Update (2026-05-17)
 
@@ -68,6 +68,13 @@ Last updated: 2026-05-17 (retention policy test split)
   bootstrap, policy warning/degraded handling, sample noise rule drift, and routing fix
   suggestion tests moved out of the large operations test file into a dedicated retention
   and policy operations test module without changing runtime behavior.
+- Review endpoint test cleanup is complete locally: `/review` page, data, package, queue,
+  burn-in report, policy check, proposal group, dismissal, operator state, review-session,
+  drill, and queue lifecycle endpoint tests moved out of the large server test file into a
+  dedicated review endpoint test module without changing runtime behavior.
+- Review endpoint error hardening is complete locally: `/review` JSON responses now sanitize
+  unexpected `error`, `load_error`, and validation `errors` text while preserving known safe
+  operator messages, so local paths or traceback-like details stay out of the browser-facing API.
 - Compact expansion shipped locally: proposal lineage now treats terminal local group outcomes as
   handled history. `needs_follow_up` remains follow-up, `snoozed` remains snoozed, `accepted` is
   resolved history, and `rejected` / `superseded` are closed history. Matching action IDs or stable
