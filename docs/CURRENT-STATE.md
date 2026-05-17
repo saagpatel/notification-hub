@@ -1,6 +1,6 @@
 # Current State
 
-Last updated: 2026-05-17 (review endpoint test split)
+Last updated: 2026-05-17 (coordination-console test split)
 
 ## Session Update (2026-05-17)
 
@@ -48,6 +48,10 @@ Last updated: 2026-05-17 (review endpoint test split)
   history, rich follow-up review, outcome quality, and queued handoff lifecycle tests moved out of
   the large operations test file into a dedicated coordination-console test module without changing
   runtime behavior.
+- Coordination-console test cleanup continued locally: the broad coordination-console test module
+  is now split into core console/proposal coverage, lineage history coverage, follow-up re-review
+  coverage, queued-handoff guidance coverage, and shared coordination-console fixtures without
+  changing runtime behavior.
 - Inbox/action-export test cleanup is complete locally: inbox rollups, near-rollup singles,
   coordination snapshot wrapping, personal-ops action export filtering, dismissal lifecycle, and
   repeated-title uniqueness tests moved out of the large operations test file into a dedicated
