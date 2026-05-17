@@ -19,6 +19,7 @@ from notification_hub.diagnostics import collect_runtime_readiness
 from notification_hub.models import Event, EventResponse
 from notification_hub.operations import (
     ACTION_PROPOSAL_REVIEW_WINDOW_HOURS,
+    action_review_package_path_for_name,
     delete_action_review_package,
     dismiss_action_proposal,
     dismiss_action_proposal_group,
@@ -1733,7 +1734,22 @@ async def review_package_detail(name: str) -> dict[str, object]:
 async def review_queue_package(name: str) -> dict[str, object]:
     """Queue one saved review package for operator-mediated personal-ops import."""
     detail = load_action_review_package_detail(name=name)
-    report = run_personal_ops_import_stub(path=Path(detail["path"]), enqueue=True)
+    package_path = action_review_package_path_for_name(name=name)
+    if package_path is None:
+        return {
+            "status": "degraded",
+            "path": str(detail["path"]),
+            "dry_run": True,
+            "applied": False,
+            "enqueued": False,
+            "queued_count": 0,
+            "skipped_count": 0,
+            "queue_path": None,
+            "validation": detail["validation"],
+            "next_action": "Choose a valid saved review package before queueing it.",
+            "error": "invalid review package name",
+        }
+    report = run_personal_ops_import_stub(path=package_path, enqueue=True)
     return dict(report)
 
 
@@ -2129,10 +2145,12 @@ async def review_validate_package() -> dict[str, object]:
     """Validate the latest staged review package without importing or applying it."""
     global _latest_review_package_validation_status
     package_path = get_latest_review_package_path()
+    package_name: str | None = Path(package_path).name if package_path is not None else None
     if package_path is None:
         packages = list_action_review_packages(limit=1)
         if packages:
             package_path = packages[0]["path"]
+            package_name = packages[0]["name"]
             global _latest_review_package_path
             _latest_review_package_path = package_path
     if package_path is None:
@@ -2143,7 +2161,20 @@ async def review_validate_package() -> dict[str, object]:
             "error": "no review package has been saved in this server session",
             "review_package": _review_package_state("not_found"),
         }
-    validation = validate_action_package(Path(package_path))
+    safe_package_path = (
+        action_review_package_path_for_name(name=package_name)
+        if isinstance(package_name, str)
+        else None
+    )
+    if safe_package_path is None:
+        _latest_review_package_validation_status = "invalid"
+        return {
+            "status": "degraded",
+            "applied": False,
+            "error": "invalid review package name",
+            "review_package": _review_package_state("invalid"),
+        }
+    validation = validate_action_package(safe_package_path)
     _latest_review_package_validation_status = validation["status"]
     return {
         "status": validation["status"],
