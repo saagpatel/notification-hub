@@ -1,6 +1,6 @@
 # Current State
 
-Last updated: 2026-05-17 (terminal-outcome lineage refresh)
+Last updated: 2026-05-17 (stale draft cleanup)
 
 ## Session Update (2026-05-17)
 
@@ -19,14 +19,22 @@ Last updated: 2026-05-17 (terminal-outcome lineage refresh)
   handled history. `needs_follow_up` remains follow-up, `snoozed` remains snoozed, `accepted` is
   resolved history, and `rejected` / `superseded` are closed history. Matching action IDs or stable
   proposal keys no longer resurface as fresh active work just because evidence rotated.
+- Personal-ops recovery repair was refreshed before mutation: `personal-ops backup create --json`
+  created snapshot `2026-05-17T03-44-01Z`; follow-up health check returned ready with 6 pass /
+  0 warn / 0 fail.
+- The stale rich-evidence test draft cleanup is complete in local personal-ops state. Artifact
+  `aa8fd718-51cb-4285-9833-edee718f8706` / provider draft `r695541613668480159` was routed through
+  the supported approval workflow and rejected as stale verification-only work; the draft record is
+  now `status=rejected`, `review_state=resolved`.
+- Post-cleanup checks stayed clean: personal-ops health ready, notification-hub status OK,
+  personal-ops queue health OK, and Coordination Console in monitor mode with `active_action_count:
+  0`, no queued handoffs, and no pending promoted outcomes.
 
 **Active backlog (priority order):**
 
-1. `aa8fd718` Gmail draft cleanup — test draft "Rich-evidence pipeline test — 2026-05-11" still in
-   Drafts. Manual action via Gmail web UI or rejection workaround via `approval_request_create`.
-2. Resolve ADR 0001 — lineage rich-vs-thin supersession remains deferred until a real promoted or
+1. Resolve ADR 0001 — lineage rich-vs-thin supersession remains deferred until a real promoted or
    resolved rich handoff appears under a prior `needs_follow_up` stable key.
-3. Continue observing `near_rollup_singles` and tune suppression policy based on actual volume.
+2. Continue observing `near_rollup_singles` and tune suppression policy based on actual volume.
 
 ## Session Update (2026-05-16)
 

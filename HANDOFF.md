@@ -1,8 +1,8 @@
 # Handoff — notification-hub
 
-**Status:** Terminal-outcome lineage expansion complete; repo ready and console in monitor mode
+**Status:** Stale draft cleanup complete; repo ready and console in monitor mode
 **Branch:** main
-**Last verified remote commit before this pass:** ff2aded (proposal-review cleanup)
+**Last verified remote commit before this pass:** 9efe775 (terminal-outcome lineage refresh)
 **Tests:** 376 passing + 9 in mcp_server/; Ruff and Pyright passing after 2026-05-16 refresh; latest GitHub Actions on `main` passing
 
 ## Completed This Session
@@ -18,6 +18,7 @@
 - **2026-05-16 proposal cleanup** — saved/validated `personal-ops-actions-20260516-193841-085944.json`, dismissed stale recovered personal-ops mailbox-sync and Hermes watchdog proposal keys, and verified Coordination Console returned to monitor mode
 - **2026-05-17 calendar proposal cleanup** — saved/validated `personal-ops-actions-20260517-033110-245366.json`, dismissed a stale recovered calendar-sync proposal, and verified Coordination Console returned to monitor mode
 - **2026-05-17 compact expansion** — terminal local group outcomes now count as handled lineage: `accepted` resolved, `rejected`/`superseded` closed, `snoozed` snoozed, and `needs_follow_up` follow-up
+- **2026-05-17 stale draft cleanup** — created fresh personal-ops recovery snapshot `2026-05-17T03-44-01Z`, routed draft artifact `aa8fd718-51cb-4285-9833-edee718f8706` through approval request `6991ef3e-9ff6-47a9-8304-cf0d259729b2`, rejected it as verification-only stale work, and verified the local draft record is `rejected` / `resolved`
 
 ## In Progress
 
@@ -26,13 +27,12 @@
 
 ## Blocked
 
-- Gmail draft "Rich-evidence pipeline test — 2026-05-11" — manual deletion required via Gmail web UI (no `mail_draft_delete` in personal-ops MCP)
+- None.
 
 ## Next Steps
 
-1. **Manual:** Delete the Gmail test draft in Gmail web UI
-2. **Resolve ADR 0001 later** — lineage rich-vs-thin supersession is still deferred until a real promoted/resolved rich handoff appears under a prior `needs_follow_up` stable key
-3. **Observe `near_rollup_singles` in real use** — tune suppression policy based on actual volume
+1. **Resolve ADR 0001 later** — lineage rich-vs-thin supersession is still deferred until a real promoted/resolved rich handoff appears under a prior `needs_follow_up` stable key
+2. **Observe `near_rollup_singles` in real use** — tune suppression policy based on actual volume
 
 ## Key Decisions
 
@@ -43,6 +43,7 @@
 - The 2026-05-16 sync-degraded package was kept as local evidence, but the two handoffs were closed as reviewed rather than promoted because source checks recovered and no downstream personal-ops work was appropriate
 - Stale recovered proposal keys are better handled with local dismissals than queueing: this clears monitor noise while allowing distinct future failures to appear under different keys
 - A terminal group outcome should also clear matching future repeats without requiring a separate dismissal; this is now covered by a regression test for `superseded`
+- The stale rich-evidence pipeline draft does not need to be sent or promoted; the supported cleanup path is local approval request plus rejection, leaving the personal-ops record resolved without direct database mutation
 
 ## Files Changed
 
