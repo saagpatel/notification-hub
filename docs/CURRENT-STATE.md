@@ -1,6 +1,6 @@
 # Current State
 
-Last updated: 2026-05-17 (review package endpoint test split)
+Last updated: 2026-05-17 (CLI wrapper test split)
 
 ## Session Update (2026-05-17)
 
@@ -79,6 +79,9 @@ Last updated: 2026-05-17 (review package endpoint test split)
   queue, policy, explain, retention, bootstrap, burn-in, runtime verification, delivery check, and
   wrapper command tests moved out of the large diagnostics test file into a dedicated CLI command
   test module without changing runtime behavior.
+- CLI wrapper test cleanup is complete locally: script-wrapper entrypoint forwarding tests moved
+  out of the broad CLI command test file into a dedicated wrapper test module, with shared CLI
+  report fixtures extracted for command and wrapper tests without changing runtime behavior.
 - Generic error hardening is complete locally: policy config load failures, doctor local API
   failures, smoke/log/burn-in failures, queue/report file IO failures, and package/report parsing
   failures now return stable operator-facing error messages instead of raw local exception text.

@@ -1,4 +1,4 @@
-"""Tests for notification-hub CLI command output and wrappers."""
+"""Tests for notification-hub CLI command output."""
 
 from __future__ import annotations
 
@@ -8,384 +8,17 @@ from unittest.mock import patch
 
 from _pytest.capture import CaptureFixture
 
-from notification_hub.cli import (
-    action_proposal_dismissals_main,
-    action_proposal_undismiss_main,
-    burn_in_main,
-    bootstrap_config_main,
-    coordination_console_main,
-    coordination_readiness_main,
-    coordination_snapshot_main,
-    delivery_check_main,
-    doctor_main,
-    explain_main,
-    inbox_main,
-    logs_main,
-    main,
-    operator_daily_state_main,
-    operator_handoff_drill_main,
-    personal_ops_actions_main,
-    personal_ops_import_main,
-    personal_ops_outcome_sync_reminder_main,
-    personal_ops_queue_burn_in_main,
-    personal_ops_queue_health_main,
-    policy_check_main,
-    retention_main,
-    smoke_main,
-    status_main,
-    validate_action_package_main,
-    verify_runtime_main,
+from notification_hub.cli import main
+from tests.cli_report_fixtures import (
+    burn_in_report,
+    coordination_console_report,
+    coordination_readiness_report,
+    coordination_snapshot_report,
+    import_queue_health,
+    operator_daily_state_report,
+    operator_handoff_drill_report,
+    personal_ops_action_export_report,
 )
-
-
-def _coordination_snapshot_report() -> dict[str, object]:
-    return {
-        "status": "ok",
-        "schema_version": "notification-hub.coordination_snapshot.v1",
-        "generated_at": "2026-05-09T00:00:00+00:00",
-        "bridge_target_system": "codex",
-        "bridge_snapshot_date": "2026-05-09",
-        "bridge_snapshot": {
-            "active_projects": {},
-            "coordination": {"events_seen": 1},
-            "runtime": {"status": "ok"},
-            "follow_up": ["No immediate operator action needed."],
-        },
-        "bridge_save": {
-            "attempted": False,
-            "status": "not_requested",
-            "db_path": None,
-            "snapshot_id": None,
-            "snapshot_date": None,
-            "error": None,
-        },
-        "inbox": {
-            "status": "ok",
-            "hours": 12,
-            "events_seen": 1,
-            "needs_attention": [],
-            "waiting_or_blocked": [],
-            "ready": [],
-            "completed": [],
-            "rollups": [],
-            "noise_candidates": [],
-            "error": None,
-        },
-        "runtime_status": {
-            "status": "ok",
-            "health_url": "http://127.0.0.1:9199/health/details",
-            "daemon_reachable": True,
-            "watcher_active": True,
-            "events_processed": 12,
-            "uptime_seconds": 123.4,
-            "policy_config_found": True,
-            "policy_warning_count": 0,
-            "retention_enabled": True,
-            "retention_last_status": "ok",
-            "runtime_wiring_current": True,
-            "push_notifier_available": True,
-            "slack_configured": True,
-            "slack_delivery_failures": 0,
-            "next_action": "No action needed.",
-        },
-        "follow_up": ["No immediate operator action needed."],
-        "error": None,
-    }
-
-
-def _personal_ops_action_export_report() -> dict[str, object]:
-    return {
-        "status": "ok",
-        "schema_version": "notification-hub.personal_ops_action_export.v1",
-        "generated_at": "2026-05-09T00:00:00+00:00",
-        "hours": 12,
-        "actions": [
-            {
-                "action_id": "notification-hub:personal-ops:mail:waiting_on_user:approval-requested",
-                "source": "personal-ops",
-                "project": "mail",
-                "intent": "waiting_on_user",
-                "priority": "high",
-                "state": "waiting",
-                "title": "Approval Requested",
-                "summary": "2 repeated personal-ops events: Console reply needed",
-                "suggested_next_action": "Review the waiting item and approve, reply, or dismiss it.",
-                "evidence_event_id": "abc123",
-                "evidence_timestamp": "2026-05-09T00:00:00+00:00",
-                "count": 2,
-            }
-        ],
-        "review_package": {
-            "requested": False,
-            "status": "not_requested",
-            "path": None,
-            "error": None,
-        },
-        "inbox": {
-            "status": "ok",
-            "hours": 12,
-            "events_seen": 2,
-            "needs_attention": [],
-            "waiting_or_blocked": [],
-            "ready": [],
-            "completed": [],
-            "rollups": [],
-            "noise_candidates": [],
-            "error": None,
-        },
-        "error": None,
-    }
-
-
-def _burn_in_report(
-    *,
-    status: str = "ok",
-    slack_delivery_failure_count: int = 0,
-) -> dict[str, object]:
-    return {
-        "status": "ok",
-        "minutes": 10,
-        "events_seen": 0,
-        "accepted_event_posts": 0,
-        "rejected_event_posts": 0,
-        "validation_error_count": 0,
-        "health": {
-            "accepted_event_posts": 0,
-            "rejected_event_posts": 0,
-            "validation_error_count": 0,
-            "slack_delivery_failure_count": slack_delivery_failure_count,
-            "status": status,
-        },
-        "noise_candidates": [],
-        "noise_rule_suggestions": [],
-        "repeated_signatures": [],
-        "slack_eligible_events": 0,
-        "slack_volume": [],
-        "daemon_summary": {
-            "access_status_counts": {},
-            "accepted_event_posts": 0,
-            "rejected_event_posts": 0,
-            "validation_error_count": 0,
-            "recent_validation_errors": [],
-            "slack_delivery_failure_count": slack_delivery_failure_count,
-            "recent_slack_delivery_failures": [],
-        },
-        "error": None,
-    }
-
-
-def _import_queue_health(
-    *,
-    queued_count: int = 0,
-    promoted_pending_count: int = 0,
-    promoted_pending_stale_count: int = 0,
-) -> dict[str, object]:
-    needs_queue_attention = queued_count > 0 or promoted_pending_count > 0
-    if queued_count:
-        next_action = "Review queued personal-ops handoff items."
-    elif promoted_pending_stale_count:
-        next_action = "Resolve the matching personal-ops suggestion, record the promotion outcome, then rerun notification-hub personal-ops-queue-health."
-    elif promoted_pending_count:
-        next_action = "Resolve promoted personal-ops handoff outcomes."
-    else:
-        next_action = "No queued personal-ops handoff items."
-    return {
-        "status": "warn" if needs_queue_attention else "ok",
-        "queue_path": "/tmp/personal-ops-import-queue.jsonl",
-        "total_count": queued_count + promoted_pending_count,
-        "queued_count": queued_count,
-        "reviewed_count": 0,
-        "rejected_count": 0,
-        "snoozed_count": 0,
-        "superseded_count": 0,
-        "promoted_count": promoted_pending_count,
-        "promoted_pending_count": promoted_pending_count,
-        "promoted_pending_stale_count": promoted_pending_stale_count,
-        "promoted_accepted_count": 0,
-        "promoted_rejected_count": 0,
-        "promoted_ignored_count": 0,
-        "needs_outcome_sync": promoted_pending_count > 0,
-        "needs_review": queued_count > 0,
-        "oldest_queued_at": "2026-05-09T10:00:00+00:00" if queued_count else None,
-        "oldest_queued_age_seconds": 60.0 if queued_count else None,
-        "oldest_promoted_pending_at": "2026-05-09T08:00:00+00:00"
-        if promoted_pending_count
-        else None,
-        "oldest_promoted_pending_age_seconds": 7200.0 if promoted_pending_count else None,
-        "stale_after_hours": 4.0,
-        "next_action": next_action,
-    }
-
-
-def _coordination_readiness_report(status: str = "ok") -> dict[str, object]:
-    return {
-        "status": status,
-        "decision": "ready_to_expand" if status == "ok" else "fix_noise_first",
-        "summary": "Runtime, queue, and saved burn-in evidence are ready.",
-        "queue_status": "ok",
-        "queued_count": 0,
-        "pending_count": 0,
-        "stale_count": 0,
-        "saved_burn_in_reports": 1,
-        "latest_burn_in_ready": True,
-        "latest_burn_in_noise_candidates": 0,
-        "runtime_status": "ok",
-        "policy_warning_count": 0,
-        "next_action": "Plan the next compact coordination console slice.",
-        "evidence": ["runtime=ok"],
-        "applied": False,
-    }
-
-
-def _coordination_console_report(status: str = "ok") -> dict[str, object]:
-    return {
-        "status": status,
-        "readiness": _coordination_readiness_report(status=status),
-        "action_count": 1,
-        "active_action_count": 1,
-        "handled_action_count": 0,
-        "dismissal_count": 0,
-        "actions": [],
-        "handled_actions": [],
-        "dismissals": [],
-        "next_signal": {
-            "status": "ready",
-            "title": "Active proposal waiting",
-            "summary": "The next real signal is already visible as an action proposal.",
-            "qualifying_intents": ["waiting_on_user"],
-            "hidden_action_count": 0,
-            "dismissed_count": 0,
-            "policy_covered_repeated_count": 0,
-            "policy_covered_signatures": [],
-            "dismissed_proposals": [],
-            "next_action": "Save and validate a review package.",
-        },
-        "queue_health": _import_queue_health(),
-        "queued_items": [],
-        "pending_promotion_items": [],
-        "outcome_sync_reminder": {
-            "status": "ok",
-            "should_remind": False,
-            "pending_count": 0,
-            "stale_count": 0,
-            "reminders": [],
-            "next_commands": ["uv run notification-hub personal-ops-queue-health"],
-            "next_action": "No pending promoted personal-ops handoff outcomes.",
-            "applied": False,
-        },
-        "burn_in_reports": [],
-        "guide_stage": "package_review",
-        "guide_steps": [
-            {
-                "step": 1,
-                "title": "Save review package",
-                "status": "current",
-                "summary": "Stage the current proposals locally for inspection.",
-                "commands": ["uv run notification-hub personal-ops-actions --save-review-package"],
-                "action_id": "action-1",
-                "queue_id": None,
-            }
-        ],
-        "next_commands": ["uv run notification-hub personal-ops-actions --save-review-package"],
-        "next_action": "Save and validate a review package.",
-        "applied": False,
-    }
-
-
-def _operator_daily_state_report(status: str = "ok") -> dict[str, object]:
-    return {
-        "status": status,
-        "generated_at": "2026-05-10T04:50:00+00:00",
-        "hours": 24,
-        "runtime": {
-            "status": status,
-            "daemon_reachable": True,
-            "watcher_active": True,
-            "runtime_wiring_current": True,
-            "policy_config_found": True,
-            "policy_warning_count": 0,
-            "retention_enabled": True,
-            "retention_last_status": "ok",
-            "events_processed": 12,
-            "slack_configured": True,
-            "slack_delivery_failures": 0,
-            "import_queue": _import_queue_health(),
-            "push_notifier_available": True,
-            "next_action": "No action needed.",
-        },
-        "queue_health": {
-            "status": "ok",
-            "health": _import_queue_health(),
-            "queued_items": [],
-            "pending_promotion_items": [],
-            "next_commands": [],
-            "applied": False,
-        },
-        "coordination_console": _coordination_console_report(status=status),
-        "burn_in": _burn_in_report(status=status),
-        "dismissals": [],
-        "next_action": "Monitor /review for the next real handoff signal.",
-        "report_file": {
-            "requested": True,
-            "status": "ok",
-            "path": "/tmp/operator-daily-state.json",
-            "error": None,
-        },
-        "applied": False,
-    }
-
-
-def _operator_handoff_drill_report(status: str = "ok") -> dict[str, object]:
-    scenario = {
-        "status": status,
-        "queue_path": "/tmp/scenario-queue.jsonl",
-        "package_path": "/tmp/package.json",
-        "queue_id": "queue123",
-        "queued_count": 1,
-        "review_status": "ok",
-        "promotion_status": "ok",
-        "promotion_outcome": "accepted",
-        "final_health": _import_queue_health(),
-        "applied": True,
-        "next_action": "Scenario passed; use the same lifecycle for real queued handoffs.",
-        "error": None,
-    }
-    return {
-        "status": status,
-        "generated_at": "2026-05-10T04:55:00+00:00",
-        "scenario": scenario,
-        "queue_burn_in": {
-            "status": status,
-            "ready_for_live_promotion": True,
-            "scenario": scenario,
-            "queue_health": {"health": _import_queue_health()},
-            "runtime_burn_in": {"health": {"status": "ok"}},
-            "outcome_sync_posture": "operator-mediated",
-            "operator_steps": [],
-            "next_action": "Queue loop is ready.",
-            "report_file": {"status": "not_requested"},
-        },
-        "review_steps": ["Open /review and inspect an action proposal before saving a package."],
-        "next_action": "Use the same operator-mediated lifecycle for the next real handoff.",
-        "applied": False,
-    }
-
-
-def _delivery_check_report(
-    *,
-    status: str = "ok",
-    verify_slack: bool = False,
-    verify_push: bool = False,
-) -> dict[str, object]:
-    return {
-        "status": status,
-        "verify_slack": verify_slack,
-        "verify_push": verify_push,
-        "slack_ok": status == "ok" if verify_slack else None,
-        "push_ok": status == "ok" if verify_push else None,
-        "event_id": "delivery123",
-        "error": None if status == "ok" else "delivery failed",
-    }
 
 
 def test_cli_json_output(capsys: CaptureFixture[str]) -> None:
@@ -436,7 +69,6 @@ def test_cli_smoke_json_output(capsys: CaptureFixture[str]) -> None:
     assert '"event_id": "abc123"' in captured.out
 
 
-
 def test_cli_inbox_json_output(capsys: CaptureFixture[str]) -> None:
     with patch(
         "notification_hub.cli.run_inbox",
@@ -475,7 +107,7 @@ def test_cli_inbox_json_output(capsys: CaptureFixture[str]) -> None:
 def test_cli_coordination_snapshot_json_output(capsys: CaptureFixture[str]) -> None:
     with patch(
         "notification_hub.cli.run_coordination_snapshot",
-        return_value=_coordination_snapshot_report(),
+        return_value=coordination_snapshot_report(),
     ) as mock_snapshot:
         exit_code = main(["coordination-snapshot", "--json", "--hours", "12", "--limit", "3"])
 
@@ -493,7 +125,7 @@ def test_cli_coordination_snapshot_json_output(capsys: CaptureFixture[str]) -> N
 def test_cli_coordination_readiness_json_output(capsys: CaptureFixture[str]) -> None:
     with patch(
         "notification_hub.cli.run_coordination_readiness",
-        return_value=_coordination_readiness_report(),
+        return_value=coordination_readiness_report(),
     ) as mock_readiness:
         exit_code = main(["coordination-readiness", "--json", "--limit", "3"])
 
@@ -506,7 +138,7 @@ def test_cli_coordination_readiness_json_output(capsys: CaptureFixture[str]) -> 
 def test_cli_coordination_console_json_output(capsys: CaptureFixture[str]) -> None:
     with patch(
         "notification_hub.cli.run_coordination_console",
-        return_value=_coordination_console_report(),
+        return_value=coordination_console_report(),
     ) as mock_console:
         exit_code = main(["coordination-console", "--json", "--hours", "4", "--limit", "3"])
 
@@ -607,7 +239,7 @@ def test_cli_operator_daily_state_json_output(capsys: CaptureFixture[str]) -> No
     report_dir = Path("/tmp/operator-state")
     with patch(
         "notification_hub.cli.run_operator_daily_state",
-        return_value=_operator_daily_state_report(),
+        return_value=operator_daily_state_report(),
     ) as mock_daily_state:
         exit_code = main(
             [
@@ -638,7 +270,7 @@ def test_cli_operator_handoff_drill_json_output(capsys: CaptureFixture[str]) -> 
     report_dir = Path("/tmp/burn-in")
     with patch(
         "notification_hub.cli.run_operator_handoff_drill",
-        return_value=_operator_handoff_drill_report(),
+        return_value=operator_handoff_drill_report(),
     ) as mock_drill:
         exit_code = main(
             [
@@ -662,7 +294,7 @@ def test_cli_coordination_snapshot_writes_output(
     output_path = tmp_path / "snapshot.json"
     with patch(
         "notification_hub.cli.run_coordination_snapshot",
-        return_value=_coordination_snapshot_report(),
+        return_value=coordination_snapshot_report(),
     ):
         exit_code = main(["coordination-snapshot", "--output", str(output_path)])
 
@@ -676,7 +308,7 @@ def test_cli_coordination_snapshot_can_request_bridge_save(tmp_path: Path) -> No
     bridge_db_path = tmp_path / "bridge.db"
     with patch(
         "notification_hub.cli.run_coordination_snapshot",
-        return_value=_coordination_snapshot_report(),
+        return_value=coordination_snapshot_report(),
     ) as mock_snapshot:
         exit_code = main(
             [
@@ -700,7 +332,7 @@ def test_cli_coordination_snapshot_can_request_bridge_save(tmp_path: Path) -> No
 def test_cli_personal_ops_actions_json_output(capsys: CaptureFixture[str]) -> None:
     with patch(
         "notification_hub.cli.run_personal_ops_action_export",
-        return_value=_personal_ops_action_export_report(),
+        return_value=personal_ops_action_export_report(),
     ) as mock_export:
         exit_code = main(["personal-ops-actions", "--json", "--hours", "12", "--limit", "3"])
 
@@ -721,7 +353,7 @@ def test_cli_personal_ops_actions_writes_output(
     output_path = tmp_path / "actions.json"
     with patch(
         "notification_hub.cli.run_personal_ops_action_export",
-        return_value=_personal_ops_action_export_report(),
+        return_value=personal_ops_action_export_report(),
     ):
         exit_code = main(["personal-ops-actions", "--output", str(output_path)])
 
@@ -735,7 +367,7 @@ def test_cli_personal_ops_actions_can_save_review_package(tmp_path: Path) -> Non
     review_dir = tmp_path / "review"
     with patch(
         "notification_hub.cli.run_personal_ops_action_export",
-        return_value=_personal_ops_action_export_report(),
+        return_value=personal_ops_action_export_report(),
     ) as mock_export:
         exit_code = main(
             [
@@ -760,7 +392,7 @@ def test_cli_validate_action_package_json_output(
     tmp_path: Path, capsys: CaptureFixture[str]
 ) -> None:
     package_path = tmp_path / "actions.json"
-    package_path.write_text(json.dumps(_personal_ops_action_export_report()), encoding="utf-8")
+    package_path.write_text(json.dumps(personal_ops_action_export_report()), encoding="utf-8")
 
     exit_code = main(["validate-action-package", str(package_path), "--json"])
 
@@ -769,23 +401,9 @@ def test_cli_validate_action_package_json_output(
     assert '"valid_action_count": 1' in captured.out
 
 
-def test_validate_action_package_wrapper_forwards_path(
-    tmp_path: Path,
-    capsys: CaptureFixture[str],
-) -> None:
-    package_path = tmp_path / "actions.json"
-    package_path.write_text(json.dumps(_personal_ops_action_export_report()), encoding="utf-8")
-
-    exit_code = validate_action_package_main([str(package_path), "--json"])
-
-    output = capsys.readouterr()
-    assert exit_code == 0
-    assert '"status": "ok"' in output.out
-
-
 def test_cli_personal_ops_import_json_output(tmp_path: Path, capsys: CaptureFixture[str]) -> None:
     package_path = tmp_path / "actions.json"
-    package_path.write_text(json.dumps(_personal_ops_action_export_report()), encoding="utf-8")
+    package_path.write_text(json.dumps(personal_ops_action_export_report()), encoding="utf-8")
 
     exit_code = main(["personal-ops-import", str(package_path), "--json"])
 
@@ -795,26 +413,12 @@ def test_cli_personal_ops_import_json_output(tmp_path: Path, capsys: CaptureFixt
     assert '"valid_action_count": 1' in captured.out
 
 
-def test_personal_ops_import_wrapper_forwards_path(
-    tmp_path: Path,
-    capsys: CaptureFixture[str],
-) -> None:
-    package_path = tmp_path / "actions.json"
-    package_path.write_text(json.dumps(_personal_ops_action_export_report()), encoding="utf-8")
-
-    exit_code = personal_ops_import_main([str(package_path), "--json"])
-
-    output = capsys.readouterr()
-    assert exit_code == 0
-    assert '"applied": false' in output.out
-
-
 def test_cli_personal_ops_queue_health_json_output(capsys: CaptureFixture[str]) -> None:
     with patch(
         "notification_hub.cli.run_personal_ops_import_queue_health_check",
         return_value={
             "status": "ok",
-            "health": _import_queue_health(),
+            "health": import_queue_health(),
             "queued_items": [],
             "pending_promotion_items": [],
             "next_commands": ["uv run notification-hub personal-ops-queue-health"],
@@ -912,7 +516,7 @@ def test_cli_personal_ops_queue_burn_in_json_output(capsys: CaptureFixture[str])
             "status": "ok",
             "queue_health": {
                 "status": "ok",
-                "health": _import_queue_health(),
+                "health": import_queue_health(),
                 "queued_items": [],
                 "pending_promotion_items": [],
                 "next_commands": ["uv run notification-hub personal-ops-queue-health"],
@@ -927,12 +531,12 @@ def test_cli_personal_ops_queue_burn_in_json_output(capsys: CaptureFixture[str])
                 "review_status": "ok",
                 "promotion_status": "ok",
                 "promotion_outcome": "accepted",
-                "final_health": _import_queue_health(),
+                "final_health": import_queue_health(),
                 "applied": True,
                 "next_action": "Scenario passed; use the same lifecycle for real queued handoffs.",
                 "error": None,
             },
-            "runtime_burn_in": _burn_in_report(),
+            "runtime_burn_in": burn_in_report(),
             "ready_for_live_promotion": True,
             "outcome_sync_posture": "operator-mediated",
             "operator_steps": ["Queue loop is ready."],
@@ -1048,171 +652,6 @@ def test_cli_explain_json_output(capsys: CaptureFixture[str]) -> None:
     assert '"matched_keyword": "approval needed"' in captured.out
 
 
-def test_cli_retention_json_output(capsys: CaptureFixture[str]) -> None:
-    with patch(
-        "notification_hub.cli.run_retention",
-        return_value={
-            "status": "ok",
-            "rotated": False,
-            "archive_path": None,
-            "events_before": 3,
-            "events_after": 3,
-            "archived_events": 0,
-            "deleted_archives": [],
-        },
-    ):
-        exit_code = main(["retention", "--json"])
-
-    captured = capsys.readouterr()
-    assert exit_code == 0
-    assert '"events_before": 3' in captured.out
-
-
-def test_cli_bootstrap_json_output(capsys: CaptureFixture[str]) -> None:
-    with patch(
-        "notification_hub.cli.bootstrap_policy_config",
-        return_value={
-            "status": "ok",
-            "copied": True,
-            "config_path": "/tmp/config.toml",
-            "example_path": "/tmp/example.toml",
-            "error": None,
-        },
-    ):
-        exit_code = main(["bootstrap-config", "--json"])
-
-    captured = capsys.readouterr()
-    assert exit_code == 0
-    assert '"copied": true' in captured.out
-
-
-def test_doctor_main_forwards_flags(capsys: CaptureFixture[str]) -> None:
-    with patch(
-        "notification_hub.cli.collect_doctor_report",
-        return_value={
-            "status": "ok",
-            "checks": {"local_api_healthy": True},
-            "config": {
-                "path": "/tmp/config.toml",
-                "load_error": None,
-                "routing_rule_count": 0,
-                "warning_count": 0,
-            },
-            "retention": {
-                "enabled": True,
-                "interval_minutes": 60,
-                "max_events": 2000,
-                "keep_archives": 10,
-            },
-            "local_api": {"url": "http://127.0.0.1:9199/health/details"},
-        },
-    ):
-        exit_code = doctor_main(["--json"])
-
-    captured = capsys.readouterr()
-    assert exit_code == 0
-    assert '"status": "ok"' in captured.out
-
-
-def test_smoke_and_retention_wrappers_forward_flags(capsys: CaptureFixture[str]) -> None:
-    with patch(
-        "notification_hub.cli.run_smoke_check",
-        return_value={
-            "status": "ok",
-            "health_url": "http://127.0.0.1:9199/health/details",
-            "event_url": "http://127.0.0.1:9199/events",
-            "event_id": "abc123",
-            "log_verified": True,
-            "response_status": 201,
-            "error": None,
-        },
-    ):
-        smoke_exit = smoke_main(["--json"])
-
-    smoke_output = capsys.readouterr()
-    assert smoke_exit == 0
-    assert '"event_id": "abc123"' in smoke_output.out
-
-    with patch(
-        "notification_hub.cli.run_retention",
-        return_value={
-            "status": "ok",
-            "rotated": False,
-            "archive_path": None,
-            "events_before": 3,
-            "events_after": 3,
-            "archived_events": 0,
-            "deleted_archives": [],
-        },
-    ):
-        retention_exit = retention_main(["--json"])
-
-    retention_output = capsys.readouterr()
-    assert retention_exit == 0
-    assert '"events_before": 3' in retention_output.out
-
-
-def test_status_wrapper_forwards_flags(capsys: CaptureFixture[str]) -> None:
-    with patch(
-        "notification_hub.cli.run_status",
-        return_value={
-            "status": "ok",
-            "health_url": "http://127.0.0.1:9199/health/details",
-            "daemon_reachable": True,
-            "watcher_active": True,
-            "events_processed": 12,
-            "uptime_seconds": 123.4,
-            "policy_config_found": False,
-            "policy_warning_count": 0,
-            "retention_enabled": True,
-            "retention_last_status": "ok",
-            "runtime_wiring_current": True,
-            "push_notifier_available": True,
-            "slack_configured": True,
-            "slack_delivery_failures": 0,
-            "next_action": "No action needed.",
-        },
-    ) as mock_status:
-        exit_code = status_main(["--json"])
-
-    output = capsys.readouterr()
-    assert exit_code == 0
-    assert '"status": "ok"' in output.out
-    mock_status.assert_called_once_with()
-
-
-def test_logs_wrapper_forwards_flags(capsys: CaptureFixture[str]) -> None:
-    with patch(
-        "notification_hub.cli.run_logs",
-        return_value={
-            "status": "ok",
-            "events_log": "/tmp/events.jsonl",
-            "stdout_log": "/tmp/stdout.log",
-            "stderr_log": "/tmp/stderr.log",
-            "recent_events": [],
-            "daemon_summary": {
-                "access_status_counts": {},
-                "accepted_event_posts": 0,
-                "rejected_event_posts": 0,
-                "validation_error_count": 0,
-                "recent_validation_errors": [],
-                "slack_delivery_failure_count": 0,
-                "recent_slack_delivery_failures": [],
-            },
-            "stdout_tail": [],
-            "stderr_tail": [],
-            "missing_paths": [],
-            "error": None,
-        },
-    ) as mock_logs:
-        exit_code = logs_main(["--json", "--events", "2", "--lines", "3"])
-
-    output = capsys.readouterr()
-    assert exit_code == 0
-    assert '"status": "ok"' in output.out
-    mock_logs.assert_called_once_with(events=2, lines=3)
-
-
 def test_cli_burn_in_json_output(capsys: CaptureFixture[str]) -> None:
     with patch(
         "notification_hub.cli.run_burn_in",
@@ -1275,466 +714,39 @@ def test_cli_burn_in_json_output(capsys: CaptureFixture[str]) -> None:
     mock_burn_in.assert_called_once_with(minutes=10, lines=20)
 
 
-def test_burn_in_wrapper_forwards_flags(capsys: CaptureFixture[str]) -> None:
+def test_cli_retention_json_output(capsys: CaptureFixture[str]) -> None:
     with patch(
-        "notification_hub.cli.run_burn_in",
+        "notification_hub.cli.run_retention",
         return_value={
             "status": "ok",
-            "minutes": 5,
-            "events_seen": 0,
-            "accepted_event_posts": 0,
-            "rejected_event_posts": 0,
-            "validation_error_count": 0,
-            "health": {
-                "accepted_event_posts": 0,
-                "rejected_event_posts": 0,
-                "validation_error_count": 0,
-                "slack_delivery_failure_count": 0,
-                "status": "ok",
-            },
-            "noise_candidates": [],
-            "noise_rule_suggestions": [],
-            "repeated_signatures": [],
-            "slack_eligible_events": 0,
-            "slack_volume": [],
-            "daemon_summary": {
-                "access_status_counts": {},
-                "accepted_event_posts": 0,
-                "rejected_event_posts": 0,
-                "validation_error_count": 0,
-                "recent_validation_errors": [],
-                "slack_delivery_failure_count": 0,
-                "recent_slack_delivery_failures": [],
-            },
-            "error": None,
+            "rotated": False,
+            "archive_path": None,
+            "events_before": 3,
+            "events_after": 3,
+            "archived_events": 0,
+            "deleted_archives": [],
         },
-    ) as mock_burn_in:
-        exit_code = burn_in_main(["--minutes", "5", "--lines", "10"])
+    ):
+        exit_code = main(["retention", "--json"])
 
-    output = capsys.readouterr()
+    captured = capsys.readouterr()
     assert exit_code == 0
-    assert "notification-hub burn-in: ok" in output.out
-    mock_burn_in.assert_called_once_with(minutes=5, lines=10)
+    assert '"events_before": 3' in captured.out
 
 
-def test_verify_runtime_wrapper_forwards_flags(capsys: CaptureFixture[str]) -> None:
-    with patch(
-        "notification_hub.cli.run_verify_runtime",
-        return_value={
-            "status": "ok",
-            "read_only": False,
-            "include_smoke": True,
-            "health_url": "http://127.0.0.1:9199/health/details",
-            "checks": {
-                "doctor_ok": True,
-                "policy_check_ok": True,
-                "health_details_reachable": True,
-                "runtime_wiring_current": True,
-                "recent_runtime_health_ok": True,
-                "smoke_ok": True,
-                "delivery_check_ok": True,
-            },
-            "runtime_wiring": {"launch_agent_matches_template": True},
-            "doctor": {"status": "ok"},
-            "policy_check": {
-                "status": "ok",
-                "config_path": "/tmp/config.toml",
-                "config_found": True,
-                "example_path": "/tmp/example.toml",
-                "load_error": None,
-                "warning_count": 0,
-                "suggestion_count": 0,
-                "warnings": [],
-                "suggestions": [],
-            },
-            "burn_in": _burn_in_report(),
-            "delivery_check": None,
-            "smoke": {
-                "status": "ok",
-                "health_url": "http://127.0.0.1:9199/health/details",
-                "event_url": "http://127.0.0.1:9199/events",
-                "event_id": "abc123",
-                "log_verified": True,
-                "response_status": 201,
-                "error": None,
-            },
-        },
-    ) as mock_verify:
-        exit_code = verify_runtime_main(["--json", "--include-smoke"])
-
-    output = capsys.readouterr()
-    assert exit_code == 0
-    assert '"include_smoke": true' in output.out
-    mock_verify.assert_called_once_with(include_smoke=True, verify_slack=False, verify_push=False)
-
-
-def test_delivery_check_wrapper_forwards_flags(capsys: CaptureFixture[str]) -> None:
-    with patch(
-        "notification_hub.cli.run_delivery_check",
-        return_value=_delivery_check_report(verify_slack=True, verify_push=True),
-    ) as mock_delivery_check:
-        exit_code = delivery_check_main(["--json", "--slack", "--push"])
-
-    output = capsys.readouterr()
-    assert exit_code == 0
-    assert '"verify_push": true' in output.out
-    mock_delivery_check.assert_called_once_with(verify_slack=True, verify_push=True)
-
-
-def test_inbox_wrapper_forwards_flags(capsys: CaptureFixture[str]) -> None:
-    with patch(
-        "notification_hub.cli.run_inbox",
-        return_value={
-            "status": "ok",
-            "hours": 6,
-            "events_seen": 0,
-            "needs_attention": [],
-            "waiting_or_blocked": [],
-            "ready": [],
-            "completed": [],
-            "rollups": [],
-            "noise_candidates": [],
-            "error": None,
-        },
-    ) as mock_inbox:
-        exit_code = inbox_main(["--json", "--hours", "6", "--limit", "2"])
-
-    output = capsys.readouterr()
-    assert exit_code == 0
-    assert '"events_seen": 0' in output.out
-    mock_inbox.assert_called_once_with(hours=6, limit=2)
-
-
-def test_coordination_snapshot_wrapper_forwards_flags(capsys: CaptureFixture[str]) -> None:
-    with patch(
-        "notification_hub.cli.run_coordination_snapshot",
-        return_value=_coordination_snapshot_report(),
-    ) as mock_snapshot:
-        exit_code = coordination_snapshot_main(["--json", "--hours", "6", "--limit", "2"])
-
-    output = capsys.readouterr()
-    assert exit_code == 0
-    assert '"schema_version": "notification-hub.coordination_snapshot.v1"' in output.out
-    mock_snapshot.assert_called_once_with(
-        hours=6,
-        limit=2,
-        save_bridge_db=False,
-        bridge_db_path=None,
-    )
-
-
-def test_coordination_readiness_wrapper_forwards_flags(capsys: CaptureFixture[str]) -> None:
-    with patch(
-        "notification_hub.cli.run_coordination_readiness",
-        return_value=_coordination_readiness_report(),
-    ) as mock_readiness:
-        exit_code = coordination_readiness_main(["--json", "--limit", "2"])
-
-    output = capsys.readouterr()
-    assert exit_code == 0
-    assert '"saved_burn_in_reports": 1' in output.out
-    mock_readiness.assert_called_once_with(limit=2)
-
-
-def test_coordination_console_wrapper_forwards_flags(capsys: CaptureFixture[str]) -> None:
-    with patch(
-        "notification_hub.cli.run_coordination_console",
-        return_value=_coordination_console_report(),
-    ) as mock_console:
-        exit_code = coordination_console_main(["--json", "--hours", "6", "--limit", "2"])
-
-    output = capsys.readouterr()
-    assert exit_code == 0
-    assert '"next_action": "Save and validate a review package."' in output.out
-    mock_console.assert_called_once_with(hours=6, limit=2)
-
-
-def test_action_proposal_dismissals_wrapper_forwards_flags(
-    capsys: CaptureFixture[str],
-) -> None:
-    with patch(
-        "notification_hub.cli.run_action_proposal_dismissal_list",
-        return_value={
-            "status": "ok",
-            "path": "/tmp/dismissals.jsonl",
-            "dismissal_count": 0,
-            "dismissals": [],
-            "applied": False,
-        },
-    ) as mock_list:
-        exit_code = action_proposal_dismissals_main(["--json", "--limit", "2"])
-
-    output = capsys.readouterr()
-    assert exit_code == 0
-    assert '"dismissal_count": 0' in output.out
-    mock_list.assert_called_once_with(
-        limit=2,
-        dismissal_key=None,
-        include_inactive=False,
-    )
-
-
-def test_action_proposal_undismiss_wrapper_forwards_flags(
-    capsys: CaptureFixture[str],
-) -> None:
-    with patch(
-        "notification_hub.cli.undismiss_action_proposal",
-        return_value={
-            "status": "ok",
-            "path": "/tmp/dismissals.jsonl",
-            "dismissal_key": "proposal:abc",
-            "removed": True,
-            "applied": False,
-            "error": None,
-        },
-    ) as mock_undismiss:
-        exit_code = action_proposal_undismiss_main(
-            ["--json", "proposal:abc", "--reason", "useful again"]
-        )
-
-    output = capsys.readouterr()
-    assert exit_code == 0
-    assert '"removed": true' in output.out
-    mock_undismiss.assert_called_once_with(
-        dismissal_key="proposal:abc",
-        reason="useful again",
-    )
-
-
-def test_operator_daily_state_wrapper_forwards_flags(capsys: CaptureFixture[str]) -> None:
-    with patch(
-        "notification_hub.cli.run_operator_daily_state",
-        return_value=_operator_daily_state_report(),
-    ) as mock_daily_state:
-        exit_code = operator_daily_state_main(["--json", "--hours", "6", "--limit", "2"])
-
-    output = capsys.readouterr()
-    assert exit_code == 0
-    assert '"next_signal"' in output.out
-    mock_daily_state.assert_called_once_with(
-        hours=6,
-        limit=2,
-        save_report=False,
-        report_dir=None,
-    )
-
-
-def test_operator_handoff_drill_wrapper_forwards_flags(capsys: CaptureFixture[str]) -> None:
-    with patch(
-        "notification_hub.cli.run_operator_handoff_drill",
-        return_value=_operator_handoff_drill_report(),
-    ) as mock_drill:
-        exit_code = operator_handoff_drill_main(["--json", "--save-burn-in-report"])
-
-    output = capsys.readouterr()
-    assert exit_code == 0
-    assert '"queue_burn_in"' in output.out
-    mock_drill.assert_called_once_with(save_burn_in_report=True, report_dir=None)
-
-
-def test_personal_ops_actions_wrapper_forwards_flags(capsys: CaptureFixture[str]) -> None:
-    with patch(
-        "notification_hub.cli.run_personal_ops_action_export",
-        return_value=_personal_ops_action_export_report(),
-    ) as mock_export:
-        exit_code = personal_ops_actions_main(["--json", "--hours", "6", "--limit", "2"])
-
-    output = capsys.readouterr()
-    assert exit_code == 0
-    assert '"actions"' in output.out
-    mock_export.assert_called_once_with(
-        hours=6,
-        limit=2,
-        save_review_package=False,
-        review_dir=None,
-    )
-
-
-def test_personal_ops_queue_health_wrapper_forwards_flags(capsys: CaptureFixture[str]) -> None:
-    with patch(
-        "notification_hub.cli.run_personal_ops_import_queue_health_check",
-        return_value={
-            "status": "ok",
-            "health": _import_queue_health(),
-            "queued_items": [],
-            "pending_promotion_items": [],
-            "next_commands": ["uv run notification-hub personal-ops-queue-health"],
-            "applied": False,
-        },
-    ) as mock_health:
-        exit_code = personal_ops_queue_health_main(["--json", "--limit", "2"])
-
-    output = capsys.readouterr()
-    assert exit_code == 0
-    assert '"next_commands"' in output.out
-    mock_health.assert_called_once()
-    assert mock_health.call_args.kwargs["limit"] == 2
-
-
-def test_personal_ops_outcome_sync_reminder_wrapper_forwards_flags(
-    capsys: CaptureFixture[str],
-) -> None:
-    with patch(
-        "notification_hub.cli.run_personal_ops_outcome_sync_reminder",
-        return_value={
-            "status": "ok",
-            "should_remind": False,
-            "pending_count": 0,
-            "stale_count": 0,
-            "reminders": [],
-            "next_commands": ["uv run notification-hub personal-ops-queue-health"],
-            "next_action": "No pending promoted personal-ops handoff outcomes.",
-            "applied": False,
-        },
-    ) as mock_reminder:
-        exit_code = personal_ops_outcome_sync_reminder_main(["--json", "--limit", "2"])
-
-    output = capsys.readouterr()
-    assert exit_code == 0
-    assert '"should_remind": false' in output.out
-    mock_reminder.assert_called_once()
-    assert mock_reminder.call_args.kwargs["limit"] == 2
-
-
-def test_personal_ops_queue_burn_in_wrapper_forwards_flags(capsys: CaptureFixture[str]) -> None:
-    with patch(
-        "notification_hub.cli.run_personal_ops_queue_burn_in",
-        return_value={
-            "status": "ok",
-            "queue_health": {
-                "status": "ok",
-                "health": _import_queue_health(),
-                "queued_items": [],
-                "pending_promotion_items": [],
-                "next_commands": ["uv run notification-hub personal-ops-queue-health"],
-                "applied": False,
-            },
-            "scenario": {
-                "status": "ok",
-                "queue_path": "/tmp/scenario-queue.jsonl",
-                "package_path": "/tmp/package.json",
-                "queue_id": "queue123",
-                "queued_count": 1,
-                "review_status": "ok",
-                "promotion_status": "ok",
-                "promotion_outcome": "accepted",
-                "final_health": _import_queue_health(),
-                "applied": True,
-                "next_action": "Scenario passed; use the same lifecycle for real queued handoffs.",
-                "error": None,
-            },
-            "runtime_burn_in": _burn_in_report(),
-            "ready_for_live_promotion": True,
-            "outcome_sync_posture": "operator-mediated",
-            "operator_steps": ["Queue loop is ready."],
-            "next_action": "Queue loop is ready; use the operator steps when the next real handoff appears.",
-            "report_file": {
-                "requested": False,
-                "status": "not_requested",
-                "path": None,
-                "error": None,
-            },
-            "applied": False,
-        },
-    ) as mock_burn_in:
-        exit_code = personal_ops_queue_burn_in_main(["--json", "--minutes", "5"])
-
-    output = capsys.readouterr()
-    assert exit_code == 0
-    assert '"operator_steps"' in output.out
-    mock_burn_in.assert_called_once()
-    assert mock_burn_in.call_args.kwargs["minutes"] == 5
-    assert mock_burn_in.call_args.kwargs["save_report"] is False
-
-
-def test_policy_check_wrapper_forwards_flags(capsys: CaptureFixture[str]) -> None:
-    with patch(
-        "notification_hub.cli.run_policy_check",
-        return_value={
-            "status": "warn",
-            "config_path": "/tmp/config.toml",
-            "config_found": True,
-            "example_path": "/tmp/example.toml",
-            "load_error": None,
-            "warning_count": 1,
-            "suggestion_count": 1,
-            "warnings": ["shadowed rule"],
-            "suggestions": ["move the narrower rule earlier"],
-        },
-    ) as mock_policy_check:
-        exit_code = policy_check_main(["--json"])
-
-    output = capsys.readouterr()
-    assert exit_code == 0
-    assert '"status": "warn"' in output.out
-    mock_policy_check.assert_called_once_with()
-
-
-def test_explain_wrapper_forwards_flags(capsys: CaptureFixture[str]) -> None:
-    with patch(
-        "notification_hub.cli.build_event_explanation_report",
-        return_value={
-            "event": {
-                "source": "codex",
-                "level": "info",
-                "title": "x",
-                "body": "y",
-                "project": None,
-            },
-            "classification": {
-                "input_level": "info",
-                "output_level": "normal",
-                "reason": "matched normal keyword",
-                "matched_keyword": "session complete",
-                "matched_group": "normal",
-            },
-            "routing": {
-                "final_level": "normal",
-                "allow_push": True,
-                "allow_slack": True,
-                "matched_rule_index": 1,
-                "matched_rule": {"project": "notification-hub"},
-                "matched_rule_indices": [1],
-                "matched_rules": [{"project": "notification-hub"}],
-                "reason": "matched routing rule 1",
-            },
-            "delivery": {"log": True, "push": False, "slack": True},
-        },
-    ) as mock_explain:
-        exit_code = explain_main(
-            [
-                "--source",
-                "codex",
-                "--level",
-                "info",
-                "--title",
-                "x",
-                "--body",
-                "y",
-                "--json",
-            ]
-        )
-
-    output = capsys.readouterr()
-    assert exit_code == 0
-    assert '"final_level": "normal"' in output.out
-    mock_explain.assert_called_once()
-
-
-def test_bootstrap_wrapper_forwards_flags(capsys: CaptureFixture[str]) -> None:
+def test_cli_bootstrap_json_output(capsys: CaptureFixture[str]) -> None:
     with patch(
         "notification_hub.cli.bootstrap_policy_config",
         return_value={
             "status": "ok",
-            "copied": False,
+            "copied": True,
             "config_path": "/tmp/config.toml",
             "example_path": "/tmp/example.toml",
             "error": None,
         },
-    ) as mock_bootstrap:
-        exit_code = bootstrap_config_main(["--json", "--force"])
+    ):
+        exit_code = main(["bootstrap-config", "--json"])
 
-    output = capsys.readouterr()
+    captured = capsys.readouterr()
     assert exit_code == 0
-    assert '"copied": false' in output.out
-    mock_bootstrap.assert_called_once_with(force=True)
+    assert '"copied": true' in captured.out
