@@ -1,6 +1,6 @@
 # Current State
 
-Last updated: 2026-05-17 (CLI report helper split)
+Last updated: 2026-05-17 (CLI parser split)
 
 ## Session Update (2026-05-17)
 
@@ -88,6 +88,9 @@ Last updated: 2026-05-17 (CLI report helper split)
   report fixtures extracted for command and wrapper tests without changing runtime behavior.
 - CLI source cleanup is complete locally: terminal report rendering and JSON output-file helpers
   moved out of `cli.py` into `cli_reports.py`, leaving command parsing and dispatch in `cli.py`
+  without changing command behavior.
+- CLI parser cleanup is complete locally: command-line parser construction moved out of `cli.py`
+  into `cli_parser.py`, leaving command dispatch and script-wrapper entrypoints in `cli.py`
   without changing command behavior.
 - Generic error hardening is complete locally: policy config load failures, doctor local API
   failures, smoke/log/burn-in failures, queue/report file IO failures, and package/report parsing
