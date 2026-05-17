@@ -12,6 +12,7 @@ from typing import cast
 from notification_hub.diagnostics import collect_doctor_report
 from notification_hub.models import Event
 from notification_hub.operations import (
+    ACTION_PROPOSAL_REVIEW_WINDOW_HOURS,
     BootstrapConfigReport,
     BurnInReport,
     CoordinationConsoleReport,
@@ -442,7 +443,7 @@ def _build_parser(prog: str = "notification-hub") -> argparse.ArgumentParser:
     action_proposal_group_outcome.add_argument(
         "--hours",
         type=int,
-        default=2,
+        default=ACTION_PROPOSAL_REVIEW_WINDOW_HOURS,
         help="Recent action-proposal window to search.",
     )
     action_proposal_group_outcome.add_argument(

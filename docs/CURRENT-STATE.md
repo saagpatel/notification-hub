@@ -161,7 +161,10 @@ The original "rich 0/0 resolved" outcome-quality gap was investigated and split 
   proposal keys that current synthetic rich proposals share. The lineage logic correctly classifies
   them as continuations of that follow-up, honoring the operator's explicit "preserve follow-up
   state across evidence-event rotation" intent. Rich handled follow-up now gets a separate
-  operator-visible re-review signal instead of automatic supersession.
+  operator-visible re-review signal instead of automatic supersession, and that prompt clears after
+  an explicit group outcome is recorded later than the rich evidence timestamp. The console, `/review`
+  controls, and `action-proposal-group-outcome` now share the same 24-hour review window so an
+  explicit group outcome records against the evidence the operator just reviewed.
 
 ## Snapshot
 

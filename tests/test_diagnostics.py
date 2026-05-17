@@ -1501,6 +1501,45 @@ def test_cli_action_proposal_dismissals_json_output(capsys: CaptureFixture[str])
     )
 
 
+def test_cli_action_proposal_group_outcome_uses_review_window_by_default(
+    capsys: CaptureFixture[str],
+) -> None:
+    with patch(
+        "notification_hub.cli.record_action_proposal_group_outcome",
+        return_value={
+            "status": "ok",
+            "group_key": "personal-ops:mail:waiting_on_user:high:waiting",
+            "outcome": "needs_follow_up",
+            "group_history": {"event_type": "outcome", "outcome": "needs_follow_up"},
+            "next_action": "Group outcome recorded locally.",
+            "applied": False,
+            "error": None,
+        },
+    ) as mock_outcome:
+        exit_code = main(
+            [
+                "action-proposal-group-outcome",
+                "personal-ops:mail:waiting_on_user:high:waiting",
+                "--outcome",
+                "needs_follow_up",
+                "--reason",
+                "follow up",
+                "--json",
+            ]
+        )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert '"outcome": "needs_follow_up"' in captured.out
+    mock_outcome.assert_called_once_with(
+        group_key="personal-ops:mail:waiting_on_user:high:waiting",
+        outcome="needs_follow_up",
+        reason="follow up",
+        hours=24,
+        limit=25,
+    )
+
+
 def test_cli_operator_daily_state_json_output(capsys: CaptureFixture[str]) -> None:
     report_dir = Path("/tmp/operator-state")
     with patch(

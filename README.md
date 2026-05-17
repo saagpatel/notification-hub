@@ -136,7 +136,10 @@ and repeated rollups can keep that handled state even when their newest evidence
 Queueing, promotion, dismissal, or a different proposal key can still create a new actionable state.
 If a handled follow-up gains rich evidence, the console keeps the proposal in handled history but
 surfaces a `follow_up_review` mode and `review` next signal so the operator can explicitly decide
-whether to keep it parked or record a new group outcome.
+whether to keep it parked or record a new group outcome. Once an explicit outcome is recorded after
+the rich evidence timestamp, that re-review prompt clears until newer rich evidence appears. The
+console, `/review` controls, and `action-proposal-group-outcome` default to the same 24-hour review
+window so an outcome records against the same evidence the console is showing.
 For personal-ops mail approval groups, Proposal Review adds a local route recommendation that
 separates concrete reply candidates from repeated phase or workflow chatter. The recommendation is
 advisory only; it never promotes, suppresses, or sends by itself. The review controls can also save

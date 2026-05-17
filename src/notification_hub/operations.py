@@ -949,6 +949,7 @@ ACTION_PROPOSAL_DISMISSALS = EVENTS_DIR / "action-proposal-dismissals.jsonl"
 ACTION_PROPOSAL_GROUP_HISTORY = EVENTS_DIR / "action-proposal-group-history.jsonl"
 ACTION_EXPORT_SCHEMA_VERSION = "notification-hub.personal_ops_action_export.v1"
 PERSONAL_OPS_IMPORT_QUEUE_SCHEMA_VERSION = "notification-hub.personal_ops_import_queue.v1"
+ACTION_PROPOSAL_REVIEW_WINDOW_HOURS = 24
 ACTION_PROPOSAL_MIN_CANDIDATES = 25
 ACTION_PROPOSAL_CANDIDATE_MULTIPLIER = 5
 PERSONAL_OPS_QUEUE_STATUSES = {
@@ -4257,7 +4258,7 @@ def record_action_proposal_group_outcome(
     group_key: str,
     outcome: str,
     reason: str,
-    hours: int = 2,
+    hours: int = ACTION_PROPOSAL_REVIEW_WINDOW_HOURS,
     limit: int = 25,
     group_history_path: Path | None = None,
 ) -> ActionProposalGroupOutcomeReport:
@@ -5631,11 +5632,23 @@ def _handled_mail_actions(
 def _rich_handled_follow_up_actions(
     handled_actions: list[CoordinationConsoleActionReport],
 ) -> list[CoordinationConsoleActionReport]:
+    def needs_review(item: CoordinationConsoleActionReport) -> bool:
+        if item["lineage_status"] != "follow_up":
+            return False
+        if _action_evidence_quality(item["action"]) != "rich":
+            return False
+        outcome_recorded_at = item["lineage_history_recorded_at"]
+        evidence_timestamp = item["action"]["evidence_timestamp"]
+        outcome_time = _parse_iso_datetime(outcome_recorded_at) if outcome_recorded_at else None
+        evidence_time = _parse_iso_datetime(evidence_timestamp)
+        if outcome_time is not None and evidence_time is not None:
+            return outcome_time < evidence_time
+        return True
+
     return [
         item
         for item in handled_actions
-        if item["lineage_status"] == "follow_up"
-        and _action_evidence_quality(item["action"]) == "rich"
+        if needs_review(item)
     ]
 
 

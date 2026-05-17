@@ -26,6 +26,7 @@ from notification_hub.config import (
 )
 from notification_hub.models import StoredEvent
 from notification_hub.operations import (
+    CoordinationConsoleActionReport,
     bootstrap_policy_config,
     delete_action_review_package,
     dismiss_action_proposal,
@@ -39,6 +40,7 @@ from notification_hub.operations import (
     load_operator_review_session_report_detail,
     load_personal_ops_queue_burn_in_report_detail,
     _build_near_rollup_singles,  # pyright: ignore[reportPrivateUsage]
+    _rich_handled_follow_up_actions,  # pyright: ignore[reportPrivateUsage]
     prune_action_export_files,
     prune_operator_review_session_reports,
     review_latest_noise_candidates,
@@ -69,6 +71,52 @@ from notification_hub.operations import (
     validate_action_package,
     record_action_proposal_group_outcome,
 )
+
+
+def _coordination_action_report(
+    *,
+    evidence_timestamp: str = "2026-05-10T04:50:00+00:00",
+    outcome_recorded_at: str | None = "2026-05-10T04:00:00+00:00",
+) -> CoordinationConsoleActionReport:
+    return {
+        "action": {
+            "action_id": "action-follow-up-rich",
+            "dismissal_key": "proposal:personal-ops:mail:waiting-on-user:stable",
+            "source": "personal-ops",
+            "project": "mail",
+            "intent": "waiting_on_user",
+            "priority": "high",
+            "state": "waiting",
+            "title": "Approval Requested",
+            "summary": "Rich approval draft needs inspection.",
+            "signal_level": "urgent",
+            "signal_body": "Approval draft",
+            "suggested_next_action": "Review the waiting item.",
+            "evidence_event_id": "event-follow-up-rich",
+            "evidence_timestamp": evidence_timestamp,
+            "evidence_context": {
+                "thread_id": "thread-rich",
+                "draft_id": "draft-rich",
+                "approval_id": "approval-rich",
+            },
+            "evidence_quality": "rich",
+            "count": 4,
+        },
+        "lineage_status": "follow_up",
+        "lineage_label": "Needs follow-up",
+        "lineage_next_action": "Evidence was inspected and needs operator follow-up.",
+        "lineage_reason": "Latest needs_follow_up group outcome matched this action id.",
+        "lineage_history_event_type": "outcome",
+        "lineage_history_recorded_at": outcome_recorded_at,
+        "lineage_history_outcome": "needs_follow_up",
+        "stable_key_matched": False,
+        "evidence_event_rotated": False,
+        "previous_action_id": "action-follow-up-rich",
+        "queue_id": None,
+        "queue_status": None,
+        "promotion_outcome": None,
+        "promotion_target_id": None,
+    }
 
 
 def _coordination_status(
@@ -1314,6 +1362,20 @@ def test_coordination_console_surfaces_rich_handled_follow_up_for_review(
         "Review rich handled follow-up history and record an explicit group outcome if it "
         "should re-open."
     )
+
+
+def test_rich_follow_up_review_clears_after_fresh_group_outcome() -> None:
+    stale_outcome = _coordination_action_report(
+        evidence_timestamp="2026-05-10T04:50:00+00:00",
+        outcome_recorded_at="2026-05-10T04:00:00+00:00",
+    )
+    fresh_outcome = _coordination_action_report(
+        evidence_timestamp="2026-05-10T04:50:00+00:00",
+        outcome_recorded_at="2026-05-10T05:00:00+00:00",
+    )
+
+    assert _rich_handled_follow_up_actions([stale_outcome]) == [stale_outcome]
+    assert _rich_handled_follow_up_actions([fresh_outcome]) == []
 
 
 def test_coordination_console_treats_superseded_group_outcome_as_history(

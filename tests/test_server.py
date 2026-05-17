@@ -1046,7 +1046,7 @@ async def test_review_action_proposal_group_queue_endpoint_stays_non_applying(
     mock_queue_group.assert_called_once_with(
         group_key="personal-ops:mail:waiting_on_user:high:waiting",
         route=None,
-        hours=2,
+        hours=24,
         limit=25,
         enqueue=True,
     )
@@ -1084,7 +1084,7 @@ async def test_review_action_proposal_group_dismiss_endpoint_is_local_only(
         group_key="personal-ops:mail:waiting_on_user:high:waiting",
         reason="known noise",
         route=None,
-        hours=2,
+        hours=24,
         limit=25,
     )
 
@@ -1118,7 +1118,7 @@ async def test_review_action_proposal_group_route_posts_are_local_only(
     mock_queue_group.assert_called_once_with(
         group_key="personal-ops:mail:waiting_on_user:high:waiting",
         route="promote",
-        hours=2,
+        hours=24,
         limit=25,
         enqueue=True,
     )
@@ -1150,7 +1150,7 @@ async def test_review_action_proposal_group_route_posts_are_local_only(
         group_key="personal-ops:mail:waiting_on_user:high:waiting",
         reason="already covered",
         route="suppress",
-        hours=2,
+        hours=24,
         limit=25,
     )
 
@@ -1188,7 +1188,7 @@ async def test_review_action_proposal_group_outcome_endpoint_is_local_only(
         group_key="personal-ops:mail:waiting_on_user:high:waiting",
         outcome="needs_follow_up",
         reason="follow up",
-        hours=2,
+        hours=24,
         limit=25,
     )
 

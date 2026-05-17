@@ -18,6 +18,7 @@ from notification_hub.config import BRIDGE_FILE, get_policy_config
 from notification_hub.diagnostics import collect_runtime_readiness
 from notification_hub.models import Event, EventResponse
 from notification_hub.operations import (
+    ACTION_PROPOSAL_REVIEW_WINDOW_HOURS,
     delete_action_review_package,
     dismiss_action_proposal,
     dismiss_action_proposal_group,
@@ -735,7 +736,7 @@ REVIEW_HTML = """<!doctype html>
       await loadReviewSessionRetention();
     }
     async function loadCoordinationConsole() {
-      const res = await fetch("/review/coordination-console?hours=2&limit=25");
+      const res = await fetch("/review/coordination-console?hours=24&limit=25");
       const data = await res.json();
       const readiness = data.readiness || {};
       const queue = data.queue_health || {};
@@ -919,7 +920,7 @@ REVIEW_HTML = """<!doctype html>
       const res = await fetch(path, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ group_key: groupKey, hours: 2, limit: 25, reason, route })
+        body: JSON.stringify({ group_key: groupKey, hours: 24, limit: 25, reason, route })
       });
       return res.json();
     }
@@ -990,7 +991,7 @@ REVIEW_HTML = """<!doctype html>
         body: JSON.stringify({
           group_key: groupKey,
           outcome,
-          hours: 2,
+          hours: 24,
           limit: 25,
           reason: "Review UI marked this grouped proposal for follow-up."
         })
@@ -1820,13 +1821,13 @@ async def review_save_action_proposal_group(request: Request) -> dict[str, objec
     body = await _action_proposal_group_body(request)
     group_key = body.get("group_key")
     route = body.get("route")
-    hours = body.get("hours", 2)
+    hours = body.get("hours", ACTION_PROPOSAL_REVIEW_WINDOW_HOURS)
     limit = body.get("limit", 25)
     report = await asyncio.to_thread(
         save_action_proposal_group_package,
         group_key=group_key if isinstance(group_key, str) else "",
         route=route if isinstance(route, str) else None,
-        hours=int(hours) if isinstance(hours, int) else 2,
+        hours=int(hours) if isinstance(hours, int) else ACTION_PROPOSAL_REVIEW_WINDOW_HOURS,
         limit=int(limit) if isinstance(limit, int) else 25,
         enqueue=False,
     )
@@ -1839,13 +1840,13 @@ async def review_queue_action_proposal_group(request: Request) -> dict[str, obje
     body = await _action_proposal_group_body(request)
     group_key = body.get("group_key")
     route = body.get("route")
-    hours = body.get("hours", 2)
+    hours = body.get("hours", ACTION_PROPOSAL_REVIEW_WINDOW_HOURS)
     limit = body.get("limit", 25)
     report = await asyncio.to_thread(
         save_action_proposal_group_package,
         group_key=group_key if isinstance(group_key, str) else "",
         route=route if isinstance(route, str) else None,
-        hours=int(hours) if isinstance(hours, int) else 2,
+        hours=int(hours) if isinstance(hours, int) else ACTION_PROPOSAL_REVIEW_WINDOW_HOURS,
         limit=int(limit) if isinstance(limit, int) else 25,
         enqueue=True,
     )
@@ -1859,7 +1860,7 @@ async def review_dismiss_action_proposal_group(request: Request) -> dict[str, ob
     group_key = body.get("group_key")
     route = body.get("route")
     reason = body.get("reason")
-    hours = body.get("hours", 2)
+    hours = body.get("hours", ACTION_PROPOSAL_REVIEW_WINDOW_HOURS)
     limit = body.get("limit", 25)
     report = await asyncio.to_thread(
         dismiss_action_proposal_group,
@@ -1868,7 +1869,7 @@ async def review_dismiss_action_proposal_group(request: Request) -> dict[str, ob
         if isinstance(reason, str) and reason.strip()
         else "Review UI dismissed a grouped proposal as known noise.",
         route=route if isinstance(route, str) else None,
-        hours=int(hours) if isinstance(hours, int) else 2,
+        hours=int(hours) if isinstance(hours, int) else ACTION_PROPOSAL_REVIEW_WINDOW_HOURS,
         limit=int(limit) if isinstance(limit, int) else 25,
     )
     return dict(report)
@@ -1881,7 +1882,7 @@ async def review_record_action_proposal_group_outcome(request: Request) -> dict[
     group_key = body.get("group_key")
     outcome = body.get("outcome")
     reason = body.get("reason")
-    hours = body.get("hours", 2)
+    hours = body.get("hours", ACTION_PROPOSAL_REVIEW_WINDOW_HOURS)
     limit = body.get("limit", 25)
     report = await asyncio.to_thread(
         record_action_proposal_group_outcome,
@@ -1890,7 +1891,7 @@ async def review_record_action_proposal_group_outcome(request: Request) -> dict[
         reason=reason
         if isinstance(reason, str) and reason.strip()
         else "Review UI recorded a grouped proposal outcome.",
-        hours=int(hours) if isinstance(hours, int) else 2,
+        hours=int(hours) if isinstance(hours, int) else ACTION_PROPOSAL_REVIEW_WINDOW_HOURS,
         limit=int(limit) if isinstance(limit, int) else 25,
     )
     return dict(report)
