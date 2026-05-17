@@ -47,6 +47,7 @@ def test_smoke_check_reports_http_failure() -> None:
     assert report["status"] == "degraded"
     assert report["response_status"] is None
     assert report["event_id"] is None
+    assert report["error"] == "operation failed; inspect local logs for details"
 
 
 def test_coordination_snapshot_can_save_to_bridge_db(tmp_path: Path) -> None:

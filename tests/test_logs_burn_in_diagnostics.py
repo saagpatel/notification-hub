@@ -100,7 +100,7 @@ def test_logs_report_degrades_on_invalid_event_log(
 
     assert report["status"] == "degraded"
     assert report["recent_events"] == []
-    assert report["error"] is not None
+    assert report["error"] == "operation failed; inspect local logs for details"
 
 
 def test_logs_report_counts_validation_errors_since_latest_daemon_start(

@@ -1,6 +1,6 @@
 # Current State
 
-Last updated: 2026-05-17 (review endpoint test split)
+Last updated: 2026-05-17 (CLI command test split)
 
 ## Session Update (2026-05-17)
 
@@ -75,6 +75,16 @@ Last updated: 2026-05-17 (review endpoint test split)
 - Review endpoint error hardening is complete locally: `/review` JSON responses now sanitize
   unexpected `error`, `load_error`, and validation `errors` text while preserving known safe
   operator messages, so local paths or traceback-like details stay out of the browser-facing API.
+- CLI command test cleanup is complete locally: doctor, smoke, inbox, coordination, personal-ops
+  queue, policy, explain, retention, bootstrap, burn-in, runtime verification, delivery check, and
+  wrapper command tests moved out of the large diagnostics test file into a dedicated CLI command
+  test module without changing runtime behavior.
+- Generic error hardening is complete locally: policy config load failures, doctor local API
+  failures, smoke/log/burn-in failures, queue/report file IO failures, and package/report parsing
+  failures now return stable operator-facing error messages instead of raw local exception text.
+- Report error hardening is complete locally: operation, diagnostic, and policy-loading reports now
+  use generic browser/operator-facing error messages for unexpected exceptions while retaining
+  detailed exception text in local logs where it is needed for debugging.
 - Compact expansion shipped locally: proposal lineage now treats terminal local group outcomes as
   handled history. `needs_follow_up` remains follow-up, `snoozed` remains snoozed, `accepted` is
   resolved history, and `rejected` / `superseded` are closed history. Matching action IDs or stable
