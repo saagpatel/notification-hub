@@ -1,12 +1,12 @@
 # Current State
 
-Last updated: 2026-05-17 (queue lifecycle helper refactor)
+Last updated: 2026-05-17 (queue health summary helper refactor)
 
 ## Session Update (2026-05-17)
 
 **Current verification:**
 
-- `main` matched `origin/main` at `e3d64d7` before this pass; latest CI on `main` was passing.
+- `main` matched `origin/main` at `65c093a` before this pass; latest CI on `main` was passing.
 - Local worktree status was clean except for the existing untracked `.claude/` folder.
 - Runtime status remained OK: daemon reachable, runtime wiring current, queue OK, no Slack delivery
   failures, no queued handoffs, and no pending promoted outcomes.
@@ -26,6 +26,9 @@ Last updated: 2026-05-17 (queue lifecycle helper refactor)
 - Queue lifecycle maintainability cleanup is complete locally: queue item update validation,
   lifecycle field mutation, degraded response construction, and next-action text were split into
   smaller helpers without changing the queue update report shape.
+- Queue health summary cleanup is complete locally: queue status counting, pending promotion
+  detection, stale pending calculation, timestamp selection, and next-action text were split into
+  smaller helpers without changing the health report shape.
 - Compact expansion shipped locally: proposal lineage now treats terminal local group outcomes as
   handled history. `needs_follow_up` remains follow-up, `snoozed` remains snoozed, `accepted` is
   resolved history, and `rejected` / `superseded` are closed history. Matching action IDs or stable

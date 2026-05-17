@@ -2412,6 +2412,84 @@ def prune_operator_review_session_reports(
     }
 
 
+def _queue_status_counts(
+    raw_items: list[dict[str, object]],
+) -> tuple[dict[str, int], dict[str, int]]:
+    counts = {status: 0 for status in PERSONAL_OPS_QUEUE_STATUSES}
+    promotion_outcomes = {outcome: 0 for outcome in PERSONAL_OPS_PROMOTION_OUTCOMES}
+    for item in raw_items:
+        status = _as_str(item.get("status")) or "unknown"
+        if status in counts:
+            counts[status] += 1
+        if status == "promoted":
+            outcome = _as_str(item.get("promotion_outcome")) or "pending"
+            if outcome in promotion_outcomes:
+                promotion_outcomes[outcome] += 1
+    return counts, promotion_outcomes
+
+
+def _queue_item_timestamp(item: dict[str, object], *fields: str) -> datetime | None:
+    for field in fields:
+        value = _as_str(item.get(field))
+        if value:
+            return _parse_iso_datetime(value)
+    return None
+
+
+def _oldest_queue_timestamp(
+    items: list[dict[str, object]], *fields: str
+) -> datetime | None:
+    datetimes = [
+        parsed
+        for item in items
+        if (parsed := _queue_item_timestamp(item, *fields)) is not None
+    ]
+    return min(datetimes) if datetimes else None
+
+
+def _promoted_pending_queue_items(
+    raw_items: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    return [
+        item
+        for item in raw_items
+        if item.get("status") == "promoted"
+        and (_as_str(item.get("promotion_outcome")) or "pending") == "pending"
+    ]
+
+
+def _stale_pending_queue_item_count(
+    pending_items: list[dict[str, object]], now: datetime, stale_after_hours: float
+) -> int:
+    stale_after_seconds = max(stale_after_hours, 0) * 60 * 60
+    return sum(
+        1
+        for item in pending_items
+        if (
+            parsed := _queue_item_timestamp(
+                item, "promotion_outcome_at", "promoted_at", "updated_at"
+            )
+        )
+        is not None
+        and (now - parsed).total_seconds() >= stale_after_seconds
+    )
+
+
+def _queue_health_next_action(
+    *, queued_count: int, stale_pending_count: int, promoted_pending_count: int
+) -> str:
+    if queued_count > 0:
+        return "Review queued personal-ops handoff items."
+    if stale_pending_count > 0:
+        return (
+            "Resolve the matching personal-ops suggestion, record the promotion outcome, "
+            "then rerun notification-hub personal-ops-queue-health."
+        )
+    if promoted_pending_count > 0:
+        return "Resolve promoted personal-ops handoff outcomes."
+    return "No queued personal-ops handoff items."
+
+
 def summarize_personal_ops_import_queue(
     *,
     queue_path: Path | None = None,
@@ -2423,75 +2501,29 @@ def summarize_personal_ops_import_queue(
         raw_items = _read_import_queue_items(target_queue_path)
     except OSError:
         raw_items = []
-    counts = {status: 0 for status in PERSONAL_OPS_QUEUE_STATUSES}
-    promotion_outcomes = {outcome: 0 for outcome in PERSONAL_OPS_PROMOTION_OUTCOMES}
-    for item in raw_items:
-        status = _as_str(item.get("status")) or "unknown"
-        if status in counts:
-            counts[status] += 1
-        if status == "promoted":
-            outcome = _as_str(item.get("promotion_outcome")) or "pending"
-            if outcome in promotion_outcomes:
-                promotion_outcomes[outcome] += 1
+    counts, promotion_outcomes = _queue_status_counts(raw_items)
     now = datetime.now(timezone.utc)
     queued_items = [item for item in raw_items if item.get("status") == "queued"]
-    queued_datetimes = [
-        parsed
-        for item in queued_items
-        if (parsed := _parse_iso_datetime(_as_str(item.get("enqueued_at")))) is not None
-    ]
-    oldest = min(queued_datetimes) if queued_datetimes else None
+    oldest = _oldest_queue_timestamp(queued_items, "enqueued_at")
     age = (now - oldest).total_seconds() if oldest is not None else None
-    pending_items = [
-        item
-        for item in raw_items
-        if item.get("status") == "promoted"
-        and (_as_str(item.get("promotion_outcome")) or "pending") == "pending"
-    ]
-    pending_datetimes = [
-        parsed
-        for item in pending_items
-        if (
-            parsed := _parse_iso_datetime(
-                _as_str(item.get("promotion_outcome_at"))
-                or _as_str(item.get("promoted_at"))
-                or _as_str(item.get("updated_at"))
-            )
-        )
-        is not None
-    ]
-    oldest_pending = min(pending_datetimes) if pending_datetimes else None
+    pending_items = _promoted_pending_queue_items(raw_items)
+    oldest_pending = _oldest_queue_timestamp(
+        pending_items, "promotion_outcome_at", "promoted_at", "updated_at"
+    )
     oldest_pending_age = (
         (now - oldest_pending).total_seconds() if oldest_pending is not None else None
     )
-    stale_after_seconds = max(stale_after_hours, 0) * 60 * 60
-    stale_pending_count = sum(
-        1
-        for item in pending_items
-        if (
-            parsed := _parse_iso_datetime(
-                _as_str(item.get("promotion_outcome_at"))
-                or _as_str(item.get("promoted_at"))
-                or _as_str(item.get("updated_at"))
-            )
-        )
-        is not None
-        and (now - parsed).total_seconds() >= stale_after_seconds
+    stale_pending_count = _stale_pending_queue_item_count(
+        pending_items, now, stale_after_hours
     )
     queued_count = counts["queued"]
     promoted_pending_count = promotion_outcomes["pending"]
     status = "warn" if queued_count > 0 or promoted_pending_count > 0 else "ok"
-    if queued_count > 0:
-        next_action = "Review queued personal-ops handoff items."
-    elif stale_pending_count > 0:
-        next_action = (
-            "Resolve the matching personal-ops suggestion, record the promotion outcome, "
-            "then rerun notification-hub personal-ops-queue-health."
-        )
-    elif promoted_pending_count > 0:
-        next_action = "Resolve promoted personal-ops handoff outcomes."
-    else:
-        next_action = "No queued personal-ops handoff items."
+    next_action = _queue_health_next_action(
+        queued_count=queued_count,
+        stale_pending_count=stale_pending_count,
+        promoted_pending_count=promoted_pending_count,
+    )
     return {
         "status": status,
         "queue_path": str(target_queue_path),
