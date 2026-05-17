@@ -1945,7 +1945,7 @@ def delete_action_review_package(
 
 def _load_action_package_payload(path: Path) -> dict[str, object] | None:
     try:
-        payload = json.loads(path.expanduser().read_text(encoding="utf-8"))
+        payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
     if not isinstance(payload, dict):
@@ -3125,7 +3125,7 @@ def _enqueue_personal_ops_import_actions(
             if not isinstance(action_id, str) or action_id in existing_action_ids:
                 skipped_count += 1
                 continue
-            queue_seed = f"{action_id}:{package_path.expanduser()}".encode("utf-8")
+            queue_seed = f"{action_id}:{package_path}".encode("utf-8")
             queue_item = {
                 "schema_version": PERSONAL_OPS_IMPORT_QUEUE_SCHEMA_VERSION,
                 "queue_id": hashlib.sha256(queue_seed).hexdigest()[:16],
@@ -3941,7 +3941,7 @@ def validate_action_package(path: Path) -> ActionPackageValidationReport:
     valid_action_count = 0
 
     try:
-        payload = json.loads(path.expanduser().read_text(encoding="utf-8"))
+        payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         return {
             "status": "degraded",
