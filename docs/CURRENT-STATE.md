@@ -1,6 +1,6 @@
 # Current State
 
-Last updated: 2026-05-17 (coordination-console test split)
+Last updated: 2026-05-17 (inbox action-export test split)
 
 ## Session Update (2026-05-17)
 
@@ -48,6 +48,10 @@ Last updated: 2026-05-17 (coordination-console test split)
   history, rich follow-up review, outcome quality, and queued handoff lifecycle tests moved out of
   the large operations test file into a dedicated coordination-console test module without changing
   runtime behavior.
+- Inbox/action-export test cleanup is complete locally: inbox rollups, near-rollup singles,
+  coordination snapshot wrapping, personal-ops action export filtering, dismissal lifecycle, and
+  repeated-title uniqueness tests moved out of the large operations test file into a dedicated
+  inbox/action-export test module without changing runtime behavior.
 - Compact expansion shipped locally: proposal lineage now treats terminal local group outcomes as
   handled history. `needs_follow_up` remains follow-up, `snoozed` remains snoozed, `accepted` is
   resolved history, and `rejected` / `superseded` are closed history. Matching action IDs or stable
