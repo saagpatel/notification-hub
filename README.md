@@ -205,6 +205,9 @@ is visible. Handled mail follow-ups are summarized separately with rich/thin evi
 repeated handled mail echoes remain reviewable history without looking like fresh operator work.
 Handled proposals also include a lineage reason plus stable-key and evidence-rotation flags, so the
 console can explain when a newer event is still covered by an earlier `needs_follow_up` outcome.
+Use Coordination Console as the lineage-aware operator truth surface: raw `personal-ops-actions`
+exports are pre-lineage source evidence and can still list items that the console has already
+classified as handled history.
 The console also reports promoted handoff outcome quality by rich versus thin evidence and narrows
 the monitor posture to notify only on active proposals, rich handled follow-up re-review, queued
 handoffs, pending promoted outcomes, runtime degradation, or repeated diagnostic echoes.

@@ -55,6 +55,7 @@ async def test_review_page_inherits_action_proposal_review_window(
 
     assert resp.status_code == 200
     assert "const actionProposalReviewWindowHours = 24;" in resp.text
+    assert "__ACTION_PROPOSAL_REVIEW_WINDOW_HOURS__" not in resp.text
     assert (
         "hours=${actionProposalReviewWindowHours}&limit=25"
         in resp.text

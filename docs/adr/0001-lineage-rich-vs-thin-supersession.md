@@ -137,6 +137,12 @@ supersession. The implemented fix is the middle path above: rich handled
 follow-up becomes an explicit re-review signal, while the lineage status stays
 `follow_up` and active proposals remain operator-controlled.
 
+A follow-up observation confirmed the intended clearing behavior. Rich handled
+follow-up only asks for re-review when the latest explicit group outcome is
+older than the rich evidence timestamp. Once the operator records a fresh group
+outcome after that evidence, the item remains handled history and the console
+returns to monitor mode.
+
 ## Triggers to re-open
 
 Re-open this decision when **any** of the following happens:
