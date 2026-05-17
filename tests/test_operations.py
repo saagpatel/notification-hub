@@ -1378,6 +1378,22 @@ def test_rich_follow_up_review_clears_after_fresh_group_outcome() -> None:
     assert _rich_handled_follow_up_actions([fresh_outcome]) == []
 
 
+def test_rich_follow_up_review_clears_multiple_fresh_group_outcomes() -> None:
+    first_fresh_outcome = _coordination_action_report(
+        evidence_timestamp="2026-05-10T04:50:00+00:00",
+        outcome_recorded_at="2026-05-10T05:00:00+00:00",
+    )
+    second_fresh_outcome = _coordination_action_report(
+        evidence_timestamp="2026-05-10T04:55:00+00:00",
+        outcome_recorded_at="2026-05-10T05:01:00+00:00",
+    )
+    second_fresh_outcome["action"]["action_id"] = "action-follow-up-rich-2"
+
+    assert _rich_handled_follow_up_actions(
+        [first_fresh_outcome, second_fresh_outcome]
+    ) == []
+
+
 def test_coordination_console_treats_superseded_group_outcome_as_history(
     tmp_path: Path,
 ) -> None:

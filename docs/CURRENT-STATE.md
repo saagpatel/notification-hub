@@ -1,20 +1,23 @@
 # Current State
 
-Last updated: 2026-05-17 (rich follow-up re-review lane)
+Last updated: 2026-05-17 (review-window drift cleanup)
 
 ## Session Update (2026-05-17)
 
 **Current verification:**
 
-- `main` matched `origin/main` at `ff2aded` before this pass; latest CI on `main` was passing.
-- Runtime status remained OK: daemon reachable, runtime wiring current, queue OK, no queued
-  handoffs, and no pending promoted outcomes.
-- A fresh thin-evidence `Calendar sync degraded` proposal appeared after the prior monitor-mode
-  closeout. Source recheck showed personal-ops ready and calendar sync ready, so the proposal was
-  saved, validated, and locally dismissed as stale recovered noise:
-  `personal-ops-actions-20260517-033110-245366.json`.
-- Coordination Console returned to monitor mode with `active_action_count: 0`; queue health remained
-  clean.
+- `main` matched `origin/main` at `1096854` before this pass; latest CI on `main` was passing.
+- Local worktree status was clean except for the existing untracked `.claude/` folder.
+- Runtime status remained OK: daemon reachable, runtime wiring current, queue OK, no Slack delivery
+  failures, no queued handoffs, and no pending promoted outcomes.
+- A real rich handled follow-up appeared under the `personal-ops:mail:waiting_on_user:high:waiting`
+  group after the re-review lane shipped. Recording a fresh local group outcome moved Coordination
+  Console back to monitor mode with `active_action_count: 0` and `rich_follow_up_review_count: 0`.
+- The local read-only burn-in remained healthy: queue loop ready, queue health OK, scenario OK,
+  runtime OK, and no validation or Slack delivery failures.
+- Review-window drift cleanup is complete locally: the review UI now inherits
+  `ACTION_PROPOSAL_REVIEW_WINDOW_HOURS` from the server instead of hardcoding `24`, and regression
+  coverage now includes multiple rich handled follow-ups clearing after fresh outcomes.
 - Compact expansion shipped locally: proposal lineage now treats terminal local group outcomes as
   handled history. `needs_follow_up` remains follow-up, `snoozed` remains snoozed, `accepted` is
   resolved history, and `rejected` / `superseded` are closed history. Matching action IDs or stable
@@ -43,10 +46,10 @@ Last updated: 2026-05-17 (rich follow-up re-review lane)
 
 **Active backlog (priority order):**
 
-1. Run one live observation pass after the next real rich handled follow-up appears, then decide
-   whether the re-review lane is sufficient or too noisy.
-2. Continue observing `near_rollup_singles`; tune only if one-off resolved echoes or informational
+1. Continue observing `near_rollup_singles`; tune only if one-off resolved echoes or informational
    first occurrences become repeated operator noise.
+2. Keep calendar OAuth recovery work outside this repo unless the operator explicitly asks for
+   cross-project work.
 
 ## Session Update (2026-05-16)
 

@@ -48,6 +48,20 @@ async def test_health_endpoint(client: AsyncClient) -> None:
     assert "events_processed" in data
 
 
+async def test_review_page_inherits_action_proposal_review_window(
+    client: AsyncClient,
+) -> None:
+    resp = await client.get("/review")
+
+    assert resp.status_code == 200
+    assert "const actionProposalReviewWindowHours = 24;" in resp.text
+    assert (
+        "hours=${actionProposalReviewWindowHours}&limit=25"
+        in resp.text
+    )
+    assert "hours: actionProposalReviewWindowHours" in resp.text
+
+
 async def test_health_details_endpoint(client: AsyncClient) -> None:
     with (
         patch(

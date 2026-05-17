@@ -524,6 +524,7 @@ REVIEW_HTML = """<!doctype html>
     const queueReview = document.getElementById("queueReview");
     const importQueue = document.getElementById("importQueue");
     const importQueueFilter = document.getElementById("importQueueFilter");
+    const actionProposalReviewWindowHours = __ACTION_PROPOSAL_REVIEW_WINDOW_HOURS__;
 
     function item(html) {
       const li = document.createElement("li");
@@ -736,7 +737,7 @@ REVIEW_HTML = """<!doctype html>
       await loadReviewSessionRetention();
     }
     async function loadCoordinationConsole() {
-      const res = await fetch("/review/coordination-console?hours=24&limit=25");
+      const res = await fetch(`/review/coordination-console?hours=${actionProposalReviewWindowHours}&limit=25`);
       const data = await res.json();
       const readiness = data.readiness || {};
       const queue = data.queue_health || {};
@@ -920,7 +921,13 @@ REVIEW_HTML = """<!doctype html>
       const res = await fetch(path, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ group_key: groupKey, hours: 24, limit: 25, reason, route })
+        body: JSON.stringify({
+          group_key: groupKey,
+          hours: actionProposalReviewWindowHours,
+          limit: 25,
+          reason,
+          route
+        })
       });
       return res.json();
     }
@@ -991,7 +998,7 @@ REVIEW_HTML = """<!doctype html>
         body: JSON.stringify({
           group_key: groupKey,
           outcome,
-          hours: 24,
+          hours: actionProposalReviewWindowHours,
           limit: 25,
           reason: "Review UI marked this grouped proposal for follow-up."
         })
@@ -1618,7 +1625,12 @@ async def health_details() -> dict[str, object]:
 @app.get("/review", response_class=HTMLResponse)
 async def review() -> HTMLResponse:
     """Local operator review surface."""
-    return HTMLResponse(REVIEW_HTML)
+    return HTMLResponse(
+        REVIEW_HTML.replace(
+            "__ACTION_PROPOSAL_REVIEW_WINDOW_HOURS__",
+            str(ACTION_PROPOSAL_REVIEW_WINDOW_HOURS),
+        )
+    )
 
 
 @app.get("/review/data")
