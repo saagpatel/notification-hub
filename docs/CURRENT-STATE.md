@@ -1,6 +1,6 @@
 # Current State
 
-Last updated: 2026-05-17 (logs burn-in diagnostics test split)
+Last updated: 2026-05-17 (retention policy test split)
 
 ## Session Update (2026-05-17)
 
@@ -64,6 +64,10 @@ Last updated: 2026-05-17 (logs burn-in diagnostics test split)
   and Slack failure counting, burn-in repeated signature reporting, policy-covered noise
   filtering, and Slack failure health tests moved out of the large operations test file into
   a dedicated logs/burn-in diagnostics test module without changing runtime behavior.
+- Retention/policy test cleanup is complete locally: retention rotation, policy config
+  bootstrap, policy warning/degraded handling, sample noise rule drift, and routing fix
+  suggestion tests moved out of the large operations test file into a dedicated retention
+  and policy operations test module without changing runtime behavior.
 - Compact expansion shipped locally: proposal lineage now treats terminal local group outcomes as
   handled history. `needs_follow_up` remains follow-up, `snoozed` remains snoozed, `accepted` is
   resolved history, and `rejected` / `superseded` are closed history. Matching action IDs or stable
