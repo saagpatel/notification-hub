@@ -1,6 +1,6 @@
 # Current State
 
-Last updated: 2026-05-17 (queue health summary helper refactor)
+Last updated: 2026-05-17 (personal-ops queue test split)
 
 ## Session Update (2026-05-17)
 
@@ -29,6 +29,9 @@ Last updated: 2026-05-17 (queue health summary helper refactor)
 - Queue health summary cleanup is complete locally: queue status counting, pending promotion
   detection, stale pending calculation, timestamp selection, and next-action text were split into
   smaller helpers without changing the health report shape.
+- Personal-ops queue test cleanup is complete locally: queue import, lifecycle, health, review,
+  outcome reminder, scenario, and queue burn-in tests moved out of the large operations test file
+  into a dedicated queue test module without changing runtime behavior.
 - Compact expansion shipped locally: proposal lineage now treats terminal local group outcomes as
   handled history. `needs_follow_up` remains follow-up, `snoozed` remains snoozed, `accepted` is
   resolved history, and `rejected` / `superseded` are closed history. Matching action IDs or stable
