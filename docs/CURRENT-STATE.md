@@ -1,6 +1,6 @@
 # Current State
 
-Last updated: 2026-05-17 (personal-ops queue test split)
+Last updated: 2026-05-17 (README command inventory guardrail)
 
 ## Session Update (2026-05-17)
 
@@ -32,6 +32,9 @@ Last updated: 2026-05-17 (personal-ops queue test split)
 - Personal-ops queue test cleanup is complete locally: queue import, lifecycle, health, review,
   outcome reminder, scenario, and queue burn-in tests moved out of the large operations test file
   into a dedicated queue test module without changing runtime behavior.
+- README command inventory coverage is complete locally: documented notification-hub command
+  examples in bash blocks are checked against the real `pyproject.toml` script inventory and CLI
+  subcommand inventory so operator-facing command docs are less likely to drift.
 - Compact expansion shipped locally: proposal lineage now treats terminal local group outcomes as
   handled history. `needs_follow_up` remains follow-up, `snoozed` remains snoozed, `accepted` is
   resolved history, and `rejected` / `superseded` are closed history. Matching action IDs or stable
