@@ -1,6 +1,6 @@
 # ADR 0001 — Should an evidence-quality upgrade supersede a prior `needs_follow_up` outcome?
 
-**Status:** Deferred (not implemented as of 2026-05-11)
+**Status:** Accepted — sticky follow-up with explicit rich re-review signal
 **Date:** 2026-05-11
 **Context:** This is the first ADR in the repository. The pattern: capture
 non-obvious design decisions and trade-offs so future maintainers don't have
@@ -89,21 +89,27 @@ mechanism (`accepted`, `rejected`, `superseded`) to overturn.
 
 ## Decision
 
-**Defer.** Keep the current behavior (Option B) until we have at least
-one real case of a rich proposal arriving under a prior `needs_follow_up`
-outcome with non-test producer evidence (i.e. real Gmail mailbox, real
-thread). That case will provide concrete evidence about whether the
-"stickiness" felt correct in practice or annoyingly hid signal.
+**Accept Option B with a visibility mitigation.** Keep the current
+lineage behavior: `needs_follow_up` stays sticky until the operator records
+a later outcome. Do not automatically promote rich arrivals back into active
+proposal work.
+
+When rich evidence arrives under handled follow-up history, surface it as an
+operator-visible re-review signal in the Coordination Console. This makes the
+new evidence visible without reversing the earlier operator decision or
+creating downstream personal-ops work.
 
 Until then:
 
 - `_build_proposal_lineage` continues to classify rich proposals as
   `follow_up` when they match a `needs_follow_up` group's stable proposal
   key.
-- The Coordination Console's `handled_history_summary` already breaks down
-  rich vs thin counts within handled follow-up, so the visibility is
-  preserved even if active classification isn't changed.
-- This ADR is the record of the question and the deferral.
+- The Coordination Console exposes a `follow_up_review` review mode,
+  `rich_follow_up_review_count`, and a `next_signal` status of `review` when
+  rich handled follow-up needs an operator decision.
+- Active proposal count remains zero unless the operator records a new
+  outcome or queues/promotes work through the existing operator-mediated
+  path.
 
 ### Recheck — 2026-05-16
 
@@ -121,16 +127,15 @@ operator outcome changes it.
 
 ### Recheck — 2026-05-17
 
-The post-cleanup observation pass still does not change the decision. The
-Coordination Console is in monitor mode with no active proposals, no queued
-handoffs, and no pending promoted outcomes. `outcome_quality.rich` remains
-0/0 resolved, so there is still no real promoted/resolved rich handoff case
-to use for this ADR.
+The follow-up pass created real approval entries with thread, draft, provider
+draft, group, mailbox, and approval IDs. Those entries confirmed the practical
+gap: rich handled follow-up can sit under a sticky `needs_follow_up` stable key
+while the console says monitor mode.
 
-`near_rollup_singles` did surface the one-off approval request created while
-resolving the stale rich-evidence test draft. That is a useful visibility
-artifact, but it is a cleanup echo rather than a recurring operator signal.
-No supersession behavior should change from this evidence alone.
+This evidence re-opened the ADR, but it did not justify automatic
+supersession. The implemented fix is the middle path above: rich handled
+follow-up becomes an explicit re-review signal, while the lineage status stays
+`follow_up` and active proposals remain operator-controlled.
 
 ## Triggers to re-open
 
@@ -141,9 +146,8 @@ Re-open this decision when **any** of the following happens:
 2. An operator records a new group outcome (e.g., `accepted` or `rejected`)
    that explicitly overturns a prior `needs_follow_up` because rich
    evidence arrived — and they note this is a recurring need.
-3. The console adds an operator-visible signal (e.g., the next-signal lane
-   surfacing "rich-evidence handled follow-up needs re-review") that makes
-   the gap visible enough to require a structural answer.
+3. The re-review lane repeatedly produces noise or fails to get acted on,
+   suggesting that sticky follow-up is still too conservative.
 
 ## Related fields and surfaces
 
@@ -153,8 +157,9 @@ up in conversation and aren't real fields):
 | Concept | Real field name | Where |
 |---|---|---|
 | Next operator-facing signal | `next_signal` (object) | `coordination-console` JSON output, `/review/coordination-console` |
+| Rich handled follow-up re-review count | `proposal_review.rich_follow_up_review_count` | `coordination-console` JSON output, `/review/coordination-console` |
+| Rich handled follow-up action ids | `proposal_review.rich_follow_up_action_ids` | `coordination-console` JSON output, `/review/coordination-console` |
 | Rich-evidence readiness in synthetic drill | `scenario.rich_evidence_ready` (bool) | `operator-handoff-drill` output |
-| Rich-evidence handled count | `handled_history_summary.rich_evidence_count` | `proposal_review.handled_history_summary` |
 | Per-proposal evidence rotation | `evidence_event_rotated` (bool), `stable_key_matched` (bool) | inside each `handled_actions` entry |
 
 `real_signal_readiness` is **not** a real field — the `/review` UI panel

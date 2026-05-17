@@ -628,11 +628,12 @@ REVIEW_HTML = """<!doctype html>
       const outcomeQuality = data.outcome_quality || {};
       const latestProof = (data.burn_in_reports || [])[0] || {};
       const active = data.active_action_count ?? 0;
+      const richFollowUp = review.rich_follow_up_review_count ?? 0;
       const queued = queue.queued_count ?? 0;
       const pending = queue.promoted_pending_count ?? 0;
       const stale = queue.promoted_pending_stale_count ?? 0;
       const readyForLive = Boolean(latestProof.ready_for_live_promotion);
-      const status = active > 0 || queued > 0 || pending > 0 || stale > 0
+      const status = active > 0 || richFollowUp > 0 || queued > 0 || pending > 0 || stale > 0
         ? "action"
         : readiness.decision === "ready_to_expand" && readyForLive
           ? "ready"
@@ -644,6 +645,7 @@ REVIEW_HTML = """<!doctype html>
         <div class="line"><span class="title">${esc(signal.title || "Waiting for next real signal")}</span><span class="meta">${esc(status)}</span></div>
         <div class="badge-row">
           ${warnBadge(`active ${active}`, active > 0)}
+          ${warnBadge(`rich follow-up ${richFollowUp}`, richFollowUp > 0)}
           ${badge(`handled ${data.handled_action_count ?? 0}`)}
           ${warnBadge(`queued ${queued}`, queued > 0)}
           ${warnBadge(`pending ${pending}`, pending > 0)}
@@ -741,6 +743,7 @@ REVIEW_HTML = """<!doctype html>
       const signal = data.next_signal || {};
       const outcomeQuality = data.outcome_quality || {};
       const review = data.proposal_review || {};
+      const richFollowUp = review.rich_follow_up_review_count ?? 0;
       const guideSteps = data.guide_steps || [];
       const guideRows = guideSteps.slice(0, 4).map(step => item(`
         <div class="line"><span class="title">${esc(step.step)}. ${esc(step.title)}</span><span class="meta">${esc(step.status)}</span></div>
@@ -752,6 +755,7 @@ REVIEW_HTML = """<!doctype html>
         <div class="badge-row">
           ${badge(`actions ${data.action_count ?? 0}`)}
           ${warnBadge(`active ${data.active_action_count ?? 0}`, (data.active_action_count ?? 0) > 0)}
+          ${warnBadge(`rich follow-up ${richFollowUp}`, richFollowUp > 0)}
           ${badge(`handled ${data.handled_action_count ?? 0}`)}
           ${badge(`dismissed ${data.dismissal_count ?? 0}`)}
           ${warnBadge(`queued ${queue.queued_count ?? 0}`, (queue.queued_count ?? 0) > 0)}
@@ -809,6 +813,7 @@ REVIEW_HTML = """<!doctype html>
           ${badge(`closed ${review.ignored_count ?? 0}`)}
           ${badge(`handled ${review.handled_count ?? 0}`)}
           ${badge(`mail ${review.handled_mail_count ?? 0}`)}
+          ${warnBadge(`rich follow-up ${review.rich_follow_up_review_count ?? 0}`, (review.rich_follow_up_review_count ?? 0) > 0)}
           ${badge(`stable key ${review.handled_stable_key_match_count ?? 0}`)}
           ${badge(`rotated ${review.handled_evidence_rotation_count ?? 0}`)}
         </div>

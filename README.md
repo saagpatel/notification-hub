@@ -134,6 +134,9 @@ follow-up history, `snoozed` stays snoozed, `accepted` is resolved history, and 
 `superseded` are closed history. A later save-only package inspection does not reopen that group,
 and repeated rollups can keep that handled state even when their newest evidence event rotates.
 Queueing, promotion, dismissal, or a different proposal key can still create a new actionable state.
+If a handled follow-up gains rich evidence, the console keeps the proposal in handled history but
+surfaces a `follow_up_review` mode and `review` next signal so the operator can explicitly decide
+whether to keep it parked or record a new group outcome.
 For personal-ops mail approval groups, Proposal Review adds a local route recommendation that
 separates concrete reply candidates from repeated phase or workflow chatter. The recommendation is
 advisory only; it never promotes, suppresses, or sends by itself. The review controls can also save
@@ -200,8 +203,8 @@ repeated handled mail echoes remain reviewable history without looking like fres
 Handled proposals also include a lineage reason plus stable-key and evidence-rotation flags, so the
 console can explain when a newer event is still covered by an earlier `needs_follow_up` outcome.
 The console also reports promoted handoff outcome quality by rich versus thin evidence and narrows
-the monitor posture to notify only on active proposals, queued handoffs, pending promoted outcomes,
-runtime degradation, or repeated diagnostic echoes.
+the monitor posture to notify only on active proposals, rich handled follow-up re-review, queued
+handoffs, pending promoted outcomes, runtime degradation, or repeated diagnostic echoes.
 The personal-ops-queue-health command is the normal maintenance check for this queue. It reports
 queued item age, promoted handoffs still waiting on downstream outcome sync, stale pending
 promotions, and the next safe operator commands without applying work.
