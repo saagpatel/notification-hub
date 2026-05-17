@@ -1,6 +1,6 @@
 # Current State
 
-Last updated: 2026-05-17 (inbox rollup helper split)
+Last updated: 2026-05-17 (action proposal shaping split)
 
 ## Session Update (2026-05-17)
 
@@ -116,6 +116,10 @@ Last updated: 2026-05-17 (inbox rollup helper split)
 - Inbox rollup helper cleanup is complete locally: event-to-inbox item shaping, repeated rollup
   construction, near-rollup single construction, and intent bucket mapping moved into
   `operations_inbox.py`, while `run_inbox` behavior remains in `operations.py`.
+- Action proposal shaping cleanup is complete locally: rollup-to-action mapping, stable proposal
+  dismissal key generation, action candidate limit selection, and evidence-quality helpers moved
+  into `operations_actions.py`, while proposal export and Coordination Console behavior stays in
+  `operations.py`.
 - Generic error hardening is complete locally: policy config load failures, doctor local API
   failures, smoke/log/burn-in failures, queue/report file IO failures, and package/report parsing
   failures now return stable operator-facing error messages instead of raw local exception text.
