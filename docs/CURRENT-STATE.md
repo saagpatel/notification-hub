@@ -1,12 +1,12 @@
 # Current State
 
-Last updated: 2026-05-17 (coordination-console helper refactor)
+Last updated: 2026-05-17 (queue lifecycle helper refactor)
 
 ## Session Update (2026-05-17)
 
 **Current verification:**
 
-- `main` matched `origin/main` at `84bde8c` before this pass; latest CI on `main` was passing.
+- `main` matched `origin/main` at `e3d64d7` before this pass; latest CI on `main` was passing.
 - Local worktree status was clean except for the existing untracked `.claude/` folder.
 - Runtime status remained OK: daemon reachable, runtime wiring current, queue OK, no Slack delivery
   failures, no queued handoffs, and no pending promoted outcomes.
@@ -23,6 +23,9 @@ Last updated: 2026-05-17 (coordination-console helper refactor)
 - Coordination Console maintainability cleanup is complete locally: proposal review summary logic,
   proposal group assembly, and guide-stage branches were split into smaller helpers inside
   `operations.py` without changing the public report shape.
+- Queue lifecycle maintainability cleanup is complete locally: queue item update validation,
+  lifecycle field mutation, degraded response construction, and next-action text were split into
+  smaller helpers without changing the queue update report shape.
 - Compact expansion shipped locally: proposal lineage now treats terminal local group outcomes as
   handled history. `needs_follow_up` remains follow-up, `snoozed` remains snoozed, `accepted` is
   resolved history, and `rejected` / `superseded` are closed history. Matching action IDs or stable

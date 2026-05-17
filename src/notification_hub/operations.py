@@ -3132,6 +3132,128 @@ def list_personal_ops_import_queue(
     return reports
 
 
+def _queue_update_degraded_report(
+    *,
+    queue_id: str,
+    queue_path: Path,
+    next_action: str,
+    error: str,
+) -> PersonalOpsImportQueueUpdateReport:
+    return {
+        "status": "degraded",
+        "queue_id": queue_id,
+        "queue_path": str(queue_path),
+        "updated": False,
+        "item": None,
+        "next_action": next_action,
+        "error": error,
+    }
+
+
+def _validate_queue_update_request(
+    *,
+    queue_id: str,
+    queue_path: Path,
+    status: str,
+    snoozed_until: str | None,
+    promotion_outcome: str | None,
+) -> PersonalOpsImportQueueUpdateReport | None:
+    if status not in PERSONAL_OPS_QUEUE_STATUSES:
+        return _queue_update_degraded_report(
+            queue_id=queue_id,
+            queue_path=queue_path,
+            next_action="Use one of: queued, reviewed, rejected, snoozed, superseded, promoted.",
+            error=f"invalid queue status: {status}",
+        )
+    if promotion_outcome is not None and promotion_outcome not in PERSONAL_OPS_PROMOTION_OUTCOMES:
+        return _queue_update_degraded_report(
+            queue_id=queue_id,
+            queue_path=queue_path,
+            next_action="Use one of: pending, accepted, rejected, ignored.",
+            error=f"invalid promotion outcome: {promotion_outcome}",
+        )
+    if status == "snoozed" and snoozed_until is None:
+        return _queue_update_degraded_report(
+            queue_id=queue_id,
+            queue_path=queue_path,
+            next_action="Pass --snoozed-until when snoozing a queued handoff.",
+            error="snoozed_until is required for snoozed status",
+        )
+    return None
+
+
+def _apply_queue_item_lifecycle_update(
+    *,
+    item: dict[str, object],
+    status: str,
+    now: str,
+    reason: str | None,
+    snoozed_until: str | None,
+    promotion_target: str | None,
+    promotion_target_id: str | None,
+    promotion_outcome: str | None,
+    promotion_outcome_note: str | None,
+) -> None:
+    item["status"] = status
+    item["updated_at"] = now
+    if reason:
+        item["outcome_reason"] = reason
+    if status == "reviewed":
+        item["reviewed_at"] = now
+    elif status == "rejected":
+        item["rejected_at"] = now
+    elif status == "snoozed":
+        item["snoozed_at"] = now
+        item["snoozed_until"] = snoozed_until
+    elif status == "superseded":
+        item["superseded_at"] = now
+    elif status == "promoted":
+        item["promoted_at"] = now
+        item["promotion_target"] = promotion_target or "personal-ops task suggestion"
+        if promotion_target_id:
+            item["promotion_target_id"] = promotion_target_id
+        item["promotion_outcome"] = (
+            promotion_outcome or _as_str(item.get("promotion_outcome")) or "pending"
+        )
+        if promotion_outcome is not None:
+            item["promotion_outcome_at"] = now
+        if promotion_outcome_note:
+            item["promotion_outcome_note"] = promotion_outcome_note
+        item["applied"] = True
+    elif status == "queued":
+        item["applied"] = False
+        item.pop("promoted_at", None)
+        item.pop("promotion_target", None)
+        item.pop("promotion_target_id", None)
+        item.pop("promotion_outcome", None)
+        item.pop("promotion_outcome_at", None)
+        item.pop("promotion_outcome_note", None)
+    if status != "queued" and promotion_outcome is not None:
+        item["promotion_outcome"] = promotion_outcome
+        item["promotion_outcome_at"] = now
+    if status != "queued" and promotion_outcome_note:
+        item["promotion_outcome_note"] = promotion_outcome_note
+
+
+def _queue_update_next_action(
+    *,
+    status: str,
+    item: dict[str, object],
+) -> str:
+    if status == "promoted":
+        item_report = _import_queue_item_report(item)
+        if item_report["promotion_outcome"] == "pending":
+            return (
+                "Accept or reject the matching personal-ops task suggestion, then record the outcome."
+            )
+        return "Promotion outcome is recorded; no queue action is needed."
+    if status == "rejected":
+        return "No personal-ops action will be created for this handoff."
+    if status == "snoozed":
+        return "Review this handoff again after the snooze window."
+    return "Continue reviewing the import queue."
+
+
 def update_personal_ops_import_queue_item(
     *,
     queue_id: str,
@@ -3146,139 +3268,70 @@ def update_personal_ops_import_queue_item(
 ) -> PersonalOpsImportQueueUpdateReport:
     """Update one queued personal-ops handoff lifecycle state without applying work."""
     target_queue_path = queue_path or PERSONAL_OPS_IMPORT_QUEUE
-    if status not in PERSONAL_OPS_QUEUE_STATUSES:
-        return {
-            "status": "degraded",
-            "queue_id": queue_id,
-            "queue_path": str(target_queue_path),
-            "updated": False,
-            "item": None,
-            "next_action": "Use one of: queued, reviewed, rejected, snoozed, superseded, promoted.",
-            "error": f"invalid queue status: {status}",
-        }
-    if promotion_outcome is not None and promotion_outcome not in PERSONAL_OPS_PROMOTION_OUTCOMES:
-        return {
-            "status": "degraded",
-            "queue_id": queue_id,
-            "queue_path": str(target_queue_path),
-            "updated": False,
-            "item": None,
-            "next_action": "Use one of: pending, accepted, rejected, ignored.",
-            "error": f"invalid promotion outcome: {promotion_outcome}",
-        }
-    if status == "snoozed" and snoozed_until is None:
-        return {
-            "status": "degraded",
-            "queue_id": queue_id,
-            "queue_path": str(target_queue_path),
-            "updated": False,
-            "item": None,
-            "next_action": "Pass --snoozed-until when snoozing a queued handoff.",
-            "error": "snoozed_until is required for snoozed status",
-        }
+    validation_error = _validate_queue_update_request(
+        queue_id=queue_id,
+        queue_path=target_queue_path,
+        status=status,
+        snoozed_until=snoozed_until,
+        promotion_outcome=promotion_outcome,
+    )
+    if validation_error is not None:
+        return validation_error
+
     try:
         raw_items = _read_import_queue_items(target_queue_path)
     except OSError as exc:
-        return {
-            "status": "degraded",
-            "queue_id": queue_id,
-            "queue_path": str(target_queue_path),
-            "updated": False,
-            "item": None,
-            "next_action": "Fix queue read errors, then retry the lifecycle update.",
-            "error": str(exc),
-        }
+        return _queue_update_degraded_report(
+            queue_id=queue_id,
+            queue_path=target_queue_path,
+            next_action="Fix queue read errors, then retry the lifecycle update.",
+            error=str(exc),
+        )
 
     matched: dict[str, object] | None = None
     now = datetime.now(timezone.utc).isoformat()
     for item in raw_items:
         if item.get("queue_id") != queue_id:
             continue
-        item["status"] = status
-        item["updated_at"] = now
-        if reason:
-            item["outcome_reason"] = reason
-        if status == "reviewed":
-            item["reviewed_at"] = now
-        elif status == "rejected":
-            item["rejected_at"] = now
-        elif status == "snoozed":
-            item["snoozed_at"] = now
-            item["snoozed_until"] = snoozed_until
-        elif status == "superseded":
-            item["superseded_at"] = now
-        elif status == "promoted":
-            item["promoted_at"] = now
-            item["promotion_target"] = promotion_target or "personal-ops task suggestion"
-            if promotion_target_id:
-                item["promotion_target_id"] = promotion_target_id
-            item["promotion_outcome"] = (
-                promotion_outcome or _as_str(item.get("promotion_outcome")) or "pending"
-            )
-            if promotion_outcome is not None:
-                item["promotion_outcome_at"] = now
-            if promotion_outcome_note:
-                item["promotion_outcome_note"] = promotion_outcome_note
-            item["applied"] = True
-        elif status == "queued":
-            item["applied"] = False
-            item.pop("promoted_at", None)
-            item.pop("promotion_target", None)
-            item.pop("promotion_target_id", None)
-            item.pop("promotion_outcome", None)
-            item.pop("promotion_outcome_at", None)
-            item.pop("promotion_outcome_note", None)
-        if status != "queued" and promotion_outcome is not None:
-            item["promotion_outcome"] = promotion_outcome
-            item["promotion_outcome_at"] = now
-        if status != "queued" and promotion_outcome_note:
-            item["promotion_outcome_note"] = promotion_outcome_note
+        _apply_queue_item_lifecycle_update(
+            item=item,
+            status=status,
+            now=now,
+            reason=reason,
+            snoozed_until=snoozed_until,
+            promotion_target=promotion_target,
+            promotion_target_id=promotion_target_id,
+            promotion_outcome=promotion_outcome,
+            promotion_outcome_note=promotion_outcome_note,
+        )
         matched = item
         break
 
     if matched is None:
-        return {
-            "status": "degraded",
-            "queue_id": queue_id,
-            "queue_path": str(target_queue_path),
-            "updated": False,
-            "item": None,
-            "next_action": "Refresh the import queue and choose an existing queue id.",
-            "error": "queue item not found",
-        }
+        return _queue_update_degraded_report(
+            queue_id=queue_id,
+            queue_path=target_queue_path,
+            next_action="Refresh the import queue and choose an existing queue id.",
+            error="queue item not found",
+        )
 
     try:
         _write_import_queue_items(target_queue_path, raw_items)
     except OSError as exc:
-        return {
-            "status": "degraded",
-            "queue_id": queue_id,
-            "queue_path": str(target_queue_path),
-            "updated": False,
-            "item": None,
-            "next_action": "Fix queue write errors, then retry the lifecycle update.",
-            "error": str(exc),
-        }
+        return _queue_update_degraded_report(
+            queue_id=queue_id,
+            queue_path=target_queue_path,
+            next_action="Fix queue write errors, then retry the lifecycle update.",
+            error=str(exc),
+        )
 
-    if status == "promoted":
-        item_report = _import_queue_item_report(matched)
-        if item_report["promotion_outcome"] == "pending":
-            next_action = "Accept or reject the matching personal-ops task suggestion, then record the outcome."
-        else:
-            next_action = "Promotion outcome is recorded; no queue action is needed."
-    elif status == "rejected":
-        next_action = "No personal-ops action will be created for this handoff."
-    elif status == "snoozed":
-        next_action = "Review this handoff again after the snooze window."
-    else:
-        next_action = "Continue reviewing the import queue."
     return {
         "status": "ok",
         "queue_id": queue_id,
         "queue_path": str(target_queue_path),
         "updated": True,
         "item": _import_queue_item_report(matched),
-        "next_action": next_action,
+        "next_action": _queue_update_next_action(status=status, item=matched),
         "error": None,
     }
 
