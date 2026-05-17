@@ -1,12 +1,12 @@
 # Current State
 
-Last updated: 2026-05-17 (CI checkout Node 24 cleanup)
+Last updated: 2026-05-17 (coordination-console helper refactor)
 
 ## Session Update (2026-05-17)
 
 **Current verification:**
 
-- `main` matched `origin/main` at `cd0f9f6` before this pass; latest CI on `main` was passing.
+- `main` matched `origin/main` at `84bde8c` before this pass; latest CI on `main` was passing.
 - Local worktree status was clean except for the existing untracked `.claude/` folder.
 - Runtime status remained OK: daemon reachable, runtime wiring current, queue OK, no Slack delivery
   failures, no queued handoffs, and no pending promoted outcomes.
@@ -20,6 +20,9 @@ Last updated: 2026-05-17 (CI checkout Node 24 cleanup)
   coverage now includes multiple rich handled follow-ups clearing after fresh outcomes.
 - CI maintenance is complete locally: `actions/checkout` moved from `v4` to `v5`, the official
   Node 24 migration release, to clear the GitHub Actions Node 20 deprecation warning.
+- Coordination Console maintainability cleanup is complete locally: proposal review summary logic,
+  proposal group assembly, and guide-stage branches were split into smaller helpers inside
+  `operations.py` without changing the public report shape.
 - Compact expansion shipped locally: proposal lineage now treats terminal local group outcomes as
   handled history. `needs_follow_up` remains follow-up, `snoozed` remains snoozed, `accepted` is
   resolved history, and `rejected` / `superseded` are closed history. Matching action IDs or stable

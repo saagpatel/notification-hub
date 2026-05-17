@@ -5670,39 +5670,27 @@ def _handled_history_summary(
     return f"{len(handled_actions)} handled proposal(s) are visible as history."
 
 
-def _build_proposal_review(
+def _proposal_review_status_count(
+    actions: list[CoordinationConsoleActionReport],
+    status: str,
+) -> int:
+    return sum(1 for item in actions if item["lineage_status"] == status)
+
+
+def _build_proposal_review_groups(
     *,
     active_actions: list[CoordinationConsoleActionReport],
-    handled_actions: list[CoordinationConsoleActionReport],
     group_history: list[ActionProposalGroupHistoryReport],
-) -> CoordinationProposalReviewReport:
-    new_count = sum(1 for item in active_actions if item["lineage_status"] == "new")
-    queued_count = sum(1 for item in active_actions if item["lineage_status"] == "queued")
-    promoted_count = sum(1 for item in active_actions if item["lineage_status"] == "promoted")
-    reviewed_only_count = sum(1 for item in handled_actions if item["lineage_status"] == "reviewed")
-    follow_up_count = sum(1 for item in handled_actions if item["lineage_status"] == "follow_up")
-    snoozed_count = sum(1 for item in handled_actions if item["lineage_status"] == "snoozed")
-    resolved_count = sum(1 for item in handled_actions if item["lineage_status"] == "resolved")
-    ignored_count = sum(1 for item in handled_actions if item["lineage_status"] == "ignored")
-    handled_mail = _handled_mail_actions(handled_actions)
-    handled_mail_rich_count = sum(
-        1 for item in handled_mail if _action_evidence_quality(item["action"]) == "rich"
-    )
-    handled_stable_key_match_count = sum(
-        1 for item in handled_actions if item["stable_key_matched"]
-    )
-    handled_evidence_rotation_count = sum(
-        1 for item in handled_actions if item["evidence_event_rotated"]
-    )
-    rich_follow_up_actions = _rich_handled_follow_up_actions(handled_actions)
-    handled_history_summary = _handled_history_summary(handled_actions)
+) -> list[CoordinationProposalReviewGroup]:
     grouped: dict[tuple[str, str | None, str, str, str], list[CoordinationConsoleActionReport]] = {}
     for item in active_actions:
         grouped.setdefault(_action_group_key(item["action"]), []).append(item)
+
     history_by_group: dict[str, list[ActionProposalGroupHistoryReport]] = {}
     for item in group_history:
         history_by_group.setdefault(item["group_key"], []).append(item)
-    groups = [
+
+    return [
         _build_proposal_review_group(
             key=key,
             actions=items,
@@ -5720,53 +5708,140 @@ def _build_proposal_review(
             ),
         )
     ]
-    primary_action_id = active_actions[0]["action"]["action_id"] if active_actions else None
+
+
+def _proposal_review_monitor_summary(
+    *,
+    handled_actions: list[CoordinationConsoleActionReport],
+    handled_mail: list[CoordinationConsoleActionReport],
+    handled_history_summary: str | None,
+    reviewed_only_count: int,
+    follow_up_count: int,
+    resolved_count: int,
+    ignored_count: int,
+    snoozed_count: int,
+) -> str:
+    if not handled_actions:
+        return "No active proposals are waiting."
+
+    details: list[str] = []
+    if reviewed_only_count:
+        details.append(f"{reviewed_only_count} reviewed-only")
+    if follow_up_count:
+        details.append(f"{follow_up_count} follow-up")
+    if resolved_count:
+        details.append(f"{resolved_count} resolved")
+    if ignored_count:
+        details.append(f"{ignored_count} closed")
+    if snoozed_count:
+        details.append(f"{snoozed_count} snoozed")
+    suffix = f" ({', '.join(details)})" if details else ""
+
+    if handled_history_summary is not None and handled_mail:
+        return f"{handled_history_summary}{suffix}"
+    return f"{len(handled_actions)} handled proposal(s) are visible as history{suffix}."
+
+
+def _proposal_review_mode_summary(
+    *,
+    new_count: int,
+    queued_count: int,
+    promoted_count: int,
+    handled_actions: list[CoordinationConsoleActionReport],
+    handled_mail: list[CoordinationConsoleActionReport],
+    handled_history_summary: str | None,
+    rich_follow_up_actions: list[CoordinationConsoleActionReport],
+    reviewed_only_count: int,
+    follow_up_count: int,
+    resolved_count: int,
+    ignored_count: int,
+    snoozed_count: int,
+) -> tuple[str, str, str]:
     if new_count > 1:
-        mode = "batch_review"
-        summary = f"{new_count} new proposal(s) can be reviewed as grouped operator work."
-        next_action = "Save one review package, inspect grouped evidence, then queue only the right handoff(s)."
-    elif new_count == 1:
-        mode = "single_review"
-        summary = "One new proposal is ready for operator review."
-        next_action = (
-            "Save and validate a review package, then queue the handoff if the evidence is right."
+        return (
+            "batch_review",
+            f"{new_count} new proposal(s) can be reviewed as grouped operator work.",
+            "Save one review package, inspect grouped evidence, then queue only the right handoff(s).",
         )
-    elif queued_count or promoted_count:
-        mode = "lifecycle"
-        summary = "A proposal is already in the queue or promotion lifecycle."
-        next_action = "Finish the queued or promoted handoff before staging more work."
-    elif rich_follow_up_actions:
-        mode = "follow_up_review"
-        summary = (
-            f"{len(rich_follow_up_actions)} rich handled follow-up item(s) need operator re-review."
+    if new_count == 1:
+        return (
+            "single_review",
+            "One new proposal is ready for operator review.",
+            "Save and validate a review package, then queue the handoff if the evidence is right.",
         )
-        next_action = (
-            "Review the rich handled follow-up history and record an explicit group outcome."
+    if queued_count or promoted_count:
+        return (
+            "lifecycle",
+            "A proposal is already in the queue or promotion lifecycle.",
+            "Finish the queued or promoted handoff before staging more work.",
         )
-    else:
-        mode = "monitor"
-        if handled_actions:
-            details: list[str] = []
-            if reviewed_only_count:
-                details.append(f"{reviewed_only_count} reviewed-only")
-            if follow_up_count:
-                details.append(f"{follow_up_count} follow-up")
-            if resolved_count:
-                details.append(f"{resolved_count} resolved")
-            if ignored_count:
-                details.append(f"{ignored_count} closed")
-            if snoozed_count:
-                details.append(f"{snoozed_count} snoozed")
-            suffix = f" ({', '.join(details)})" if details else ""
-            if handled_history_summary is not None and handled_mail:
-                summary = f"{handled_history_summary}{suffix}"
-            else:
-                summary = (
-                    f"{len(handled_actions)} handled proposal(s) are visible as history{suffix}."
-                )
-        else:
-            summary = "No active proposals are waiting."
-        next_action = "Monitor for the next real proposal."
+    if rich_follow_up_actions:
+        return (
+            "follow_up_review",
+            f"{len(rich_follow_up_actions)} rich handled follow-up item(s) need operator re-review.",
+            "Review the rich handled follow-up history and record an explicit group outcome.",
+        )
+    return (
+        "monitor",
+        _proposal_review_monitor_summary(
+            handled_actions=handled_actions,
+            handled_mail=handled_mail,
+            handled_history_summary=handled_history_summary,
+            reviewed_only_count=reviewed_only_count,
+            follow_up_count=follow_up_count,
+            resolved_count=resolved_count,
+            ignored_count=ignored_count,
+            snoozed_count=snoozed_count,
+        ),
+        "Monitor for the next real proposal.",
+    )
+
+
+def _build_proposal_review(
+    *,
+    active_actions: list[CoordinationConsoleActionReport],
+    handled_actions: list[CoordinationConsoleActionReport],
+    group_history: list[ActionProposalGroupHistoryReport],
+) -> CoordinationProposalReviewReport:
+    new_count = _proposal_review_status_count(active_actions, "new")
+    queued_count = _proposal_review_status_count(active_actions, "queued")
+    promoted_count = _proposal_review_status_count(active_actions, "promoted")
+    reviewed_only_count = _proposal_review_status_count(handled_actions, "reviewed")
+    follow_up_count = _proposal_review_status_count(handled_actions, "follow_up")
+    snoozed_count = _proposal_review_status_count(handled_actions, "snoozed")
+    resolved_count = _proposal_review_status_count(handled_actions, "resolved")
+    ignored_count = _proposal_review_status_count(handled_actions, "ignored")
+    handled_mail = _handled_mail_actions(handled_actions)
+    handled_mail_rich_count = sum(
+        1 for item in handled_mail if _action_evidence_quality(item["action"]) == "rich"
+    )
+    handled_stable_key_match_count = sum(
+        1 for item in handled_actions if item["stable_key_matched"]
+    )
+    handled_evidence_rotation_count = sum(
+        1 for item in handled_actions if item["evidence_event_rotated"]
+    )
+    rich_follow_up_actions = _rich_handled_follow_up_actions(handled_actions)
+    handled_history_summary = _handled_history_summary(handled_actions)
+    groups = _build_proposal_review_groups(
+        active_actions=active_actions,
+        group_history=group_history,
+    )
+    primary_action_id = active_actions[0]["action"]["action_id"] if active_actions else None
+    mode, summary, next_action = _proposal_review_mode_summary(
+        new_count=new_count,
+        queued_count=queued_count,
+        promoted_count=promoted_count,
+        handled_actions=handled_actions,
+        handled_mail=handled_mail,
+        handled_history_summary=handled_history_summary,
+        rich_follow_up_actions=rich_follow_up_actions,
+        reviewed_only_count=reviewed_only_count,
+        follow_up_count=follow_up_count,
+        resolved_count=resolved_count,
+        ignored_count=ignored_count,
+        snoozed_count=snoozed_count,
+    )
     return {
         "mode": mode,
         "summary": summary,
@@ -5834,169 +5909,174 @@ def _queue_outcome_commands(item: PersonalOpsImportQueueItemReport | None) -> li
     ]
 
 
-def _build_coordination_console_guide(
+def _coordination_outcome_sync_guide(
     *,
-    readiness: CoordinationReadinessReport,
-    active_actions: list[CoordinationConsoleActionReport],
-    handled_actions: list[CoordinationConsoleActionReport],
     queue_health: PersonalOpsImportQueueHealthReport,
-    queued_items: list[PersonalOpsImportQueueItemReport],
-    pending_promotion_items: list[PersonalOpsImportQueueItemReport],
+    first_pending: PersonalOpsImportQueueItemReport | None,
 ) -> tuple[str, list[CoordinationConsoleGuideStep]]:
-    first_new_action = next(
-        (item for item in active_actions if item["lineage_status"] == "new"), None
+    return (
+        "outcome_sync",
+        [
+            _console_guide_step(
+                step=1,
+                title="Resolve promoted outcome",
+                status="current",
+                summary=queue_health["next_action"],
+                commands=_queue_outcome_commands(first_pending),
+                queue_id=first_pending["queue_id"] if first_pending is not None else None,
+            ),
+            _console_guide_step(
+                step=2,
+                title="Recheck queue health",
+                status="pending",
+                summary="Confirm pending and stale promoted counts return to zero.",
+                commands=["uv run notification-hub personal-ops-queue-health"],
+            ),
+        ],
     )
-    first_queued = queued_items[0] if queued_items else None
-    first_pending = pending_promotion_items[0] if pending_promotion_items else None
 
-    if queue_health["promoted_pending_count"] > 0:
-        return (
-            "outcome_sync",
-            [
-                _console_guide_step(
-                    step=1,
-                    title="Resolve promoted outcome",
-                    status="current",
-                    summary=queue_health["next_action"],
-                    commands=_queue_outcome_commands(first_pending),
-                    queue_id=first_pending["queue_id"] if first_pending is not None else None,
-                ),
-                _console_guide_step(
-                    step=2,
-                    title="Recheck queue health",
-                    status="pending",
-                    summary="Confirm pending and stale promoted counts return to zero.",
-                    commands=["uv run notification-hub personal-ops-queue-health"],
-                ),
-            ],
-        )
 
-    if queue_health["queued_count"] > 0:
-        queue_id = first_queued["queue_id"] if first_queued is not None else "QUEUE_ID"
-        return (
-            "queue_review",
-            [
-                _console_guide_step(
-                    step=1,
-                    title="Review queued handoff",
-                    status="current",
-                    summary=queue_health["next_action"],
-                    commands=[
-                        "uv run notification-hub personal-ops-queue",
-                        "uv run notification-hub personal-ops-queue "
-                        f'--queue-id {queue_id} --status reviewed --reason "evidence checked"',
-                    ],
-                    queue_id=first_queued["queue_id"] if first_queued is not None else None,
-                ),
-                _console_guide_step(
-                    step=2,
-                    title="Promote through personal-ops",
-                    status="pending",
-                    summary="Create or update the downstream personal-ops suggestion, then record its id.",
-                    commands=[
-                        f'personal-ops notification-hub promote {queue_id} --note "..."',
-                        "uv run notification-hub personal-ops-queue "
-                        f"--queue-id {queue_id} --status promoted "
-                        "--promotion-target-id SUGGESTION_ID --promotion-outcome pending",
-                    ],
-                    queue_id=first_queued["queue_id"] if first_queued is not None else None,
-                ),
-            ],
-        )
+def _coordination_queue_review_guide(
+    *,
+    queue_health: PersonalOpsImportQueueHealthReport,
+    first_queued: PersonalOpsImportQueueItemReport | None,
+) -> tuple[str, list[CoordinationConsoleGuideStep]]:
+    queue_id = first_queued["queue_id"] if first_queued is not None else "QUEUE_ID"
+    return (
+        "queue_review",
+        [
+            _console_guide_step(
+                step=1,
+                title="Review queued handoff",
+                status="current",
+                summary=queue_health["next_action"],
+                commands=[
+                    "uv run notification-hub personal-ops-queue",
+                    "uv run notification-hub personal-ops-queue "
+                    f'--queue-id {queue_id} --status reviewed --reason "evidence checked"',
+                ],
+                queue_id=first_queued["queue_id"] if first_queued is not None else None,
+            ),
+            _console_guide_step(
+                step=2,
+                title="Promote through personal-ops",
+                status="pending",
+                summary="Create or update the downstream personal-ops suggestion, then record its id.",
+                commands=[
+                    f'personal-ops notification-hub promote {queue_id} --note "..."',
+                    "uv run notification-hub personal-ops-queue "
+                    f"--queue-id {queue_id} --status promoted "
+                    "--promotion-target-id SUGGESTION_ID --promotion-outcome pending",
+                ],
+                queue_id=first_queued["queue_id"] if first_queued is not None else None,
+            ),
+        ],
+    )
 
-    if readiness["decision"] != "ready_to_expand":
-        return (
-            "readiness",
-            [
-                _console_guide_step(
-                    step=1,
-                    title="Clear readiness gate",
-                    status="current",
-                    summary=readiness["next_action"],
-                    commands=["uv run notification-hub coordination-readiness"],
-                )
-            ],
-        )
 
-    if first_new_action is not None:
-        action = first_new_action["action"]
-        return (
-            "package_review",
-            [
-                _console_guide_step(
-                    step=1,
-                    title="Save review package",
-                    status="current",
-                    summary="Stage the current proposals locally for inspection.",
-                    commands=["uv run notification-hub personal-ops-actions --save-review-package"],
-                    action_id=action["action_id"],
+def _coordination_readiness_guide(
+    readiness: CoordinationReadinessReport,
+) -> tuple[str, list[CoordinationConsoleGuideStep]]:
+    return (
+        "readiness",
+        [
+            _console_guide_step(
+                step=1,
+                title="Clear readiness gate",
+                status="current",
+                summary=readiness["next_action"],
+                commands=["uv run notification-hub coordination-readiness"],
+            )
+        ],
+    )
+
+
+def _coordination_package_review_guide(
+    first_new_action: CoordinationConsoleActionReport,
+) -> tuple[str, list[CoordinationConsoleGuideStep]]:
+    action = first_new_action["action"]
+    return (
+        "package_review",
+        [
+            _console_guide_step(
+                step=1,
+                title="Save review package",
+                status="current",
+                summary="Stage the current proposals locally for inspection.",
+                commands=["uv run notification-hub personal-ops-actions --save-review-package"],
+                action_id=action["action_id"],
+            ),
+            _console_guide_step(
+                step=2,
+                title="Validate and inspect package",
+                status="pending",
+                summary="Inspect the saved package in /review or validate it before queueing.",
+                commands=["uv run notification-hub validate-action-package path/to/actions.json"],
+                action_id=action["action_id"],
+            ),
+            _console_guide_step(
+                step=3,
+                title="Queue handoff for operator review",
+                status="pending",
+                summary="Queue only after the evidence looks right; this still does not apply work.",
+                commands=[
+                    "uv run notification-hub personal-ops-import path/to/actions.json --enqueue"
+                ],
+                action_id=action["action_id"],
+            ),
+        ],
+    )
+
+
+def _coordination_rich_follow_up_guide(
+    action: PersonalOpsActionReport,
+) -> tuple[str, list[CoordinationConsoleGuideStep]]:
+    group_key = _action_group_label(_action_group_key(action))
+    return (
+        "rich_follow_up_review",
+        [
+            _console_guide_step(
+                step=1,
+                title="Review rich handled follow-up",
+                status="current",
+                summary=(
+                    "Rich evidence is present under handled follow-up history; decide whether "
+                    "to keep it parked or record a new local group outcome."
                 ),
-                _console_guide_step(
-                    step=2,
-                    title="Validate and inspect package",
-                    status="pending",
-                    summary="Inspect the saved package in /review or validate it before queueing.",
-                    commands=[
-                        "uv run notification-hub validate-action-package path/to/actions.json"
-                    ],
-                    action_id=action["action_id"],
-                ),
-                _console_guide_step(
-                    step=3,
-                    title="Queue handoff for operator review",
-                    status="pending",
-                    summary="Queue only after the evidence looks right; this still does not apply work.",
-                    commands=[
-                        "uv run notification-hub personal-ops-import path/to/actions.json --enqueue"
-                    ],
-                    action_id=action["action_id"],
-                ),
-            ],
-        )
+                commands=[
+                    "uv run notification-hub coordination-console",
+                    "uv run notification-hub action-proposal-group-outcome "
+                    f"{group_key} "
+                    '--outcome needs_follow_up --reason "rich evidence reviewed; keep parked"',
+                ],
+                action_id=action["action_id"],
+            )
+        ],
+    )
 
-    rich_follow_up_actions = _rich_handled_follow_up_actions(handled_actions)
-    if rich_follow_up_actions:
-        action = rich_follow_up_actions[0]["action"]
-        group_key = _action_group_label(_action_group_key(action))
-        return (
-            "rich_follow_up_review",
-            [
-                _console_guide_step(
-                    step=1,
-                    title="Review rich handled follow-up",
-                    status="current",
-                    summary=(
-                        "Rich evidence is present under handled follow-up history; decide whether "
-                        "to keep it parked or record a new local group outcome."
-                    ),
-                    commands=[
-                        "uv run notification-hub coordination-console",
-                        "uv run notification-hub action-proposal-group-outcome "
-                        f"{group_key} "
-                        '--outcome needs_follow_up --reason "rich evidence reviewed; keep parked"',
-                    ],
-                    action_id=action["action_id"],
-                )
-            ],
-        )
 
-    if active_actions:
-        active = active_actions[0]
-        return (
-            "active_lineage",
-            [
-                _console_guide_step(
-                    step=1,
-                    title="Continue active handoff",
-                    status="current",
-                    summary="Finish the queued or promoted lifecycle before adding new work.",
-                    commands=["uv run notification-hub personal-ops-queue-health"],
-                    action_id=active["action"]["action_id"],
-                    queue_id=active["queue_id"],
-                )
-            ],
-        )
+def _coordination_active_lineage_guide(
+    active: CoordinationConsoleActionReport,
+) -> tuple[str, list[CoordinationConsoleGuideStep]]:
+    return (
+        "active_lineage",
+        [
+            _console_guide_step(
+                step=1,
+                title="Continue active handoff",
+                status="current",
+                summary="Finish the queued or promoted lifecycle before adding new work.",
+                commands=["uv run notification-hub personal-ops-queue-health"],
+                action_id=active["action"]["action_id"],
+                queue_id=active["queue_id"],
+            )
+        ],
+    )
 
+
+def _coordination_monitor_guide(
+    handled_actions: list[CoordinationConsoleActionReport],
+) -> tuple[str, list[CoordinationConsoleGuideStep]]:
     handled_summary = (
         _handled_history_summary(handled_actions) or "No active proposals are waiting."
     )
@@ -6015,6 +6095,49 @@ def _build_coordination_console_guide(
             )
         ],
     )
+
+
+def _build_coordination_console_guide(
+    *,
+    readiness: CoordinationReadinessReport,
+    active_actions: list[CoordinationConsoleActionReport],
+    handled_actions: list[CoordinationConsoleActionReport],
+    queue_health: PersonalOpsImportQueueHealthReport,
+    queued_items: list[PersonalOpsImportQueueItemReport],
+    pending_promotion_items: list[PersonalOpsImportQueueItemReport],
+) -> tuple[str, list[CoordinationConsoleGuideStep]]:
+    first_new_action = next(
+        (item for item in active_actions if item["lineage_status"] == "new"), None
+    )
+    first_queued = queued_items[0] if queued_items else None
+    first_pending = pending_promotion_items[0] if pending_promotion_items else None
+
+    if queue_health["promoted_pending_count"] > 0:
+        return _coordination_outcome_sync_guide(
+            queue_health=queue_health,
+            first_pending=first_pending,
+        )
+
+    if queue_health["queued_count"] > 0:
+        return _coordination_queue_review_guide(
+            queue_health=queue_health,
+            first_queued=first_queued,
+        )
+
+    if readiness["decision"] != "ready_to_expand":
+        return _coordination_readiness_guide(readiness)
+
+    if first_new_action is not None:
+        return _coordination_package_review_guide(first_new_action)
+
+    rich_follow_up_actions = _rich_handled_follow_up_actions(handled_actions)
+    if rich_follow_up_actions:
+        return _coordination_rich_follow_up_guide(rich_follow_up_actions[0]["action"])
+
+    if active_actions:
+        return _coordination_active_lineage_guide(active_actions[0])
+
+    return _coordination_monitor_guide(handled_actions)
 
 
 def run_coordination_console(
