@@ -1,6 +1,6 @@
 # Current State
 
-Last updated: 2026-05-17 (runtime diagnostics test split)
+Last updated: 2026-05-17 (operator review-session test split)
 
 ## Session Update (2026-05-17)
 
@@ -41,6 +41,9 @@ Last updated: 2026-05-17 (runtime diagnostics test split)
 - Runtime diagnostics test cleanup is complete locally: status, logs, verify-runtime, and
   delivery-check tests moved out of the large diagnostics test file into a dedicated runtime
   diagnostics module without changing runtime behavior.
+- Operator review-session test cleanup is complete locally: review-session summary, saved report,
+  report listing/detail loading, and retention tests moved out of the large operations test file
+  into a dedicated review-session test module without changing runtime behavior.
 - Compact expansion shipped locally: proposal lineage now treats terminal local group outcomes as
   handled history. `needs_follow_up` remains follow-up, `snoozed` remains snoozed, `accepted` is
   resolved history, and `rejected` / `superseded` are closed history. Matching action IDs or stable
