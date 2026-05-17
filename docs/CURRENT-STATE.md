@@ -1,6 +1,6 @@
 # Current State
 
-Last updated: 2026-05-17 (inbox action-export test split)
+Last updated: 2026-05-17 (action proposal group test split)
 
 ## Session Update (2026-05-17)
 
@@ -52,6 +52,10 @@ Last updated: 2026-05-17 (inbox action-export test split)
   coordination snapshot wrapping, personal-ops action export filtering, dismissal lifecycle, and
   repeated-title uniqueness tests moved out of the large operations test file into a dedicated
   inbox/action-export test module without changing runtime behavior.
+- Action proposal group test cleanup is complete locally: group package save routes, enqueue
+  history, action-export file pruning, group dismissal, and group outcome tests moved out of
+  the large operations test file into a dedicated action proposal group test module without
+  changing runtime behavior.
 - Compact expansion shipped locally: proposal lineage now treats terminal local group outcomes as
   handled history. `needs_follow_up` remains follow-up, `snoozed` remains snoozed, `accepted` is
   resolved history, and `rejected` / `superseded` are closed history. Matching action IDs or stable
