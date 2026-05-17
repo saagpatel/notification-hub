@@ -1,6 +1,6 @@
 # Current State
 
-Last updated: 2026-05-17 (CLI dispatch helper cleanup)
+Last updated: 2026-05-17 (operation report type split)
 
 ## Session Update (2026-05-17)
 
@@ -98,6 +98,9 @@ Last updated: 2026-05-17 (CLI dispatch helper cleanup)
 - CLI dispatch cleanup is complete locally: repeated JSON/human report emission and status-based
   exit-code handling now flows through one helper in `cli.py`, while command-specific argument
   wiring remains explicit.
+- Operation report type cleanup is complete locally: the large `TypedDict` report-shape block moved
+  out of `operations.py` into `operations_types.py`, while `operations.py` still re-exports those
+  names for existing imports.
 - Generic error hardening is complete locally: policy config load failures, doctor local API
   failures, smoke/log/burn-in failures, queue/report file IO failures, and package/report parsing
   failures now return stable operator-facing error messages instead of raw local exception text.
