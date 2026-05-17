@@ -30,20 +30,37 @@ captures maintainer-specific context that does not belong in the general setup g
 
 ## What This Project Is
 
-notification-hub is an active local project in the `/Users/d/Projects` portfolio.
+notification-hub is the local daemon that turns AI-tool events into routed operator notifications. It accepts structured local HTTP events, watches bridge activity, classifies urgency with deterministic rules, suppresses noise, writes JSONL logs, and routes notifications to local, Slack, and operator-review surfaces.
 
 ## Current State
 
-This repo now has a maintained `README.md` as its primary entry point, with `CLAUDE.md` reserved
-for maintainer notes and portfolio context. The cleanup and hardening pass is complete, and
-`docs/CURRENT-STATE.md` is now the best resume point for the next work session.
+This repo is in healthy monitor-mode after the latest cleanup pass. `README.md` is the primary command guide, `docs/CURRENT-STATE.md` is the best restart point, and the current lane is continued observation of real operator handoff signals rather than expansion of apply behavior.
+
+## Stack
+
+- Python package managed with `uv`
+- FastAPI daemon on `127.0.0.1:9199`
+- Local JSONL runtime logs and queue state
+- macOS LaunchAgent integration
+- Slack delivery via Keychain-backed webhook lookup
+- Bridge/coordination command surfaces for read-only operator review
+
+## How To Run
+
+```bash
+uv sync --frozen --group dev
+uv run --frozen uvicorn notification_hub.server:app --host 127.0.0.1 --port 9199 --reload
+```
+
+## Known Risks
+
+- Do not add apply behavior to notification-hub; it stages and reviews handoffs only.
+- Keep personal-ops promotion and outcome sync operator-mediated.
+- Treat bridge-db saves, queue imports, and live delivery checks as explicit operator actions.
+- Continue watching near-rollup singles before adding suppression or policy changes.
 
 ## Next Recommended Move
 
-Use `docs/CURRENT-STATE.md` to resume quickly, use the README for day-to-day commands, and treat
-the current lane as operator-loop burn-in: save queue burn-in reports around real handoff use,
-review the `/review` Operator Focus, Coordination Readiness, lineage-aware Coordination Console
-guide, and Burn-In Reports state first, and only expand apply behavior after the read-only console
-proves useful in real work.
+Use `docs/CURRENT-STATE.md` to resume quickly. Keep the system in monitor mode unless real repeated operator noise or a real promoted rich handoff gives enough evidence for the next narrow change.
 
 <!-- portfolio-context:end -->
