@@ -1815,6 +1815,17 @@ def _is_safe_action_review_package_name(name: str) -> bool:
     )
 
 
+def action_review_package_path_for_name(
+    *,
+    name: str,
+    review_dir: Path | None = None,
+) -> Path | None:
+    """Build a review package path from a validated package filename."""
+    if not _is_safe_action_review_package_name(name):
+        return None
+    return (review_dir or ACTION_EXPORT_DIR) / name
+
+
 def load_action_review_package_detail(
     *,
     name: str,
@@ -1823,19 +1834,20 @@ def load_action_review_package_detail(
 ) -> ActionReviewPackageDetailReport:
     """Load a saved review package summary without importing or applying it."""
     target_dir = review_dir or ACTION_EXPORT_DIR
-    target_path = target_dir / name
-    if not _is_safe_action_review_package_name(name):
+    target_path = action_review_package_path_for_name(name=name, review_dir=target_dir)
+    if target_path is None:
+        display_path = target_dir / name
         error = "invalid review package name"
         return {
             "status": "degraded",
-            "path": str(target_path),
+            "path": str(display_path),
             "name": name,
             "schema_version": None,
             "generated_at": None,
             "hours": None,
             "actions": [],
             "queue_items": [],
-            "validation": _empty_package_validation(target_path, error),
+            "validation": _empty_package_validation(display_path, error),
             "applied": False,
             "error": error,
         }
@@ -1903,11 +1915,12 @@ def delete_action_review_package(
 ) -> ActionReviewPackageDeleteReport:
     """Delete one saved review package without importing or applying it."""
     target_dir = review_dir or ACTION_EXPORT_DIR
-    target_path = target_dir / name
-    if not _is_safe_action_review_package_name(name):
+    target_path = action_review_package_path_for_name(name=name, review_dir=target_dir)
+    if target_path is None:
+        display_path = target_dir / name
         return {
             "status": "degraded",
-            "path": str(target_path),
+            "path": str(display_path),
             "name": name,
             "deleted": False,
             "applied": False,
