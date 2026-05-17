@@ -126,13 +126,14 @@ The console also includes a proposal-review summary that groups active proposals
 intent, priority, and state, so the operator can tell when to review one proposal alone versus
 staging a small batch package for inspection. The `/review` surface can save, queue, or locally
 dismiss one proposal group, and it can record a local group outcome such as `needs_follow_up`,
-`accepted`, or `rejected`. Queueing still only creates notification-hub handoff records and does not
-create personal-ops tasks.
-When a group's latest recorded outcome is `needs_follow_up`, matching action IDs and stable proposal
-keys are treated as handled follow-up history rather than fresh active proposals. A later save-only
-package inspection does not reopen that group, and repeated rollups can keep that follow-up state
-even when their newest evidence event rotates. Queueing, promotion, dismissal, or a different
-proposal key can still create a new actionable state.
+`accepted`, `rejected`, `snoozed`, or `superseded`. Queueing still only creates notification-hub
+handoff records and does not create personal-ops tasks.
+When a group's latest recorded outcome is terminal handled history, matching action IDs and stable
+proposal keys are treated as handled rather than fresh active proposals. `needs_follow_up` stays in
+follow-up history, `snoozed` stays snoozed, `accepted` is resolved history, and `rejected` or
+`superseded` are closed history. A later save-only package inspection does not reopen that group,
+and repeated rollups can keep that handled state even when their newest evidence event rotates.
+Queueing, promotion, dismissal, or a different proposal key can still create a new actionable state.
 For personal-ops mail approval groups, Proposal Review adds a local route recommendation that
 separates concrete reply candidates from repeated phase or workflow chatter. The recommendation is
 advisory only; it never promotes, suppresses, or sends by itself. The review controls can also save

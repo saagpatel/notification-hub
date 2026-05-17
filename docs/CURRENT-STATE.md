@@ -1,6 +1,32 @@
 # Current State
 
-Last updated: 2026-05-16 (real-use burn-in closeout)
+Last updated: 2026-05-17 (terminal-outcome lineage refresh)
+
+## Session Update (2026-05-17)
+
+**Current verification:**
+
+- `main` matched `origin/main` at `ff2aded` before this pass; latest CI on `main` was passing.
+- Runtime status remained OK: daemon reachable, runtime wiring current, queue OK, no queued
+  handoffs, and no pending promoted outcomes.
+- A fresh thin-evidence `Calendar sync degraded` proposal appeared after the prior monitor-mode
+  closeout. Source recheck showed personal-ops ready and calendar sync ready, so the proposal was
+  saved, validated, and locally dismissed as stale recovered noise:
+  `personal-ops-actions-20260517-033110-245366.json`.
+- Coordination Console returned to monitor mode with `active_action_count: 0`; queue health remained
+  clean.
+- Compact expansion shipped locally: proposal lineage now treats terminal local group outcomes as
+  handled history. `needs_follow_up` remains follow-up, `snoozed` remains snoozed, `accepted` is
+  resolved history, and `rejected` / `superseded` are closed history. Matching action IDs or stable
+  proposal keys no longer resurface as fresh active work just because evidence rotated.
+
+**Active backlog (priority order):**
+
+1. `aa8fd718` Gmail draft cleanup — test draft "Rich-evidence pipeline test — 2026-05-11" still in
+   Drafts. Manual action via Gmail web UI or rejection workaround via `approval_request_create`.
+2. Resolve ADR 0001 — lineage rich-vs-thin supersession remains deferred until a real promoted or
+   resolved rich handoff appears under a prior `needs_follow_up` stable key.
+3. Continue observing `near_rollup_singles` and tune suppression policy based on actual volume.
 
 ## Session Update (2026-05-16)
 
@@ -41,7 +67,8 @@ Last updated: 2026-05-16 (real-use burn-in closeout)
 
 **Current repo posture:**
 
-- `main` is at `b870b44`, aligned with `origin/main` before this documentation closeout.
+- `main` was at `b870b44` before the 2026-05-16 documentation closeout, then advanced through
+  `d8cfa13` and `ff2aded` as the live burn-in/proposal cleanup notes landed.
 - PR #40 closed the prior MCP server smoke-test backlog with 9 in-process FastMCP wrapper tests.
 - The follow-up CI coverage gap is now closed locally by adding the MCP server smoke test command to
   `.github/workflows/ci.yml`; the workflow install step now uses the repo's dependency-group syntax.
@@ -193,11 +220,12 @@ tuning pass.
   state after a save, queue, dismiss, or explicit local outcome decision. Queued or promoted-pending
   handoffs now remain the console's next action until their local queue lifecycle is resolved, even
   when the readiness gate is also warning.
-- Proposal groups with a latest `needs_follow_up` outcome now remain visible as handled follow-up
-  history instead of resurfacing as fresh active proposals. Save-only package inspection does not
-  reopen those groups; stable proposal keys keep repeated rollups in follow-up even when their
-  newest event IDs rotate. Queueing, promotion, dismissal, or a different proposal key can still
-  move the lifecycle.
+- Proposal groups with a latest terminal outcome now remain visible as handled history instead of
+  resurfacing as fresh active proposals. `needs_follow_up` remains follow-up, `snoozed` remains
+  snoozed, `accepted` is resolved history, and `rejected` / `superseded` are closed history.
+  Save-only package inspection does not reopen those groups; stable proposal keys keep repeated
+  rollups in their handled state even when newest event IDs rotate. Queueing, promotion, dismissal,
+  or a different proposal key can still move the lifecycle.
 - Action proposal export now scans a deeper candidate set than the display limit, so dismissed or
   policy-covered rollups cannot crowd out real lower-ranked operator signals from the default view.
 - Action proposal dismissals can now be listed, inspected, and undismissed through CLI and `/review`

@@ -1177,6 +1177,134 @@ def test_coordination_console_keeps_follow_up_history_when_action_id_rotates(
     assert "stable proposal key" in report["handled_actions"][0]["lineage_reason"]
 
 
+def test_coordination_console_treats_superseded_group_outcome_as_history(
+    tmp_path: Path,
+) -> None:
+    group_history_path = tmp_path / "group-history.jsonl"
+    group_history_path.write_text(
+        json.dumps(
+            {
+                "group_key": "personal-ops:personal-ops:needs_attention:high:open",
+                "event_type": "outcome",
+                "recorded_at": "2026-05-17T03:00:00+00:00",
+                "status": "ok",
+                "action_count": 1,
+                "action_ids": ["calendar-sync-old"],
+                "action_keys": ["proposal:personal-ops:personal-ops:needs-attention:stable"],
+                "package_path": None,
+                "queued_count": None,
+                "dismissed_count": None,
+                "outcome": "superseded",
+                "reason": "source recovered",
+                "error": None,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    with (
+        patch(
+            "notification_hub.operations.run_coordination_readiness",
+            return_value={
+                "status": "ok",
+                "decision": "ready_to_expand",
+                "summary": "Runtime, queue, and saved burn-in evidence are ready.",
+                "queue_status": "ok",
+                "queued_count": 0,
+                "pending_count": 0,
+                "stale_count": 0,
+                "saved_burn_in_reports": 2,
+                "latest_burn_in_ready": True,
+                "latest_burn_in_noise_candidates": 0,
+                "runtime_status": "ok",
+                "policy_warning_count": 0,
+                "next_action": "Plan the next compact coordination console slice.",
+                "evidence": ["runtime=ok"],
+                "applied": False,
+            },
+        ),
+        patch(
+            "notification_hub.operations.run_personal_ops_action_export",
+            return_value={
+                "status": "ok",
+                "schema_version": "notification-hub.personal_ops_action_export.v1",
+                "generated_at": "2026-05-17T03:05:00+00:00",
+                "hours": 2,
+                "actions": [
+                    {
+                        "action_id": "calendar-sync-new",
+                        "dismissal_key": (
+                            "proposal:personal-ops:personal-ops:needs-attention:stable"
+                        ),
+                        "source": "personal-ops",
+                        "project": "personal-ops",
+                        "intent": "needs_attention",
+                        "priority": "high",
+                        "state": "open",
+                        "title": "Calendar sync degraded",
+                        "summary": "Calendar sync recovered after review.",
+                        "signal_body": "request to https://oauth2.googleapis.com/token failed",
+                        "suggested_next_action": "Review the attention item.",
+                        "evidence_event_id": "event-calendar-sync-new",
+                        "evidence_timestamp": "2026-05-17T03:05:00+00:00",
+                        "count": 4,
+                    }
+                ],
+                "review_package": {"status": "not_requested"},
+                "inbox": {},
+                "error": None,
+            },
+        ),
+        patch(
+            "notification_hub.operations.run_personal_ops_import_queue_health_check",
+            return_value={
+                "status": "ok",
+                "health": _coordination_status()["import_queue"],
+                "queued_items": [],
+                "pending_promotion_items": [],
+                "next_commands": ["uv run notification-hub personal-ops-queue-health"],
+                "applied": False,
+            },
+        ),
+        patch(
+            "notification_hub.operations.run_personal_ops_outcome_sync_reminder",
+            return_value={
+                "status": "ok",
+                "should_remind": False,
+                "pending_count": 0,
+                "stale_count": 0,
+                "reminders": [],
+                "next_commands": ["uv run notification-hub personal-ops-queue-health"],
+                "next_action": "No pending promoted personal-ops handoff outcomes.",
+                "applied": False,
+            },
+        ),
+        patch(
+            "notification_hub.operations.list_personal_ops_queue_burn_in_reports",
+            return_value=[_coordination_burn_in_report()],
+        ),
+        patch("notification_hub.operations._read_import_queue_items", return_value=[]),
+    ):
+        report = run_coordination_console(
+            hours=2,
+            limit=3,
+            group_history_path=group_history_path,
+        )
+
+    assert report["active_action_count"] == 0
+    assert report["handled_action_count"] == 1
+    assert report["handled_actions"][0]["lineage_status"] == "ignored"
+    assert report["handled_actions"][0]["lineage_label"] == "Closed"
+    assert report["handled_actions"][0]["lineage_history_outcome"] == "superseded"
+    assert report["handled_actions"][0]["stable_key_matched"] is True
+    assert report["handled_actions"][0]["evidence_event_rotated"] is True
+    assert report["handled_actions"][0]["previous_action_id"] == "calendar-sync-old"
+    assert "superseded group outcome" in report["handled_actions"][0]["lineage_reason"]
+    assert report["proposal_review"]["mode"] == "monitor"
+    assert report["proposal_review"]["ignored_count"] == 1
+    assert report["next_signal"]["status"] == "monitor"
+
+
 def test_coordination_console_guides_queued_handoff_lifecycle() -> None:
     queued_item = {
         "queue_id": "queue-active",

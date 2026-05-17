@@ -964,6 +964,13 @@ ACTION_PROPOSAL_GROUP_OUTCOMES = {
     "superseded",
     "needs_follow_up",
 }
+ACTION_PROPOSAL_GROUP_LINEAGE_STATUSES = {
+    "accepted": "resolved",
+    "rejected": "ignored",
+    "snoozed": "snoozed",
+    "superseded": "ignored",
+    "needs_follow_up": "follow_up",
+}
 PERSONAL_OPS_OUTCOME_SYNC_POSTURE = (
     "operator-mediated; notification-hub reports pending or stale promoted outcomes "
     "but does not create, accept, reject, or sync personal-ops work itself"
@@ -5034,49 +5041,52 @@ def _proposal_lineage_next_action(status: str) -> str:
     }.get(status, "Review this handoff before taking further action.")
 
 
-def _latest_follow_up_action_markers(
+def _latest_group_outcome_action_markers(
     group_history: list[ActionProposalGroupHistoryReport],
 ) -> tuple[
-    dict[str, ActionProposalGroupHistoryReport], dict[str, ActionProposalGroupHistoryReport]
+    dict[str, tuple[str, ActionProposalGroupHistoryReport]],
+    dict[str, tuple[str, ActionProposalGroupHistoryReport]],
 ]:
-    """Return action IDs and stable keys covered by latest follow-up outcomes."""
+    """Return action IDs and stable keys covered by latest terminal group outcomes."""
     seen_outcome_groups: set[str] = set()
-    follow_up_action_ids: dict[str, ActionProposalGroupHistoryReport] = {}
-    follow_up_action_keys: dict[str, ActionProposalGroupHistoryReport] = {}
+    outcome_action_ids: dict[str, tuple[str, ActionProposalGroupHistoryReport]] = {}
+    outcome_action_keys: dict[str, tuple[str, ActionProposalGroupHistoryReport]] = {}
     for item in group_history:
         group_key = item["group_key"]
         if group_key in seen_outcome_groups or item["event_type"] != "outcome":
             continue
         seen_outcome_groups.add(group_key)
-        if item["status"] == "ok" and item["outcome"] == "needs_follow_up":
+        lineage_status = ACTION_PROPOSAL_GROUP_LINEAGE_STATUSES.get(item["outcome"] or "")
+        if item["status"] == "ok" and lineage_status is not None:
             for action_id in item["action_ids"]:
-                follow_up_action_ids[action_id] = item
+                outcome_action_ids[action_id] = (lineage_status, item)
             for action_key in item["action_keys"]:
-                follow_up_action_keys[action_key] = item
-    return follow_up_action_ids, follow_up_action_keys
+                outcome_action_keys[action_key] = (lineage_status, item)
+    return outcome_action_ids, outcome_action_keys
 
 
 def _lineage_reason(
     *,
     status: str,
     queue_item: PersonalOpsImportQueueItemReport | None,
-    follow_up_history: ActionProposalGroupHistoryReport | None,
+    group_outcome_history: ActionProposalGroupHistoryReport | None,
     stable_key_matched: bool,
     evidence_event_rotated: bool,
 ) -> str:
-    if status == "follow_up" and follow_up_history is not None:
+    if group_outcome_history is not None:
+        outcome = group_outcome_history["outcome"]
         if stable_key_matched and evidence_event_rotated:
             return (
-                "Latest needs_follow_up group outcome matched this stable proposal key; "
+                f"Latest {outcome} group outcome matched this stable proposal key; "
                 "the evidence event rotated, so it remains handled history."
             )
         if stable_key_matched:
             return (
-                "Latest needs_follow_up group outcome matched this stable proposal key, "
+                f"Latest {outcome} group outcome matched this stable proposal key, "
                 "so it remains handled history."
             )
         return (
-            "Latest needs_follow_up group outcome matched this action id, "
+            f"Latest {outcome} group outcome matched this action id, "
             "so it remains handled history."
         )
     if queue_item is not None:
@@ -5111,7 +5121,7 @@ def _build_proposal_lineage(
         if item["evidence_event_id"] and item["evidence_event_id"] not in queue_by_evidence_id:
             queue_by_evidence_id[item["evidence_event_id"]] = item
 
-    follow_up_action_ids, follow_up_action_keys = _latest_follow_up_action_markers(
+    outcome_action_ids, outcome_action_keys = _latest_group_outcome_action_markers(
         group_history or []
     )
     reports: list[CoordinationConsoleActionReport] = []
@@ -5120,16 +5130,22 @@ def _build_proposal_lineage(
             action["evidence_event_id"]
         )
         lineage_status = _proposal_lineage_status(queue_item)
-        follow_up_history = follow_up_action_ids.get(action["action_id"])
+        outcome_match = outcome_action_ids.get(action["action_id"])
+        group_outcome_status: str | None = None
+        group_outcome_history: ActionProposalGroupHistoryReport | None = None
+        if outcome_match is not None:
+            group_outcome_status, group_outcome_history = outcome_match
         stable_key_matched = False
-        if follow_up_history is None:
+        if group_outcome_history is None:
             dismissal_key = action.get("dismissal_key")
             if dismissal_key:
-                follow_up_history = follow_up_action_keys.get(dismissal_key)
-                stable_key_matched = follow_up_history is not None
+                outcome_match = outcome_action_keys.get(dismissal_key)
+                if outcome_match is not None:
+                    group_outcome_status, group_outcome_history = outcome_match
+                    stable_key_matched = True
         previous_action_id = (
-            follow_up_history["action_ids"][0]
-            if follow_up_history is not None and follow_up_history["action_ids"]
+            group_outcome_history["action_ids"][0]
+            if group_outcome_history is not None and group_outcome_history["action_ids"]
             else None
         )
         evidence_event_rotated = bool(
@@ -5137,12 +5153,12 @@ def _build_proposal_lineage(
             and previous_action_id is not None
             and previous_action_id != action["action_id"]
         )
-        if queue_item is None and follow_up_history is not None:
-            lineage_status = "follow_up"
+        if queue_item is None and group_outcome_status is not None:
+            lineage_status = group_outcome_status
         lineage_reason = _lineage_reason(
             status=lineage_status,
             queue_item=queue_item,
-            follow_up_history=follow_up_history,
+            group_outcome_history=group_outcome_history,
             stable_key_matched=stable_key_matched,
             evidence_event_rotated=evidence_event_rotated,
         )
@@ -5153,14 +5169,14 @@ def _build_proposal_lineage(
                 "lineage_label": _proposal_lineage_label(lineage_status),
                 "lineage_next_action": _proposal_lineage_next_action(lineage_status),
                 "lineage_reason": lineage_reason,
-                "lineage_history_event_type": follow_up_history["event_type"]
-                if follow_up_history is not None
+                "lineage_history_event_type": group_outcome_history["event_type"]
+                if group_outcome_history is not None
                 else None,
-                "lineage_history_recorded_at": follow_up_history["recorded_at"]
-                if follow_up_history is not None
+                "lineage_history_recorded_at": group_outcome_history["recorded_at"]
+                if group_outcome_history is not None
                 else None,
-                "lineage_history_outcome": follow_up_history["outcome"]
-                if follow_up_history is not None
+                "lineage_history_outcome": group_outcome_history["outcome"]
+                if group_outcome_history is not None
                 else None,
                 "stable_key_matched": stable_key_matched,
                 "evidence_event_rotated": evidence_event_rotated,
