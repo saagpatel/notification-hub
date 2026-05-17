@@ -33,6 +33,7 @@ CLAUDE_HOOK_TEMPLATE = RUNTIME_TEMPLATE_DIR / "hooks" / "claude-notify.sh"
 CODEX_HOOK_TEMPLATE = RUNTIME_TEMPLATE_DIR / "hooks" / "codex-notify-local.py"
 
 BRIDGE_FILE = Path.home() / ".claude" / "projects" / "-Users-d" / "memory" / "claude_ai_context.md"
+_POLICY_LOAD_ERROR = "policy config could not be loaded"
 
 # Sections in the bridge file that trigger events when changed
 WATCHED_SECTIONS = (
@@ -645,7 +646,7 @@ def get_policy_config() -> PolicyConfig:
         _cached_policy = PolicyConfig(
             path=POLICY_CONFIG,
             config_found=True,
-            load_error=str(exc),
+            load_error=_POLICY_LOAD_ERROR,
         )
 
     _cached_policy_mtime_ns = stat.st_mtime_ns
@@ -659,8 +660,8 @@ def load_policy_config_file(path: Path) -> PolicyConfig:
             raw_config = tomllib.load(handle)
     except FileNotFoundError:
         return PolicyConfig(path=path, config_found=False, load_error=None)
-    except (OSError, tomllib.TOMLDecodeError) as exc:
-        return PolicyConfig(path=path, config_found=True, load_error=str(exc))
+    except (OSError, tomllib.TOMLDecodeError):
+        return PolicyConfig(path=path, config_found=True, load_error=_POLICY_LOAD_ERROR)
 
     return _build_policy_config(raw_config, path=path, config_found=True, load_error=None)
 

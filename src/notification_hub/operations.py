@@ -35,6 +35,8 @@ from notification_hub.coordination import infer_intent
 from notification_hub.diagnostics import collect_doctor_report
 from notification_hub.models import Event, Intent, StoredEvent
 
+_GENERIC_OPERATION_ERROR = "operation failed; inspect local logs for details"
+
 
 class SmokeReport(TypedDict):
     status: str
@@ -1264,13 +1266,13 @@ def dismiss_action_proposal(
     }
     try:
         _jsonl_append(path, dict(dismissal))
-    except OSError as exc:
+    except OSError:
         return {
             "status": "degraded",
             "path": str(path),
             "dismissal": None,
             "applied": False,
-            "error": str(exc),
+            "error": _GENERIC_OPERATION_ERROR,
         }
     return {
         "status": "ok",
@@ -1324,14 +1326,14 @@ def undismiss_action_proposal(
     }
     try:
         _jsonl_append(path, tombstone)
-    except OSError as exc:
+    except OSError:
         return {
             "status": "degraded",
             "path": str(path),
             "dismissal_key": key,
             "removed": False,
             "applied": False,
-            "error": str(exc),
+            "error": _GENERIC_OPERATION_ERROR,
         }
     return {
         "status": "ok",
@@ -1401,14 +1403,14 @@ def _save_bridge_snapshot(
             "snapshot_date": snapshot_date,
             "error": None,
         }
-    except sqlite3.Error as exc:
+    except sqlite3.Error:
         return {
             "attempted": True,
             "status": "degraded",
             "db_path": str(target_path),
             "snapshot_id": None,
             "snapshot_date": snapshot_date,
-            "error": str(exc),
+            "error": _GENERIC_OPERATION_ERROR,
         }
 
 
@@ -1674,12 +1676,12 @@ def _write_action_review_package(
             json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
         )
         os.chmod(target_path, 0o600)
-    except OSError as exc:
+    except OSError:
         return {
             "requested": True,
             "status": "degraded",
             "path": str(target_path),
-            "error": str(exc),
+            "error": _GENERIC_OPERATION_ERROR,
         }
     return {
         "requested": True,
@@ -1756,9 +1758,9 @@ def prune_action_export_files(
                 path.unlink()
             except FileNotFoundError:
                 continue
-            except OSError as exc:
+            except OSError:
                 status = "degraded"
-                error = str(exc)
+                error = _GENERIC_OPERATION_ERROR
                 break
             deleted_files.append(path.name)
 
@@ -1855,7 +1857,7 @@ def load_action_review_package_detail(
     validation = validate_action_package(target_path)
     try:
         payload = json.loads(target_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, json.JSONDecodeError):
         return {
             "status": "degraded",
             "path": str(target_path),
@@ -1867,7 +1869,7 @@ def load_action_review_package_detail(
             "queue_items": [],
             "validation": validation,
             "applied": False,
-            "error": str(exc),
+            "error": _GENERIC_OPERATION_ERROR,
         }
 
     if not isinstance(payload, dict):
@@ -1937,14 +1939,14 @@ def delete_action_review_package(
             "applied": False,
             "error": "review package not found",
         }
-    except OSError as exc:
+    except OSError:
         return {
             "status": "degraded",
             "path": str(target_path),
             "name": name,
             "deleted": False,
             "applied": False,
-            "error": str(exc),
+            "error": _GENERIC_OPERATION_ERROR,
         }
     return {
         "status": "ok",
@@ -2230,12 +2232,12 @@ def write_operator_review_session_report(
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             json.dump(payload, handle, indent=2, sort_keys=True)
             handle.write("\n")
-    except OSError as exc:
+    except OSError:
         return {
             "requested": True,
             "status": "degraded",
             "path": str(target_path),
-            "error": str(exc),
+            "error": _GENERIC_OPERATION_ERROR,
         }
     return {
         "requested": True,
@@ -2351,7 +2353,7 @@ def load_operator_review_session_report_detail(
             "applied": False,
             "error": None,
         }
-    except (OSError, json.JSONDecodeError, ValueError) as exc:
+    except (OSError, json.JSONDecodeError, ValueError):
         return {
             "status": "degraded",
             "path": str(target_path),
@@ -2361,7 +2363,7 @@ def load_operator_review_session_report_detail(
             "summary": None,
             "report": None,
             "applied": False,
-            "error": str(exc),
+            "error": _GENERIC_OPERATION_ERROR,
         }
 
 
@@ -2387,9 +2389,9 @@ def prune_operator_review_session_reports(
                 path.unlink()
             except FileNotFoundError:
                 continue
-            except OSError as exc:
+            except OSError:
                 status = "degraded"
-                error = str(exc)
+                error = _GENERIC_OPERATION_ERROR
                 break
             deleted_reports.append(report)
 
@@ -2838,12 +2840,12 @@ def _write_personal_ops_queue_burn_in_report(
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             json.dump(payload, handle, indent=2, sort_keys=True)
             handle.write("\n")
-    except OSError as exc:
+    except OSError:
         return {
             "requested": True,
             "status": "degraded",
             "path": str(target_path),
-            "error": str(exc),
+            "error": _GENERIC_OPERATION_ERROR,
         }
     return {
         "requested": True,
@@ -2874,12 +2876,12 @@ def write_operator_daily_state_report(
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             json.dump(payload, handle, indent=2, sort_keys=True)
             handle.write("\n")
-    except OSError as exc:
+    except OSError:
         return {
             "requested": True,
             "status": "degraded",
             "path": str(target_path),
-            "error": str(exc),
+            "error": _GENERIC_OPERATION_ERROR,
         }
     return {
         "requested": True,
@@ -2997,7 +2999,7 @@ def load_personal_ops_queue_burn_in_report_detail(
             "applied": False,
             "error": None,
         }
-    except (OSError, json.JSONDecodeError, ValueError) as exc:
+    except (OSError, json.JSONDecodeError, ValueError):
         return {
             "status": "degraded",
             "path": str(target_path),
@@ -3007,7 +3009,7 @@ def load_personal_ops_queue_burn_in_report_detail(
             "summary": None,
             "report": None,
             "applied": False,
-            "error": str(exc),
+            "error": _GENERIC_OPERATION_ERROR,
         }
 
 
@@ -3325,12 +3327,12 @@ def update_personal_ops_import_queue_item(
 
     try:
         raw_items = _read_import_queue_items(target_queue_path)
-    except OSError as exc:
+    except OSError:
         return _queue_update_degraded_report(
             queue_id=queue_id,
             queue_path=target_queue_path,
             next_action="Fix queue read errors, then retry the lifecycle update.",
-            error=str(exc),
+            error=_GENERIC_OPERATION_ERROR,
         )
 
     matched: dict[str, object] | None = None
@@ -3362,12 +3364,12 @@ def update_personal_ops_import_queue_item(
 
     try:
         _write_import_queue_items(target_queue_path, raw_items)
-    except OSError as exc:
+    except OSError:
         return _queue_update_degraded_report(
             queue_id=queue_id,
             queue_path=target_queue_path,
             next_action="Fix queue write errors, then retry the lifecycle update.",
-            error=str(exc),
+            error=_GENERIC_OPERATION_ERROR,
         )
 
     return {
@@ -3527,7 +3529,7 @@ def run_smoke_check() -> SmokeReport:
             "response_status": response.status_code,
             "error": None if log_verified else "event not found in log",
         }
-    except httpx.HTTPError as exc:
+    except httpx.HTTPError:
         return {
             "status": "degraded",
             "health_url": health_url,
@@ -3535,7 +3537,7 @@ def run_smoke_check() -> SmokeReport:
             "event_id": None,
             "log_verified": False,
             "response_status": None,
-            "error": str(exc),
+            "error": _GENERIC_OPERATION_ERROR,
         }
 
 
@@ -3554,7 +3556,7 @@ def run_logs(*, events: int = 5, lines: int = 20) -> LogsReport:
         recent_events = [_event_report(event) for event in recent_stored_events]
         stdout_tail = _tail_text_file(DAEMON_STDOUT_LOG, lines=lines)
         stderr_tail = _tail_text_file(DAEMON_STDERR_LOG, lines=lines)
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError):
         return {
             "status": "degraded",
             "events_log": str(EVENTS_LOG),
@@ -3565,7 +3567,7 @@ def run_logs(*, events: int = 5, lines: int = 20) -> LogsReport:
             "stdout_tail": [],
             "stderr_tail": [],
             "missing_paths": missing_paths,
-            "error": str(exc),
+            "error": _GENERIC_OPERATION_ERROR,
         }
 
     return {
@@ -3680,7 +3682,7 @@ def run_burn_in(*, minutes: int = 10, lines: int = 200) -> BurnInReport:
         stdout_tail = _tail_text_file(DAEMON_STDOUT_LOG, lines=tail_lines)
         stderr_tail = _tail_text_file(DAEMON_STDERR_LOG, lines=tail_lines)
         daemon_summary = _summarize_daemon_logs(stdout_tail, stderr_tail)
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError):
         return {
             "status": "degraded",
             "minutes": window_minutes,
@@ -3701,7 +3703,7 @@ def run_burn_in(*, minutes: int = 10, lines: int = 200) -> BurnInReport:
             "slack_eligible_events": 0,
             "slack_volume": [],
             "daemon_summary": _summarize_daemon_logs([], []),
-            "error": str(exc),
+            "error": _GENERIC_OPERATION_ERROR,
         }
 
     health_status = (
@@ -3748,7 +3750,7 @@ def run_inbox(*, hours: int = 24, limit: int = 10) -> InboxReport:
             for event in read_jsonl(path=EVENTS_LOG)
             if event.timestamp.astimezone(timezone.utc) >= cutoff
         ]
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError):
         return {
             "status": "degraded",
             "hours": window_hours,
@@ -3760,7 +3762,7 @@ def run_inbox(*, hours: int = 24, limit: int = 10) -> InboxReport:
             "rollups": [],
             "near_rollup_singles": [],
             "noise_candidates": [],
-            "error": str(exc),
+            "error": _GENERIC_OPERATION_ERROR,
         }
 
     buckets: dict[str, list[InboxItemReport]] = {
@@ -3955,7 +3957,7 @@ def validate_action_package(path: Path) -> ActionPackageValidationReport:
 
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, json.JSONDecodeError):
         return {
             "status": "degraded",
             "path": str(path),
@@ -3965,7 +3967,7 @@ def validate_action_package(path: Path) -> ActionPackageValidationReport:
             "warning_count": 0,
             "error_count": 1,
             "warnings": [],
-            "errors": [str(exc)],
+            "errors": [_GENERIC_OPERATION_ERROR],
         }
 
     if not isinstance(payload, dict):
@@ -4047,7 +4049,7 @@ def run_personal_ops_import_stub(
                 package_path=path,
                 queue_path=queue_path,
             )
-        except OSError as exc:
+        except OSError:
             return {
                 "status": "degraded",
                 "path": str(path),
@@ -4059,7 +4061,7 @@ def run_personal_ops_import_stub(
                 "queue_path": str(queue_path) if queue_path is not None else None,
                 "validation": validation,
                 "next_action": "Fix queue write errors before importing this package.",
-                "error": str(exc),
+                "error": _GENERIC_OPERATION_ERROR,
             }
 
     return {
@@ -4232,9 +4234,9 @@ def save_action_proposal_group_package(
             error=error,
             history_path=group_history_path,
         )
-    except OSError as exc:
+    except OSError:
         status = "degraded"
-        error = str(exc)
+        error = _GENERIC_OPERATION_ERROR
         next_action = "Fix group history write errors before using group lifecycle controls."
     return {
         "status": status,
@@ -4336,9 +4338,9 @@ def dismiss_action_proposal_group(
             error=error,
             history_path=group_history_path,
         )
-    except OSError as exc:
+    except OSError:
         status = "degraded"
-        error = str(exc)
+        error = _GENERIC_OPERATION_ERROR
     return {
         "status": status,
         "group_key": safe_group_key,
@@ -4410,7 +4412,7 @@ def record_action_proposal_group_outcome(
             reason=reason.strip() or "operator recorded group outcome",
             history_path=group_history_path,
         )
-    except OSError as exc:
+    except OSError:
         return {
             "status": "degraded",
             "group_key": safe_group_key,
@@ -4418,7 +4420,7 @@ def record_action_proposal_group_outcome(
             "group_history": None,
             "next_action": "Fix group history write errors before recording group outcomes.",
             "applied": False,
-            "error": str(exc),
+            "error": _GENERIC_OPERATION_ERROR,
         }
 
     return {
@@ -4644,13 +4646,13 @@ def bootstrap_policy_config(*, force: bool = False) -> BootstrapConfigReport:
         config_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         shutil.copyfile(example_path, config_path)
         os.chmod(config_path, 0o600)
-    except OSError as exc:
+    except OSError:
         return {
             "status": "degraded",
             "copied": False,
             "config_path": str(config_path),
             "example_path": str(example_path),
-            "error": str(exc),
+            "error": _GENERIC_OPERATION_ERROR,
         }
 
     return {
