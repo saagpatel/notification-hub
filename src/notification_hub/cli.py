@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
+from typing import Any
 
 from notification_hub.diagnostics import collect_doctor_report
 from notification_hub.models import Event
@@ -84,49 +85,48 @@ from notification_hub.cli_reports import (
 from notification_hub.pipeline import build_event_explanation_report
 
 
+def _emit_report(
+    report: Any,
+    *,
+    json_output: bool,
+    print_report: Callable[[Any], None],
+    output_path: str | None = None,
+    success_status: str | None = "ok",
+) -> int:
+    if output_path is not None:
+        write_json_report(report, output_path)
+    elif json_output:
+        print(json.dumps(report, indent=2, sort_keys=True))
+    else:
+        print_report(report)
+    if success_status is None:
+        return 0
+    return 0 if report["status"] == success_status else 1
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
     if args.command == "doctor":
         report = collect_doctor_report()
-        if args.json:
-            print(json.dumps(report, indent=2, sort_keys=True))
-        else:
-            print_doctor_report(report)
-        return 0 if report["status"] == "ok" else 1
+        return _emit_report(report, json_output=args.json, print_report=print_doctor_report)
 
     if args.command == "smoke":
         report = run_smoke_check()
-        if args.json:
-            print(json.dumps(report, indent=2, sort_keys=True))
-        else:
-            print_smoke_report(report)
-        return 0 if report["status"] == "ok" else 1
+        return _emit_report(report, json_output=args.json, print_report=print_smoke_report)
 
     if args.command == "status":
         report = run_status()
-        if args.json:
-            print(json.dumps(report, indent=2, sort_keys=True))
-        else:
-            print_status_report(report)
-        return 0 if report["status"] == "ok" else 1
+        return _emit_report(report, json_output=args.json, print_report=print_status_report)
 
     if args.command == "logs":
         report = run_logs(events=args.events, lines=args.lines)
-        if args.json:
-            print(json.dumps(report, indent=2, sort_keys=True))
-        else:
-            print_logs_report(report)
-        return 0 if report["status"] == "ok" else 1
+        return _emit_report(report, json_output=args.json, print_report=print_logs_report)
 
     if args.command == "burn-in":
         report = run_burn_in(minutes=args.minutes, lines=args.lines)
-        if args.json:
-            print(json.dumps(report, indent=2, sort_keys=True))
-        else:
-            print_burn_in_report(report)
-        return 0 if report["status"] == "ok" else 1
+        return _emit_report(report, json_output=args.json, print_report=print_burn_in_report)
 
     if args.command == "verify-runtime":
         report = run_verify_runtime(
@@ -134,29 +134,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             verify_slack=args.verify_slack,
             verify_push=args.verify_push,
         )
-        if args.json:
-            print(json.dumps(report, indent=2, sort_keys=True))
-        else:
-            print_verify_runtime_report(report)
-        return 0 if report["status"] == "ok" else 1
+        return _emit_report(report, json_output=args.json, print_report=print_verify_runtime_report)
 
     if args.command == "delivery-check":
         if not args.slack and not args.push:
             parser.error("delivery-check requires --slack and/or --push")
         report = run_delivery_check(verify_slack=args.slack, verify_push=args.push)
-        if args.json:
-            print(json.dumps(report, indent=2, sort_keys=True))
-        else:
-            print_delivery_check_report(report)
-        return 0 if report["status"] == "ok" else 1
+        return _emit_report(report, json_output=args.json, print_report=print_delivery_check_report)
 
     if args.command == "inbox":
         report = run_inbox(hours=args.hours, limit=args.limit)
-        if args.json:
-            print(json.dumps(report, indent=2, sort_keys=True))
-        else:
-            print_inbox_report(report)
-        return 0 if report["status"] == "ok" else 1
+        return _emit_report(report, json_output=args.json, print_report=print_inbox_report)
 
     if args.command == "coordination-snapshot":
         report = run_coordination_snapshot(
@@ -165,29 +153,28 @@ def main(argv: Sequence[str] | None = None) -> int:
             save_bridge_db=args.save_bridge_db,
             bridge_db_path=Path(args.bridge_db_path).expanduser() if args.bridge_db_path else None,
         )
-        if args.output is not None:
-            write_json_report(report, args.output)
-        elif args.json:
-            print(json.dumps(report, indent=2, sort_keys=True))
-        else:
-            print_coordination_snapshot_report(report)
-        return 0 if report["status"] == "ok" else 1
+        return _emit_report(
+            report,
+            json_output=args.json,
+            print_report=print_coordination_snapshot_report,
+            output_path=args.output,
+        )
 
     if args.command == "coordination-readiness":
         report = run_coordination_readiness(limit=args.limit)
-        if args.json:
-            print(json.dumps(report, indent=2, sort_keys=True))
-        else:
-            print_coordination_readiness_report(report)
-        return 0 if report["status"] == "ok" else 1
+        return _emit_report(
+            report,
+            json_output=args.json,
+            print_report=print_coordination_readiness_report,
+        )
 
     if args.command == "coordination-console":
         report = run_coordination_console(hours=args.hours, limit=args.limit)
-        if args.json:
-            print(json.dumps(report, indent=2, sort_keys=True))
-        else:
-            print_coordination_console_report(report)
-        return 0 if report["status"] == "ok" else 1
+        return _emit_report(
+            report,
+            json_output=args.json,
+            print_report=print_coordination_console_report,
+        )
 
     if args.command == "personal-ops-actions":
         report = run_personal_ops_action_export(
@@ -196,21 +183,20 @@ def main(argv: Sequence[str] | None = None) -> int:
             save_review_package=args.save_review_package,
             review_dir=Path(args.review_dir).expanduser() if args.review_dir else None,
         )
-        if args.output is not None:
-            write_json_report(report, args.output)
-        elif args.json:
-            print(json.dumps(report, indent=2, sort_keys=True))
-        else:
-            print_personal_ops_action_export_report(report)
-        return 0 if report["status"] == "ok" else 1
+        return _emit_report(
+            report,
+            json_output=args.json,
+            print_report=print_personal_ops_action_export_report,
+            output_path=args.output,
+        )
 
     if args.command == "validate-action-package":
         report = validate_action_package(Path(args.path))
-        if args.json:
-            print(json.dumps(report, indent=2, sort_keys=True))
-        else:
-            print_action_package_validation_report(report)
-        return 0 if report["status"] == "ok" else 1
+        return _emit_report(
+            report,
+            json_output=args.json,
+            print_report=print_action_package_validation_report,
+        )
 
     if args.command == "action-proposal-dismiss":
         actions = run_personal_ops_action_export(hours=24, limit=100, include_dismissed=True)
@@ -232,11 +218,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             body=matched["signal_body"] if matched is not None else None,
             evidence_event_id=matched["evidence_event_id"] if matched is not None else None,
         )
-        if args.json:
-            print(json.dumps(report, indent=2, sort_keys=True))
-        else:
-            print_action_proposal_dismiss_report(report)
-        return 0 if report["status"] == "ok" else 1
+        return _emit_report(
+            report,
+            json_output=args.json,
+            print_report=print_action_proposal_dismiss_report,
+        )
 
     if args.command == "action-proposal-dismissals":
         report = run_action_proposal_dismissal_list(
@@ -244,22 +230,22 @@ def main(argv: Sequence[str] | None = None) -> int:
             dismissal_key=args.dismissal_key,
             include_inactive=args.include_inactive,
         )
-        if args.json:
-            print(json.dumps(report, indent=2, sort_keys=True))
-        else:
-            print_action_proposal_dismissal_list_report(report)
-        return 0 if report["status"] == "ok" else 1
+        return _emit_report(
+            report,
+            json_output=args.json,
+            print_report=print_action_proposal_dismissal_list_report,
+        )
 
     if args.command == "action-proposal-undismiss":
         report = undismiss_action_proposal(
             dismissal_key=args.dismissal_key,
             reason=args.reason,
         )
-        if args.json:
-            print(json.dumps(report, indent=2, sort_keys=True))
-        else:
-            print_action_proposal_undismiss_report(report)
-        return 0 if report["status"] == "ok" else 1
+        return _emit_report(
+            report,
+            json_output=args.json,
+            print_report=print_action_proposal_undismiss_report,
+        )
 
     if args.command == "action-proposal-group-outcome":
         report = record_action_proposal_group_outcome(
@@ -269,11 +255,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             hours=args.hours,
             limit=args.limit,
         )
-        if args.json:
-            print(json.dumps(report, indent=2, sort_keys=True))
-        else:
-            print_action_proposal_group_outcome_report(report)
-        return 0 if report["status"] == "ok" else 1
+        return _emit_report(
+            report,
+            json_output=args.json,
+            print_report=print_action_proposal_group_outcome_report,
+        )
 
     if args.command == "operator-daily-state":
         report = run_operator_daily_state(
@@ -282,11 +268,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             save_report=args.save_report,
             report_dir=Path(args.report_dir).expanduser() if args.report_dir else None,
         )
-        if args.json:
-            print(json.dumps(report, indent=2, sort_keys=True))
-        else:
-            print_operator_daily_state_report(report)
-        return 0 if report["status"] == "ok" else 1
+        return _emit_report(
+            report,
+            json_output=args.json,
+            print_report=print_operator_daily_state_report,
+        )
 
     if args.command == "operator-review-session":
         report = run_operator_review_session(
@@ -295,11 +281,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             save_report=args.save_report,
             report_dir=Path(args.report_dir).expanduser() if args.report_dir else None,
         )
-        if args.json:
-            print(json.dumps(report, indent=2, sort_keys=True))
-        else:
-            print_operator_review_session_report(report)
-        return 0 if report["status"] == "ok" else 1
+        return _emit_report(
+            report,
+            json_output=args.json,
+            print_report=print_operator_review_session_report,
+        )
 
     if args.command == "action-export-retention":
         report = prune_action_export_files(
@@ -307,11 +293,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             dry_run=not args.apply,
             export_dir=Path(args.export_dir).expanduser() if args.export_dir else None,
         )
-        if args.json:
-            print(json.dumps(report, indent=2, sort_keys=True))
-        else:
-            print_action_export_retention_report(report)
-        return 0 if report["status"] == "ok" else 1
+        return _emit_report(
+            report,
+            json_output=args.json,
+            print_report=print_action_export_retention_report,
+        )
 
     if args.command == "operator-review-session-retention":
         report = prune_operator_review_session_reports(
@@ -319,22 +305,22 @@ def main(argv: Sequence[str] | None = None) -> int:
             dry_run=not args.apply,
             report_dir=Path(args.report_dir).expanduser() if args.report_dir else None,
         )
-        if args.json:
-            print(json.dumps(report, indent=2, sort_keys=True))
-        else:
-            print_operator_review_session_retention_report(report)
-        return 0 if report["status"] == "ok" else 1
+        return _emit_report(
+            report,
+            json_output=args.json,
+            print_report=print_operator_review_session_retention_report,
+        )
 
     if args.command == "operator-handoff-drill":
         report = run_operator_handoff_drill(
             save_burn_in_report=args.save_burn_in_report,
             report_dir=Path(args.report_dir).expanduser() if args.report_dir else None,
         )
-        if args.json:
-            print(json.dumps(report, indent=2, sort_keys=True))
-        else:
-            print_operator_handoff_drill_report(report)
-        return 0 if report["status"] == "ok" else 1
+        return _emit_report(
+            report,
+            json_output=args.json,
+            print_report=print_operator_handoff_drill_report,
+        )
 
     if args.command == "personal-ops-import":
         report = run_personal_ops_import_stub(
@@ -343,11 +329,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             enqueue=args.enqueue,
             queue_path=Path(args.queue_path).expanduser() if args.queue_path else None,
         )
-        if args.json:
-            print(json.dumps(report, indent=2, sort_keys=True))
-        else:
-            print_personal_ops_import_report(report)
-        return 0 if report["status"] == "ok" else 1
+        return _emit_report(
+            report,
+            json_output=args.json,
+            print_report=print_personal_ops_import_report,
+        )
 
     if args.command == "personal-ops-queue":
         queue_path = Path(args.queue_path).expanduser() if args.queue_path else None
@@ -373,19 +359,19 @@ def main(argv: Sequence[str] | None = None) -> int:
             "items": list_personal_ops_import_queue(queue_path=queue_path, limit=args.limit),
             "update": update,
         }
-        if args.json:
-            print(json.dumps(queue_report, indent=2, sort_keys=True))
-        else:
-            print_personal_ops_queue_report(queue_report)
-        return 0 if queue_report["status"] == "ok" else 1
+        return _emit_report(
+            queue_report,
+            json_output=args.json,
+            print_report=print_personal_ops_queue_report,
+        )
 
     if args.command == "personal-ops-queue-scenario":
         report = run_personal_ops_queue_scenario()
-        if args.json:
-            print(json.dumps(report, indent=2, sort_keys=True))
-        else:
-            print_personal_ops_queue_scenario_report(report)
-        return 0 if report["status"] == "ok" else 1
+        return _emit_report(
+            report,
+            json_output=args.json,
+            print_report=print_personal_ops_queue_scenario_report,
+        )
 
     if args.command == "personal-ops-queue-health":
         report = run_personal_ops_import_queue_health_check(
@@ -393,11 +379,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             limit=args.limit,
             stale_after_hours=args.stale_after_hours,
         )
-        if args.json:
-            print(json.dumps(report, indent=2, sort_keys=True))
-        else:
-            print_personal_ops_queue_health_report(report)
-        return 0 if report["status"] == "ok" else 1
+        return _emit_report(
+            report,
+            json_output=args.json,
+            print_report=print_personal_ops_queue_health_report,
+        )
 
     if args.command == "personal-ops-queue-review":
         report = run_personal_ops_queue_review(
@@ -405,11 +391,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             limit=args.limit,
             stale_after_hours=args.stale_after_hours,
         )
-        if args.json:
-            print(json.dumps(report, indent=2, sort_keys=True))
-        else:
-            print_personal_ops_queue_review_report(report)
-        return 0 if report["status"] == "ok" else 1
+        return _emit_report(
+            report,
+            json_output=args.json,
+            print_report=print_personal_ops_queue_review_report,
+        )
 
     if args.command == "personal-ops-queue-burn-in":
         report = run_personal_ops_queue_burn_in(
@@ -419,11 +405,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             save_report=args.save_report,
             report_dir=Path(args.report_dir).expanduser() if args.report_dir else None,
         )
-        if args.json:
-            print(json.dumps(report, indent=2, sort_keys=True))
-        else:
-            print_personal_ops_queue_burn_in_report(report)
-        return 0 if report["status"] == "ok" else 1
+        return _emit_report(
+            report,
+            json_output=args.json,
+            print_report=print_personal_ops_queue_burn_in_report,
+        )
 
     if args.command == "personal-ops-outcome-sync-reminder":
         report = run_personal_ops_outcome_sync_reminder(
@@ -431,18 +417,20 @@ def main(argv: Sequence[str] | None = None) -> int:
             limit=args.limit,
             stale_after_hours=args.stale_after_hours,
         )
-        if args.json:
-            print(json.dumps(report, indent=2, sort_keys=True))
-        else:
-            print_personal_ops_outcome_sync_reminder_report(report)
-        return 0 if report["status"] == "ok" else 1
+        return _emit_report(
+            report,
+            json_output=args.json,
+            print_report=print_personal_ops_outcome_sync_reminder_report,
+        )
 
     if args.command == "policy-check":
         report = run_policy_check()
-        if args.json:
-            print(json.dumps(report, indent=2, sort_keys=True))
-        else:
-            print_policy_check_report(report)
+        _emit_report(
+            report,
+            json_output=args.json,
+            print_report=print_policy_check_report,
+            success_status=None,
+        )
         return 0 if report["status"] != "degraded" else 1
 
     if args.command == "explain":
@@ -454,26 +442,19 @@ def main(argv: Sequence[str] | None = None) -> int:
             project=args.project,
         )
         report = build_event_explanation_report(event)
-        if args.json:
-            print(json.dumps(report, indent=2, sort_keys=True))
-        else:
-            print_explain_report(report)
-        return 0
+        return _emit_report(
+            report,
+            json_output=args.json,
+            print_report=print_explain_report,
+            success_status=None,
+        )
 
     if args.command == "bootstrap-config":
         report = bootstrap_policy_config(force=args.force)
-        if args.json:
-            print(json.dumps(report, indent=2, sort_keys=True))
-        else:
-            print_bootstrap_report(report)
-        return 0 if report["status"] == "ok" else 1
+        return _emit_report(report, json_output=args.json, print_report=print_bootstrap_report)
 
     report = run_retention(max_events=args.max_events, keep_archives=args.keep_archives)
-    if args.json:
-        print(json.dumps(report, indent=2, sort_keys=True))
-    else:
-        print_retention_report(report)
-    return 0 if report["status"] == "ok" else 1
+    return _emit_report(report, json_output=args.json, print_report=print_retention_report)
 
 
 def _forward_to_command(command: str, argv: Sequence[str] | None) -> int:
