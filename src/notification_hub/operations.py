@@ -31,9 +31,14 @@ from notification_hub.config import (
     get_policy_config,
     load_policy_config_file,
 )
-from notification_hub.coordination import infer_intent
 from notification_hub.diagnostics import collect_doctor_report
-from notification_hub.models import Event, Intent, StoredEvent
+from notification_hub.models import Event, StoredEvent
+from notification_hub.operations_inbox import (
+    build_inbox_rollups as _build_inbox_rollups,
+    build_near_rollup_singles as _build_near_rollup_singles,
+    inbox_item as _inbox_item,
+    intent_bucket as _intent_bucket,
+)
 from notification_hub.operations_logs import (
     event_report,
     summarize_daemon_logs,
@@ -270,84 +275,6 @@ def _save_bridge_snapshot(
             "snapshot_date": snapshot_date,
             "error": _GENERIC_OPERATION_ERROR,
         }
-
-
-def _inbox_item(event: StoredEvent) -> InboxItemReport:
-    return {
-        "event_id": event.event_id,
-        "timestamp": event.timestamp.isoformat(),
-        "source": event.source,
-        "project": event.project,
-        "level": event.classified_level or event.level,
-        "intent": infer_intent(event),
-        "title": event.title,
-        "body": event.body,
-    }
-
-
-def _build_inbox_rollups(events: list[StoredEvent]) -> list[InboxRollupReport]:
-    grouped: dict[tuple[str, str | None, str, str, str, str], list[StoredEvent]] = {}
-    for event in events:
-        intent = infer_intent(event)
-        key = (event.source, event.project, intent, event.level, event.title, event.body)
-        grouped.setdefault(key, []).append(event)
-
-    rollups: list[InboxRollupReport] = []
-    for (source, project, intent, level, title, body), items in grouped.items():
-        if len(items) < 2:
-            continue
-        latest = max(items, key=lambda item: item.timestamp)
-        rollups.append(
-            {
-                "count": len(items),
-                "source": source,
-                "project": project,
-                "intent": intent,
-                "level": level,
-                "title": title,
-                "body": body,
-                "latest_timestamp": latest.timestamp.isoformat(),
-                "latest_event_id": latest.event_id,
-                "latest_context": dict(latest.context),
-            }
-        )
-
-    return sorted(
-        rollups,
-        key=lambda item: (item["count"], item["latest_timestamp"]),
-        reverse=True,
-    )
-
-
-def _build_near_rollup_singles(events: list[StoredEvent]) -> list[InboxRollupReport]:
-    """Return events that appear exactly once — invisible to the rollup pipeline but worth surfacing."""
-    grouped: dict[tuple[str, str | None, str, str, str, str], list[StoredEvent]] = {}
-    for event in events:
-        intent = infer_intent(event)
-        key = (event.source, event.project, intent, event.level, event.title, event.body)
-        grouped.setdefault(key, []).append(event)
-
-    singles: list[InboxRollupReport] = []
-    for (source, project, intent, level, title, body), items in grouped.items():
-        if len(items) != 1:
-            continue
-        item = items[0]
-        singles.append(
-            {
-                "count": 1,
-                "source": source,
-                "project": project,
-                "intent": intent,
-                "level": level,
-                "title": title,
-                "body": body,
-                "latest_timestamp": item.timestamp.isoformat(),
-                "latest_event_id": item.event_id,
-                "latest_context": dict(item.context),
-            }
-        )
-
-    return sorted(singles, key=lambda item: item["latest_timestamp"], reverse=True)
 
 
 def _action_priority(intent: str, level: str) -> str:
@@ -1923,18 +1850,6 @@ def update_personal_ops_import_queue_item(
     }
 
 
-def _intent_bucket(intent: Intent) -> str:
-    if intent in ("needs_attention", "automation_failed"):
-        return "needs_attention"
-    if intent in ("blocked", "waiting_on_user"):
-        return "waiting_or_blocked"
-    if intent in ("ready_to_review", "ready_to_merge", "handoff_created"):
-        return "ready"
-    if intent == "completed":
-        return "completed"
-    return "informational"
-
-
 def _suggest_fix_for_warning(warning: str) -> str:
     """Turn a policy warning into a concrete next action."""
     if warning.startswith("automatic retention is disabled"):
@@ -2263,9 +2178,10 @@ def run_inbox(*, hours: int = 24, limit: int = 10) -> InboxReport:
         "completed": [],
     }
     for event in sorted(stored_events, key=lambda item: item.timestamp, reverse=True):
-        bucket = _intent_bucket(infer_intent(event))
+        inbox_item = _inbox_item(event)
+        bucket = _intent_bucket(inbox_item["intent"])
         if bucket in buckets:
-            buckets[bucket].append(_inbox_item(event))
+            buckets[bucket].append(inbox_item)
 
     burn_in = run_burn_in(minutes=window_hours * 60, lines=200)
     return {

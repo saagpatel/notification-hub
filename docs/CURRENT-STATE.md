@@ -1,6 +1,6 @@
 # Current State
 
-Last updated: 2026-05-17 (action package storage split)
+Last updated: 2026-05-17 (inbox rollup helper split)
 
 ## Session Update (2026-05-17)
 
@@ -113,6 +113,9 @@ Last updated: 2026-05-17 (action package storage split)
 - Action package storage cleanup is complete locally: review package writing, listing, safe-name
   path resolution, deletion, and action-export retention moved into `operations_packages.py`,
   while existing CLI/server imports continue through `operations.py`.
+- Inbox rollup helper cleanup is complete locally: event-to-inbox item shaping, repeated rollup
+  construction, near-rollup single construction, and intent bucket mapping moved into
+  `operations_inbox.py`, while `run_inbox` behavior remains in `operations.py`.
 - Generic error hardening is complete locally: policy config load failures, doctor local API
   failures, smoke/log/burn-in failures, queue/report file IO failures, and package/report parsing
   failures now return stable operator-facing error messages instead of raw local exception text.
