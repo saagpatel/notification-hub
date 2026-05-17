@@ -1,6 +1,6 @@
 # Current State
 
-Last updated: 2026-05-17 (action proposal group test split)
+Last updated: 2026-05-17 (operator state report test split)
 
 ## Session Update (2026-05-17)
 
@@ -56,6 +56,10 @@ Last updated: 2026-05-17 (action proposal group test split)
   history, action-export file pruning, group dismissal, and group outcome tests moved out of
   the large operations test file into a dedicated action proposal group test module without
   changing runtime behavior.
+- Operator state/report test cleanup is complete locally: operator daily-state snapshots,
+  handoff drill lifecycle, saved queue burn-in report listing/detail, noise-candidate review,
+  and nearby queue/import guard tests moved out of the large operations test file into a
+  dedicated operator state report test module without changing runtime behavior.
 - Compact expansion shipped locally: proposal lineage now treats terminal local group outcomes as
   handled history. `needs_follow_up` remains follow-up, `snoozed` remains snoozed, `accepted` is
   resolved history, and `rejected` / `superseded` are closed history. Matching action IDs or stable
