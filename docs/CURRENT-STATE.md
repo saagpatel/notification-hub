@@ -1,6 +1,6 @@
 # Current State
 
-Last updated: 2026-05-30 (first-rich proof gate and dependency closeout)
+Last updated: 2026-05-30 (first-rich queue guard and rich follow-up review posture)
 
 ## Session Update (2026-05-30)
 
@@ -15,6 +15,16 @@ Last updated: 2026-05-30 (first-rich proof gate and dependency closeout)
 - With no resolved rich-evidence handoff outcome yet, the gate stays operator-mediated by design.
   If a rich active proposal appears, the safe path is to save and validate the package, queue
   exactly one rich handoff, then record the promoted outcome before widening authority.
+- The first-rich proof path is now guarded at both layers: `/review` hides queue controls for thin
+  or mixed first-proof groups, and the queue path rejects first-proof selections unless they contain
+  exactly one rich-evidence handoff.
+- The thin-only `codex:bridge-db:needs_attention:high:open` `Codex is waiting` proposal was recorded
+  locally as `needs_follow_up`, so it is handled history and cannot be mistaken for first-rich proof
+  work.
+- During verification, fresh rich evidence rotated under the existing
+  `personal-ops:mail:waiting_on_user:high:waiting` `needs_follow_up` lineage. Coordination Console
+  is therefore in `notify_review` posture with zero active proposals and no queued or pending
+  handoffs. This is a useful operator review signal, not daemon degradation.
 - Local `main` matched `origin/main` before this pass; worktree drift was the untracked local
   `.claude/` directory plus this session's changes.
 - Runtime status is OK again: daemon reachable, watcher active, runtime wiring current, policy
@@ -55,9 +65,11 @@ Last updated: 2026-05-30 (first-rich proof gate and dependency closeout)
 
 **Active backlog (priority order):**
 
-1. Use the First Rich Proof Gate during the next real active proposal: queue exactly one rich
+1. Review the current rich handled follow-up in `/review` before queueing or promotion; only use it
+   for first-rich proof if the operator explicitly chooses to re-open it as one rich handoff.
+2. Use the First Rich Proof Gate during the next real rich active proposal: queue exactly one rich
    handoff only after package save/validation, then record the promoted outcome.
-2. Continue observing `near_rollup_singles`; tune only if one-off resolved echoes or informational
+3. Continue observing `near_rollup_singles`; tune only if one-off resolved echoes or informational
    first occurrences become repeated operator noise.
 
 ## Session Update (2026-05-17)

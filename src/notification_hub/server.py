@@ -876,7 +876,26 @@ REVIEW_HTML = """<!doctype html>
       renderRealSignalReadiness(data);
       renderFirstRichProofGate(data);
       const reviewGroups = review.groups || [];
-      const groupRows = reviewGroups.slice(0, 5).map(group => item(`
+      const firstRichGate = data.first_rich_handoff_gate || {};
+      function firstRichQueueBlocked(group) {
+        if (!firstRichGate.operator_mediated || (firstRichGate.rich_resolved_count ?? 0) > 0) {
+          return false;
+        }
+        return (group.action_count ?? 0) !== 1
+          || (group.rich_evidence_count ?? 0) !== 1
+          || (group.thin_evidence_count ?? 0) > 0;
+      }
+      function firstRichRouteQueueAllowed(group, route) {
+        if (!firstRichGate.operator_mediated || (firstRichGate.rich_resolved_count ?? 0) > 0) {
+          return true;
+        }
+        const recommendation = group.routing_recommendation || {};
+        return route === "promote" && (recommendation.promote_candidate_count ?? 0) === 1;
+      }
+      const groupRows = reviewGroups.slice(0, 5).map(group => {
+        const queueBlocked = firstRichQueueBlocked(group);
+        const promoteQueueAllowed = firstRichRouteQueueAllowed(group, "promote");
+        return item(`
         <div class="line"><span class="title">${esc(group.source)}${group.project ? " / " + esc(group.project) : ""}</span><span class="meta">${esc(group.intent)} x${esc(group.action_count)}</span></div>
         <div class="badge-row">
           ${badge(group.priority)}
@@ -897,14 +916,16 @@ REVIEW_HTML = """<!doctype html>
         <div class="next">${esc(group.next_action || "")}</div>
         <div class="button-row">
           <button type="button" data-save-group="${esc(group.group_key)}">Save group</button>
-          <button type="button" data-queue-group="${esc(group.group_key)}">Queue group</button>
+          ${queueBlocked ? "" : `<button type="button" data-queue-group="${esc(group.group_key)}">Queue group</button>`}
           ${group.routing_recommendation && group.routing_recommendation.promote_candidate_count ? `<button type="button" data-save-route="promote" data-route-group="${esc(group.group_key)}">Save promote</button>` : ""}
-          ${group.routing_recommendation && group.routing_recommendation.promote_candidate_count ? `<button type="button" data-queue-route="promote" data-route-group="${esc(group.group_key)}">Queue promote</button>` : ""}
+          ${group.routing_recommendation && group.routing_recommendation.promote_candidate_count && promoteQueueAllowed ? `<button type="button" data-queue-route="promote" data-route-group="${esc(group.group_key)}">Queue promote</button>` : ""}
           ${group.routing_recommendation && group.routing_recommendation.suppress_candidate_count ? `<button type="button" data-dismiss-route="suppress" data-route-group="${esc(group.group_key)}">Dismiss suppress</button>` : ""}
           <button type="button" data-follow-up-group="${esc(group.group_key)}">Needs follow-up</button>
           <button type="button" data-dismiss-group="${esc(group.group_key)}">Dismiss group</button>
         </div>
-      `));
+        ${queueBlocked ? `<div class="next"><strong>Queue blocked</strong>: first rich proof requires exactly one rich-evidence handoff.</div>` : ""}
+      `);
+      });
       proposalReview.replaceChildren(item(`
         <div class="line"><span class="title">${esc(review.mode || "unknown")}</span><span class="meta">${esc(review.group_count ?? 0)} group(s)</span></div>
         <div class="badge-row">

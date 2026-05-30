@@ -2444,6 +2444,25 @@ def save_action_proposal_group_package(
             "applied": False,
             "error": f"no active proposals matched this group{route_label}",
         }
+    if enqueue:
+        block_reason = _first_rich_queue_block_reason(actions, queue_path=queue_path)
+        if block_reason is not None:
+            return {
+                "status": "degraded",
+                "group_key": safe_group_key,
+                "action_count": len(actions),
+                "review_package": {
+                    "requested": True,
+                    "status": "degraded",
+                    "path": str(review_dir) if review_dir is not None else None,
+                    "error": block_reason,
+                },
+                "import_result": None,
+                "group_history": None,
+                "next_action": block_reason,
+                "applied": False,
+                "error": block_reason,
+            }
     payload = dict(export)
     payload["actions"] = actions
     payload["selected_group"] = {
@@ -3759,6 +3778,36 @@ def _build_first_rich_handoff_gate(
         "thin_action_ids": thin_action_ids,
         "next_action": next_action,
     }
+
+
+def _first_rich_queue_block_reason(
+    actions: list[PersonalOpsActionReport],
+    *,
+    queue_path: Path | None = None,
+) -> str | None:
+    outcome_quality = _build_handoff_outcome_quality(
+        _read_import_queue_items(queue_path or PERSONAL_OPS_IMPORT_QUEUE)
+    )
+    if outcome_quality["rich"]["resolved"] > 0:
+        return None
+
+    rich_count = sum(1 for action in actions if _action_evidence_quality(action) == "rich")
+    if rich_count == 0:
+        return (
+            "First rich handoff proof is still missing; this selection has no rich-evidence "
+            "proposal to queue."
+        )
+    if rich_count != len(actions):
+        return (
+            "First rich handoff proof is still missing; queue only the rich promote route, "
+            "not the full mixed or thin group."
+        )
+    if len(actions) != 1:
+        return (
+            "First rich handoff proof is still missing; queue exactly one rich-evidence "
+            "handoff before widening authority."
+        )
+    return None
 
 
 def _action_group_label(key: tuple[str, str | None, str, str, str]) -> str:

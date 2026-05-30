@@ -183,6 +183,10 @@ It also shows a structured First Rich Proof Gate with rich/thin active proposal 
 lifecycle state, and the exact next safe action for collecting the first resolved rich-evidence
 handoff proof. The page compares the latest saved burn-in proof against the previous proof for
 readiness and noise drift.
+While no rich-evidence handoff outcome is resolved, queueing is intentionally narrow: the review UI
+hides queue controls for thin or mixed groups, and the queue path rejects anything other than
+exactly one rich-evidence handoff. Thin-only groups can still be saved, dismissed, or marked
+`needs_follow_up` locally.
 The Coordination Readiness panel includes a plain-language explanation that lists the current
 readiness blocker when degraded, or confirms that runtime, policy, queue, and saved burn-in proof are
 clear when ready.
