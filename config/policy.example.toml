@@ -47,6 +47,20 @@ window_minutes = 30
 
 [[noise.rules]]
 source = "personal-ops"
+project = "personal-ops"
+title_contains = "task suggestion pending"
+level = "info"
+window_minutes = 10
+
+[[noise.rules]]
+source = "personal-ops"
+project = "mail"
+title_contains = "draft updated"
+level = "info"
+window_minutes = 10
+
+[[noise.rules]]
+source = "personal-ops"
 project = "mail"
 title_contains = "approval requested"
 body_contains = "test draft"

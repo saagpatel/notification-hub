@@ -1,6 +1,56 @@
 # Current State
 
-Last updated: 2026-05-17 (action review package test split)
+Last updated: 2026-05-30 (live runtime refresh, dashboard readiness explanation, and Pyright readiness)
+
+## Session Update (2026-05-30)
+
+**Current verification:**
+
+- Local `main` matched `origin/main` before this pass; worktree drift was the untracked local
+  `.claude/` directory plus this session's changes.
+- Runtime status is OK again: daemon reachable, watcher active, runtime wiring current, policy
+  check OK, queue OK, no queued handoffs, no pending promoted outcomes, and no Slack delivery
+  failures in the current burn-in window.
+- The earlier degraded status was caused by stale daemon stderr evidence: the stderr log had not
+  changed since the old Slack timeout, but burn-in still counted the old post-start failure.
+  Burn-in now ignores daemon log files that have not changed inside the requested window.
+- Repeated `personal-ops` `Task suggestion pending` events are now covered by an explicit
+  `noise.rules` policy entry in both the repo sample config and the live local policy file. They
+  remain visible as repeated signatures and policy-covered Coordination Console history, but no
+  longer appear as active noise candidates.
+- Repeated informational `personal-ops` mail `Draft Updated` events surfaced after restart and are
+  now covered by an explicit sample/live `noise.rules` entry. They remain visible as repeated
+  signatures but no longer block clean burn-in proof.
+- Explicit Slack transport verification passed with `notification-hub-delivery-check --json
+  --slack`; one real Slack transport-check notification was sent.
+- The LaunchAgent was restarted after operator approval. The live daemon is on a fresh PID, live
+  `/review` now reports `ready_to_expand`, and Coordination Console is in monitor mode with
+  `active_action_count: 0`, no queued handoffs, no pending promoted outcomes, and
+  `rich_follow_up_review_count: 0`.
+- A fresh saved burn-in proof was created:
+  `/Users/d/.local/share/notification-hub/burn-in-reports/personal-ops-queue-burn-in-20260530-110041.json`.
+- `/review` now separates live runtime status from saved burn-in proof in the Real Signal
+  Readiness panel. Saved proof older than seven days is called out with a warning age badge and no
+  longer lets that panel show the compact `ready` state by itself.
+- `/review` also shows daemon uptime in the top summary so process freshness is visible from the
+  browser after restarts.
+- `/review` now adds a plain-language Coordination Readiness explanation. When readiness is
+  blocked, the panel lists the current blocker category; when it is ready, it explicitly confirms
+  that runtime, policy, queue, and saved burn-in proof are clear.
+- Dependabot PR #49's failed Pyright 1.1.409 check was diagnosed. The failure was caused by the
+  deprecated `AsyncIterator` return annotation on the FastAPI `@asynccontextmanager` lifespan
+  function; `server.py` now uses `AsyncGenerator[None]`, and both the pinned Pyright and
+  `pyright==1.1.409` pass locally.
+- `.claude/` is now ignored as Claude-owned local state rather than source drift. The existing
+  local directory contains a portable-skill symlink and empty agent-memory directories.
+
+**Active backlog (priority order):**
+
+1. Continue observing `near_rollup_singles`; tune only if one-off resolved echoes or informational
+   first occurrences become repeated operator noise.
+2. Triage remaining open Dependabot PRs after runtime/operator readiness work stays green. PR #49's
+   code blocker is fixed locally, but dependency pins were not changed in this mixed runtime patch
+   set.
 
 ## Session Update (2026-05-17)
 
@@ -38,6 +88,102 @@ Last updated: 2026-05-17 (action review package test split)
 - Action review package test cleanup is complete locally: saved review package, validation, package
   listing, detail loading, and safe deletion tests moved out of the large operations test file into
   a dedicated package-focused test module without changing runtime behavior.
+- Runtime diagnostics test cleanup is complete locally: status, logs, verify-runtime, and
+  delivery-check tests moved out of the large diagnostics test file into a dedicated runtime
+  diagnostics module without changing runtime behavior.
+- Operator review-session test cleanup is complete locally: review-session summary, saved report,
+  report listing/detail loading, and retention tests moved out of the large operations test file
+  into a dedicated review-session test module without changing runtime behavior.
+- Coordination-console test cleanup is complete locally: readiness, proposal review, handled
+  history, rich follow-up review, outcome quality, and queued handoff lifecycle tests moved out of
+  the large operations test file into a dedicated coordination-console test module without changing
+  runtime behavior.
+- Coordination-console test cleanup continued locally: the broad coordination-console test module
+  is now split into core console/proposal coverage, lineage history coverage, follow-up re-review
+  coverage, queued-handoff guidance coverage, and shared coordination-console fixtures without
+  changing runtime behavior.
+- Inbox/action-export test cleanup is complete locally: inbox rollups, near-rollup singles,
+  coordination snapshot wrapping, personal-ops action export filtering, dismissal lifecycle, and
+  repeated-title uniqueness tests moved out of the large operations test file into a dedicated
+  inbox/action-export test module without changing runtime behavior.
+- Action proposal group test cleanup is complete locally: group package save routes, enqueue
+  history, action-export file pruning, group dismissal, and group outcome tests moved out of
+  the large operations test file into a dedicated action proposal group test module without
+  changing runtime behavior.
+- Operator state/report test cleanup is complete locally: operator daily-state snapshots,
+  handoff drill lifecycle, saved queue burn-in report listing/detail, noise-candidate review,
+  and nearby queue/import guard tests moved out of the large operations test file into a
+  dedicated operator state report test module without changing runtime behavior.
+- Logs/burn-in diagnostics test cleanup is complete locally: log tailing, daemon validation
+  and Slack failure counting, burn-in repeated signature reporting, policy-covered noise
+  filtering, and Slack failure health tests moved out of the large operations test file into
+  a dedicated logs/burn-in diagnostics test module without changing runtime behavior.
+- Retention/policy test cleanup is complete locally: retention rotation, policy config
+  bootstrap, policy warning/degraded handling, sample noise rule drift, and routing fix
+  suggestion tests moved out of the large operations test file into a dedicated retention
+  and policy operations test module without changing runtime behavior.
+- Review endpoint test cleanup is complete locally: `/review` page, data, package, queue,
+  burn-in report, policy check, proposal group, dismissal, operator state, review-session,
+  drill, and queue lifecycle endpoint tests moved out of the large server test file into a
+  dedicated review endpoint test module without changing runtime behavior.
+- Review endpoint error hardening is complete locally: `/review` JSON responses now sanitize
+  unexpected `error`, `load_error`, and validation `errors` text while preserving known safe
+  operator messages, so local paths or traceback-like details stay out of the browser-facing API.
+- CLI command test cleanup is complete locally: doctor, smoke, inbox, coordination, personal-ops
+  queue, policy, explain, retention, bootstrap, burn-in, runtime verification, delivery check, and
+  wrapper command tests moved out of the large diagnostics test file into a dedicated CLI command
+  test module without changing runtime behavior.
+- CLI wrapper test cleanup is complete locally: script-wrapper entrypoint forwarding tests moved
+  out of the broad CLI command test file into a dedicated wrapper test module, with shared CLI
+  report fixtures extracted for command and wrapper tests without changing runtime behavior.
+- CLI source cleanup is complete locally: terminal report rendering and JSON output-file helpers
+  moved out of `cli.py` into `cli_reports.py`, leaving command parsing and dispatch in `cli.py`
+  without changing command behavior.
+- CLI parser cleanup is complete locally: command-line parser construction moved out of `cli.py`
+  into `cli_parser.py`, leaving command dispatch and script-wrapper entrypoints in `cli.py`
+  without changing command behavior.
+- CLI wrapper cleanup is complete locally: script-wrapper entrypoints now share one forwarding
+  helper in `cli.py`, keeping each public wrapper command mapped to the same subcommand without
+  repeating `sys.argv` handling.
+- CLI dispatch cleanup is complete locally: repeated JSON/human report emission and status-based
+  exit-code handling now flows through one helper in `cli.py`, while command-specific argument
+  wiring remains explicit.
+- Operation report type cleanup is complete locally: the large `TypedDict` report-shape block moved
+  out of `operations.py` into `operations_types.py`, while `operations.py` still re-exports those
+  names for existing imports.
+- Runtime log helper cleanup is complete locally: daemon log tailing, daemon summary parsing, and
+  stored-event report shaping moved out of `operations.py` into `operations_logs.py`, while public
+  `run_logs` and `run_burn_in` behavior stays in `operations.py`.
+- Proposal persistence cleanup is complete locally: action proposal dismissals, undismissals,
+  dismissal listing, and proposal group-history JSONL handling moved out of `operations.py` into
+  `operations_proposals.py`, while existing CLI/server imports continue through `operations.py`.
+- Action package validation cleanup is complete locally: saved action package schema validation,
+  action-record validation, and payload action extraction moved out of `operations.py` into
+  `operations_packages.py`, while existing CLI/server imports continue through `operations.py`.
+- Action package storage cleanup is complete locally: review package writing, listing, safe-name
+  path resolution, deletion, and action-export retention moved into `operations_packages.py`,
+  while existing CLI/server imports continue through `operations.py`.
+- Inbox rollup helper cleanup is complete locally: event-to-inbox item shaping, repeated rollup
+  construction, near-rollup single construction, and intent bucket mapping moved into
+  `operations_inbox.py`, while `run_inbox` behavior remains in `operations.py`.
+- Action proposal shaping cleanup is complete locally: rollup-to-action mapping, stable proposal
+  dismissal key generation, action candidate limit selection, and evidence-quality helpers moved
+  into `operations_actions.py`, while proposal export and Coordination Console behavior stays in
+  `operations.py`.
+- Generic error hardening is complete locally: policy config load failures, doctor local API
+  failures, smoke/log/burn-in failures, queue/report file IO failures, and package/report parsing
+  failures now return stable operator-facing error messages instead of raw local exception text.
+- Report error hardening is complete locally: operation, diagnostic, and policy-loading reports now
+  use generic browser/operator-facing error messages for unexpected exceptions while retaining
+  detailed exception text in local logs where it is needed for debugging.
+- Review package endpoint test cleanup is complete locally: review package save, validation,
+  listing/detail/delete, package queueing, import queue, import queue review, and burn-in report
+  endpoint tests moved out of the broad review endpoint test file into a dedicated review package
+  endpoint test module without changing runtime behavior.
+- Review endpoint test cleanup is complete locally: proposal-group/dismissal endpoints and
+  operator/session/queue endpoints moved out of the broad review endpoint test file into dedicated
+  review endpoint modules, with the shared async review client fixture moved into test isolation
+  setup without changing runtime behavior.
 - Compact expansion shipped locally: proposal lineage now treats terminal local group outcomes as
   handled history. `needs_follow_up` remains follow-up, `snoozed` remains snoozed, `accepted` is
   resolved history, and `rejected` / `superseded` are closed history. Matching action IDs or stable

@@ -56,7 +56,7 @@ def _pyproject_scripts() -> set[str]:
 
 
 def _cli_subcommands() -> set[str]:
-    cli_source = (ROOT / "src" / "notification_hub" / "cli.py").read_text(encoding="utf-8")
+    cli_source = (ROOT / "src" / "notification_hub" / "cli_parser.py").read_text(encoding="utf-8")
     return set(re.findall(r'subparsers\.add_parser\(\s*"([^"]+)"', cli_source))
 
 
