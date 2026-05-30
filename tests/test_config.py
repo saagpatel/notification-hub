@@ -251,7 +251,7 @@ keep_archives = 4
         policy = get_policy_config()
 
         assert policy.config_found is True
-        assert policy.load_error is not None
+        assert policy.load_error == "policy config could not be loaded"
         assert "session complete" in policy.classification.normal_keywords
 
     def test_loads_routing_rules(

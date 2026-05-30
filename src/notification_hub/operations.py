@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 import os
 import re
 import shutil
@@ -11,7 +11,7 @@ import sqlite3
 import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import NotRequired, TypedDict, cast
+from typing import cast
 
 import httpx
 
@@ -31,927 +31,129 @@ from notification_hub.config import (
     get_policy_config,
     load_policy_config_file,
 )
-from notification_hub.coordination import infer_intent
 from notification_hub.diagnostics import collect_doctor_report
-from notification_hub.models import Event, Intent, StoredEvent
-
-
-class SmokeReport(TypedDict):
-    status: str
-    health_url: str
-    event_url: str
-    event_id: str | None
-    log_verified: bool
-    response_status: int | None
-    error: str | None
-
-
-class DeliveryCheckReport(TypedDict):
-    status: str
-    verify_slack: bool
-    verify_push: bool
-    slack_ok: bool | None
-    push_ok: bool | None
-    event_id: str | None
-    error: str | None
-
-
-class RetentionReport(TypedDict):
-    status: str
-    rotated: bool
-    archive_path: str | None
-    events_before: int
-    events_after: int
-    archived_events: int
-    deleted_archives: list[str]
-
-
-class RecentEventReport(TypedDict):
-    event_id: str
-    timestamp: str
-    source: str
-    level: str
-    classified_level: str | None
-    project: str | None
-    title: str
-    body: str
-    intent: str
-
-
-class InboxItemReport(TypedDict):
-    event_id: str
-    timestamp: str
-    source: str
-    project: str | None
-    level: str
-    intent: str
-    title: str
-    body: str
-
-
-class InboxRollupReport(TypedDict):
-    count: int
-    source: str
-    project: str | None
-    intent: str
-    level: str
-    title: str
-    body: str
-    latest_timestamp: str
-    latest_event_id: str
-    latest_context: NotRequired[dict[str, object]]
-
-
-class InboxReport(TypedDict):
-    status: str
-    hours: int
-    events_seen: int
-    needs_attention: list[InboxItemReport]
-    waiting_or_blocked: list[InboxItemReport]
-    ready: list[InboxItemReport]
-    completed: list[InboxItemReport]
-    rollups: list[InboxRollupReport]
-    near_rollup_singles: list[InboxRollupReport]
-    noise_candidates: list[RepeatedSignatureReport]
-    error: str | None
-
-
-class PersonalOpsActionReport(TypedDict):
-    action_id: str
-    dismissal_key: str
-    source: str
-    project: str | None
-    intent: str
-    priority: str
-    state: str
-    title: str
-    summary: str
-    signal_level: str
-    signal_body: str
-    suggested_next_action: str
-    evidence_event_id: str
-    evidence_timestamp: str
-    evidence_context: NotRequired[dict[str, object]]
-    evidence_quality: str
-    count: int
-
-
-class ActionProposalDismissalReport(TypedDict):
-    dismissal_key: str
-    dismissed_at: str
-    deleted_at: str | None
-    active: bool
-    reason: str
-    source: str | None
-    project: str | None
-    intent: str | None
-    title: str | None
-    body: str | None
-    evidence_event_id: str | None
-
-
-class ActionProposalDismissReport(TypedDict):
-    status: str
-    path: str
-    dismissal: ActionProposalDismissalReport | None
-    applied: bool
-    error: str | None
-
-
-class ActionProposalDismissalListReport(TypedDict):
-    status: str
-    path: str
-    dismissal_count: int
-    dismissals: list[ActionProposalDismissalReport]
-    applied: bool
-
-
-class ActionProposalUndismissReport(TypedDict):
-    status: str
-    path: str
-    dismissal_key: str
-    removed: bool
-    applied: bool
-    error: str | None
-
-
-class ActionProposalGroupPackageReport(TypedDict):
-    status: str
-    group_key: str
-    action_count: int
-    review_package: dict[str, object]
-    import_result: dict[str, object] | None
-    group_history: ActionProposalGroupHistoryReport | None
-    next_action: str
-    applied: bool
-    error: str | None
-
-
-class ActionProposalGroupDismissReport(TypedDict):
-    status: str
-    group_key: str
-    dismissed_count: int
-    dismissals: list[ActionProposalDismissalReport]
-    group_history: "ActionProposalGroupHistoryReport | None"
-    next_action: str
-    applied: bool
-    error: str | None
-
-
-class ActionProposalGroupOutcomeReport(TypedDict):
-    status: str
-    group_key: str
-    outcome: str | None
-    group_history: "ActionProposalGroupHistoryReport | None"
-    next_action: str
-    applied: bool
-    error: str | None
-
-
-class ActionProposalGroupHistoryReport(TypedDict):
-    group_key: str
-    event_type: str
-    recorded_at: str
-    status: str
-    action_count: int
-    action_ids: list[str]
-    action_keys: list[str]
-    package_path: str | None
-    queued_count: int | None
-    dismissed_count: int | None
-    outcome: str | None
-    reason: str | None
-    error: str | None
-
-
-class OperatorReviewSessionGroupSummary(TypedDict):
-    group_key: str
-    saved_count: int
-    queued_count: int
-    dismissed_count: int
-    outcome_count: int
-    action_count: int
-    latest_event_type: str | None
-    latest_recorded_at: str | None
-    latest_outcome: str | None
-
-
-class OperatorReviewSessionReport(TypedDict):
-    status: str
-    generated_at: str
-    hours: int
-    since: str
-    group_history_count: int
-    queue_item_count: int
-    saved_count: int
-    queued_count: int
-    dismissed_count: int
-    outcome_count: int
-    reviewed_count: int
-    active_queue_count: int
-    pending_promotion_count: int
-    route_counts: dict[str, int]
-    group_summaries: list[OperatorReviewSessionGroupSummary]
-    recent_group_history: list[ActionProposalGroupHistoryReport]
-    recent_queue_items: list[PersonalOpsImportQueueItemReport]
-    next_action: str
-    report_file: dict[str, object]
-    applied: bool
-
-
-class OperatorReviewSessionReportSummary(TypedDict):
-    path: str
-    name: str
-    modified_at: str
-    size_bytes: int
-    status: str
-    generated_at: str | None
-    hours: int | None
-    group_history_count: int
-    queue_item_count: int
-    saved_count: int
-    queued_count: int
-    dismissed_count: int
-    outcome_count: int
-    reviewed_count: int
-    active_queue_count: int
-    pending_promotion_count: int
-    next_action: str | None
-
-
-class OperatorReviewSessionReportDetail(TypedDict):
-    status: str
-    path: str
-    name: str
-    schema_version: str | None
-    generated_at: str | None
-    summary: OperatorReviewSessionReportSummary | None
-    report: dict[str, object] | None
-    applied: bool
-    error: str | None
-
-
-class OperatorReviewSessionRetentionReport(TypedDict):
-    status: str
-    report_dir: str
-    keep: int
-    dry_run: bool
-    total_count: int
-    kept_count: int
-    candidate_count: int
-    deleted_count: int
-    candidate_reports: list[OperatorReviewSessionReportSummary]
-    deleted_reports: list[OperatorReviewSessionReportSummary]
-    next_action: str
-    applied: bool
-    error: str | None
-
-
-class ActionExportRetentionReport(TypedDict):
-    status: str
-    export_dir: str
-    keep: int
-    dry_run: bool
-    total_count: int
-    kept_count: int
-    candidate_count: int
-    deleted_count: int
-    candidate_files: list[str]
-    deleted_files: list[str]
-    next_action: str
-    applied: bool
-    error: str | None
-
-
-class PersonalOpsActionExportReport(TypedDict):
-    status: str
-    schema_version: str
-    generated_at: str
-    hours: int
-    actions: list[PersonalOpsActionReport]
-    dismissed_action_count: int
-    dismissals: list[ActionProposalDismissalReport]
-    review_package: dict[str, object]
-    inbox: InboxReport
-    error: str | None
-
-
-class ActionPackageValidationReport(TypedDict):
-    status: str
-    path: str
-    schema_version: str | None
-    action_count: int
-    valid_action_count: int
-    warning_count: int
-    error_count: int
-    warnings: list[str]
-    errors: list[str]
-
-
-class ActionReviewPackageReport(TypedDict):
-    path: str
-    name: str
-    modified_at: str
-    size_bytes: int
-    validation_status: str
-    action_count: int
-    valid_action_count: int
-    error_count: int
-
-
-class ActionReviewPackageDetailReport(TypedDict):
-    status: str
-    path: str
-    name: str
-    schema_version: str | None
-    generated_at: str | None
-    hours: int | None
-    actions: list[dict[str, object]]
-    queue_items: list[PersonalOpsImportQueueItemReport]
-    validation: ActionPackageValidationReport
-    applied: bool
-    error: str | None
-
-
-class ActionReviewPackageDeleteReport(TypedDict):
-    status: str
-    path: str
-    name: str
-    deleted: bool
-    applied: bool
-    error: str | None
-
-
-class PersonalOpsImportReport(TypedDict):
-    status: str
-    path: str
-    dry_run: bool
-    applied: bool
-    enqueued: bool
-    queued_count: int
-    skipped_count: int
-    queue_path: str | None
-    validation: ActionPackageValidationReport
-    next_action: str
-    error: str | None
-
-
-class PersonalOpsImportQueueItemReport(TypedDict):
-    queue_id: str
-    status: str
-    enqueued_at: str
-    updated_at: str | None
-    source_package_name: str
-    source_package_path: str
-    action_id: str
-    title: str
-    summary: str
-    priority: str
-    state: str
-    evidence_event_id: str
-    evidence_context: dict[str, object]
-    evidence_quality: str
-    applied: bool
-    snoozed_until: str | None
-    outcome_reason: str | None
-    promoted_at: str | None
-    promotion_target: str | None
-    promotion_target_id: str | None
-    promotion_outcome: str | None
-    promotion_outcome_at: str | None
-    promotion_outcome_note: str | None
-
-
-class PersonalOpsImportQueueUpdateReport(TypedDict):
-    status: str
-    queue_id: str
-    queue_path: str
-    updated: bool
-    item: PersonalOpsImportQueueItemReport | None
-    next_action: str
-    error: str | None
-
-
-class PersonalOpsImportQueueHealthReport(TypedDict):
-    status: str
-    queue_path: str
-    total_count: int
-    queued_count: int
-    reviewed_count: int
-    rejected_count: int
-    snoozed_count: int
-    superseded_count: int
-    promoted_count: int
-    promoted_pending_count: int
-    promoted_pending_stale_count: int
-    promoted_accepted_count: int
-    promoted_rejected_count: int
-    promoted_ignored_count: int
-    needs_outcome_sync: bool
-    needs_review: bool
-    oldest_queued_at: str | None
-    oldest_queued_age_seconds: float | None
-    oldest_promoted_pending_at: str | None
-    oldest_promoted_pending_age_seconds: float | None
-    stale_after_hours: float
-    next_action: str
-
-
-class PersonalOpsImportQueueHealthCheckReport(TypedDict):
-    status: str
-    health: PersonalOpsImportQueueHealthReport
-    queued_items: list[PersonalOpsImportQueueItemReport]
-    pending_promotion_items: list[PersonalOpsImportQueueItemReport]
-    next_commands: list[str]
-    applied: bool
-
-
-class PersonalOpsQueueReviewBatchReport(TypedDict):
-    batch_key: str
-    source_package_name: str
-    title: str
-    priority: str
-    state: str
-    item_count: int
-    queue_ids: list[str]
-    evidence_event_ids: list[str]
-    summaries: list[str]
-    first_queue_id: str | None
-    suggested_next_action: str
-
-
-class PersonalOpsQueueReviewReport(TypedDict):
-    status: str
-    queue_status: str
-    queued_count: int
-    pending_count: int
-    stale_count: int
-    operator_decision_count: int
-    batch_count: int
-    batches: list[PersonalOpsQueueReviewBatchReport]
-    next_action: str
-    next_commands: list[str]
-    applied: bool
-
-
-class PersonalOpsOutcomeSyncReminderReport(TypedDict):
-    status: str
-    should_remind: bool
-    pending_count: int
-    stale_count: int
-    reminders: list[PersonalOpsImportQueueItemReport]
-    next_commands: list[str]
-    next_action: str
-    applied: bool
-
-
-class PersonalOpsQueueScenarioReport(TypedDict):
-    status: str
-    queue_path: str
-    package_path: str
-    queue_id: str | None
-    queued_count: int
-    evidence_quality: str
-    rich_evidence_ready: bool
-    review_status: str | None
-    promotion_status: str | None
-    promotion_outcome: str | None
-    final_health: PersonalOpsImportQueueHealthReport
-    applied: bool
-    next_action: str
-    error: str | None
-
-
-class PersonalOpsQueueBurnInReport(TypedDict):
-    status: str
-    queue_health: PersonalOpsImportQueueHealthCheckReport
-    scenario: PersonalOpsQueueScenarioReport
-    runtime_burn_in: BurnInReport
-    ready_for_live_promotion: bool
-    outcome_sync_posture: str
-    operator_steps: list[str]
-    next_action: str
-    report_file: dict[str, object]
-    applied: bool
-
-
-class PersonalOpsQueueBurnInReportSummary(TypedDict):
-    path: str
-    name: str
-    modified_at: str
-    size_bytes: int
-    status: str
-    generated_at: str | None
-    ready_for_live_promotion: bool
-    queued_count: int
-    pending_count: int
-    stale_count: int
-    runtime_status: str | None
-    noise_candidate_count: int
-    next_action: str | None
-
-
-class PersonalOpsQueueBurnInReportDetail(TypedDict):
-    status: str
-    path: str
-    name: str
-    schema_version: str | None
-    generated_at: str | None
-    summary: PersonalOpsQueueBurnInReportSummary | None
-    report: dict[str, object] | None
-    applied: bool
-    error: str | None
-
-
-class BridgeSaveReport(TypedDict):
-    attempted: bool
-    status: str
-    db_path: str | None
-    snapshot_id: int | None
-    snapshot_date: str | None
-    error: str | None
-
-
-class CoordinationSnapshotReport(TypedDict):
-    status: str
-    schema_version: str
-    generated_at: str
-    bridge_target_system: str
-    bridge_snapshot_date: str
-    bridge_snapshot: dict[str, object]
-    bridge_save: BridgeSaveReport
-    inbox: InboxReport
-    runtime_status: StatusReport
-    follow_up: list[str]
-    error: str | None
-
-
-class LogsReport(TypedDict):
-    status: str
-    events_log: str
-    stdout_log: str
-    stderr_log: str
-    recent_events: list[RecentEventReport]
-    daemon_summary: DaemonLogSummary
-    stdout_tail: list[str]
-    stderr_tail: list[str]
-    missing_paths: list[str]
-    error: str | None
-
-
-class DaemonLogSummary(TypedDict):
-    access_status_counts: dict[str, int]
-    accepted_event_posts: int
-    rejected_event_posts: int
-    validation_error_count: int
-    recent_validation_errors: list[str]
-    slack_delivery_failure_count: int
-    recent_slack_delivery_failures: list[str]
-
-
-class RepeatedSignatureReport(TypedDict):
-    count: int
-    source: str
-    project: str | None
-    level: str
-    title: str
-    body: str
-
-
-class BurnInHealthReport(TypedDict):
-    accepted_event_posts: int
-    rejected_event_posts: int
-    validation_error_count: int
-    slack_delivery_failure_count: int
-    status: str
-
-
-class SlackVolumeReport(TypedDict):
-    count: int
-    source: str
-    level: str
-
-
-class BurnInReport(TypedDict):
-    status: str
-    minutes: int
-    events_seen: int
-    accepted_event_posts: int
-    rejected_event_posts: int
-    validation_error_count: int
-    health: BurnInHealthReport
-    noise_candidates: list[RepeatedSignatureReport]
-    noise_rule_suggestions: list[str]
-    repeated_signatures: list[RepeatedSignatureReport]
-    slack_eligible_events: int
-    slack_volume: list[SlackVolumeReport]
-    daemon_summary: DaemonLogSummary
-    error: str | None
-
-
-class BootstrapConfigReport(TypedDict):
-    status: str
-    copied: bool
-    config_path: str
-    example_path: str
-    error: str | None
-
-
-class PolicyCheckReport(TypedDict):
-    status: str
-    config_path: str
-    config_found: bool
-    example_path: str
-    load_error: str | None
-    warning_count: int
-    suggestion_count: int
-    warnings: list[str]
-    suggestions: list[str]
-    policy_drift: "PolicyDriftReport"
-
-
-class PolicyDriftReport(TypedDict):
-    status: str
-    live_noise_rule_count: int
-    sample_noise_rule_count: int
-    missing_sample_noise_rule_count: int
-    extra_live_noise_rule_count: int
-    missing_sample_noise_rules: list[dict[str, object]]
-    extra_live_noise_rules: list[dict[str, object]]
-    next_action: str
-    error: str | None
-
-
-class VerifyRuntimeReport(TypedDict):
-    status: str
-    read_only: bool
-    include_smoke: bool
-    health_url: str | None
-    checks: dict[str, bool]
-    import_queue: PersonalOpsImportQueueHealthReport
-    runtime_wiring: dict[str, bool]
-    doctor: dict[str, object]
-    policy_check: PolicyCheckReport
-    burn_in: BurnInReport
-    delivery_check: DeliveryCheckReport | None
-    smoke: SmokeReport | None
-
-
-class StatusReport(TypedDict):
-    status: str
-    health_url: str | None
-    daemon_reachable: bool
-    watcher_active: bool | None
-    events_processed: int | None
-    uptime_seconds: float | None
-    policy_config_found: bool | None
-    policy_warning_count: int
-    retention_enabled: bool | None
-    retention_last_status: str | None
-    runtime_wiring_current: bool
-    push_notifier_available: bool | None
-    slack_configured: bool | None
-    slack_delivery_failures: int
-    import_queue: PersonalOpsImportQueueHealthReport
-    next_action: str
-
-
-class CoordinationReadinessReport(TypedDict):
-    status: str
-    decision: str
-    summary: str
-    queue_status: str
-    queued_count: int
-    pending_count: int
-    stale_count: int
-    saved_burn_in_reports: int
-    latest_burn_in_ready: bool | None
-    latest_burn_in_noise_candidates: int | None
-    runtime_status: str
-    policy_warning_count: int
-    next_action: str
-    evidence: list[str]
-    applied: bool
-
-
-class CoordinationConsoleActionReport(TypedDict):
-    action: PersonalOpsActionReport
-    lineage_status: str
-    lineage_label: str
-    lineage_next_action: str
-    lineage_reason: str
-    lineage_history_event_type: str | None
-    lineage_history_recorded_at: str | None
-    lineage_history_outcome: str | None
-    stable_key_matched: bool
-    evidence_event_rotated: bool
-    previous_action_id: str | None
-    queue_id: str | None
-    queue_status: str | None
-    promotion_outcome: str | None
-    promotion_target_id: str | None
-
-
-class CoordinationProposalRouteRecommendation(TypedDict):
-    decision: str
-    reason: str
-    suggested_next_action: str
-    operator_decision_required_count: int
-    promote_candidate_count: int
-    suppress_candidate_count: int
-    follow_up_candidate_count: int
-    operator_decision_required_action_ids: list[str]
-    promote_candidate_action_ids: list[str]
-    suppress_candidate_action_ids: list[str]
-    follow_up_candidate_action_ids: list[str]
-
-
-class CoordinationProposalReviewGroup(TypedDict):
-    group_key: str
-    source: str
-    project: str | None
-    intent: str
-    priority: str
-    state: str
-    action_count: int
-    total_event_count: int
-    newest_evidence_timestamp: str | None
-    titles: list[str]
-    action_ids: list[str]
-    rich_evidence_count: int
-    thin_evidence_count: int
-    history_count: int
-    latest_history: ActionProposalGroupHistoryReport | None
-    latest_outcome: str | None
-    routing_recommendation: CoordinationProposalRouteRecommendation | None
-    promotion_readiness: str
-    promotion_readiness_summary: str
-    promotion_ready_action_ids: list[str]
-    promotion_blocked_action_ids: list[str]
-    next_action: str
-
-
-class CoordinationProposalReviewReport(TypedDict):
-    mode: str
-    summary: str
-    active_count: int
-    new_count: int
-    queued_count: int
-    promoted_count: int
-    reviewed_only_count: int
-    follow_up_count: int
-    snoozed_count: int
-    resolved_count: int
-    ignored_count: int
-    handled_count: int
-    handled_mail_count: int
-    handled_mail_rich_count: int
-    handled_mail_thin_count: int
-    handled_stable_key_match_count: int
-    handled_evidence_rotation_count: int
-    rich_follow_up_review_count: int
-    rich_follow_up_action_ids: list[str]
-    handled_history_summary: str | None
-    group_count: int
-    primary_action_id: str | None
-    groups: list[CoordinationProposalReviewGroup]
-    group_history: list[ActionProposalGroupHistoryReport]
-    next_action: str
-
-
-class CoordinationConsoleGuideStep(TypedDict):
-    step: int
-    title: str
-    status: str
-    summary: str
-    commands: list[str]
-    action_id: str | None
-    queue_id: str | None
-
-
-class CoordinationNextSignalReport(TypedDict):
-    status: str
-    title: str
-    summary: str
-    watch_posture: str
-    notify_on: list[str]
-    quiet_reason: str | None
-    qualifying_intents: list[str]
-    hidden_action_count: int
-    dismissed_count: int
-    rich_follow_up_review_count: int
-    policy_covered_repeated_count: int
-    policy_covered_signatures: list[RepeatedSignatureReport]
-    dismissed_proposals: list[ActionProposalDismissalReport]
-    next_action: str
-
-
-class HandoffOutcomeQualityBucket(TypedDict):
-    total: int
-    pending: int
-    accepted: int
-    rejected: int
-    ignored: int
-    resolved: int
-    acceptance_rate: float | None
-
-
-class HandoffOutcomeQualityReport(TypedDict):
-    status: str
-    summary: str
-    rich: HandoffOutcomeQualityBucket
-    thin: HandoffOutcomeQualityBucket
-    unknown: HandoffOutcomeQualityBucket
-    next_action: str
-
-
-class CoordinationConsoleReport(TypedDict):
-    status: str
-    readiness: CoordinationReadinessReport
-    action_count: int
-    active_action_count: int
-    handled_action_count: int
-    dismissal_count: int
-    actions: list[CoordinationConsoleActionReport]
-    handled_actions: list[CoordinationConsoleActionReport]
-    proposal_review: CoordinationProposalReviewReport
-    dismissals: list[ActionProposalDismissalReport]
-    next_signal: CoordinationNextSignalReport
-    outcome_quality: HandoffOutcomeQualityReport
-    queue_health: PersonalOpsImportQueueHealthReport
-    queued_items: list[PersonalOpsImportQueueItemReport]
-    pending_promotion_items: list[PersonalOpsImportQueueItemReport]
-    outcome_sync_reminder: PersonalOpsOutcomeSyncReminderReport
-    burn_in_reports: list[PersonalOpsQueueBurnInReportSummary]
-    guide_stage: str
-    guide_steps: list[CoordinationConsoleGuideStep]
-    next_commands: list[str]
-    next_action: str
-    applied: bool
-
-
-class NoiseCandidateReviewItem(TypedDict):
-    count: int
-    source: str
-    project: str | None
-    level: str
-    title: str
-    body: str
-    decision_hint: str
-    suggested_rule: str | None
-
-
-class NoiseCandidateReviewReport(TypedDict):
-    status: str
-    report_name: str | None
-    generated_at: str | None
-    noise_candidate_count: int
-    candidates: list[NoiseCandidateReviewItem]
-    next_action: str
-    applied: bool
-    error: str | None
-
-
-class OperatorDailyStateReport(TypedDict):
-    status: str
-    generated_at: str
-    hours: int
-    runtime: StatusReport
-    queue_health: PersonalOpsImportQueueHealthCheckReport
-    coordination_console: CoordinationConsoleReport
-    burn_in: BurnInReport
-    dismissals: list[ActionProposalDismissalReport]
-    outcome_quality: HandoffOutcomeQualityReport
-    outcome_quality_summary: str
-    next_action: str
-    report_file: dict[str, object]
-    applied: bool
-
-
-class OperatorHandoffDrillReport(TypedDict):
-    status: str
-    generated_at: str
-    scenario: PersonalOpsQueueScenarioReport
-    queue_burn_in: PersonalOpsQueueBurnInReport
-    review_steps: list[str]
-    next_action: str
-    applied: bool
+from notification_hub.models import Event, StoredEvent
+from notification_hub.operations_actions import (
+    action_evidence_quality as _action_evidence_quality,
+    action_from_rollup as _action_from_rollup,
+    action_proposal_candidate_limit as _action_proposal_candidate_limit,
+    evidence_quality as _evidence_quality,
+    raw_queue_item_evidence_quality as _raw_queue_item_evidence_quality,
+)
+from notification_hub.operations_inbox import (
+    build_inbox_rollups as _build_inbox_rollups,
+    build_near_rollup_singles as _build_near_rollup_singles,
+    inbox_item as _inbox_item,
+    intent_bucket as _intent_bucket,
+)
+from notification_hub.operations_logs import (
+    event_report,
+    summarize_daemon_logs,
+    tail_text_file,
+)
+from notification_hub.operations_packages import (
+    ACTION_EXPORT_DIR,
+    ACTION_EXPORT_SCHEMA_VERSION,
+    action_dicts_from_payload as _action_dicts_from_payload,
+    action_review_package_path_for_name,
+    delete_action_review_package as delete_action_review_package,
+    empty_package_validation as _empty_package_validation,
+    list_action_review_packages as list_action_review_packages,
+    load_action_package_payload as _load_action_package_payload,
+    prune_action_export_files as prune_action_export_files,
+    validate_action_package as validate_action_package,
+    write_action_review_package as _write_action_review_package,
+)
+from notification_hub.operations_proposals import (
+    active_action_proposal_dismissals as _active_action_proposal_dismissals,
+    dismiss_action_proposal,
+    list_action_proposal_dismissals as list_action_proposal_dismissals,
+    list_action_proposal_group_history,
+    recent_group_history as _recent_group_history,
+    record_action_proposal_group_history as _record_action_proposal_group_history,
+    run_action_proposal_dismissal_list as run_action_proposal_dismissal_list,
+    undismiss_action_proposal as undismiss_action_proposal,
+)
+from notification_hub.operations_types import (
+    SmokeReport as SmokeReport,
+    DeliveryCheckReport as DeliveryCheckReport,
+    RetentionReport as RetentionReport,
+    RecentEventReport as RecentEventReport,
+    InboxItemReport as InboxItemReport,
+    InboxRollupReport as InboxRollupReport,
+    InboxReport as InboxReport,
+    PersonalOpsActionReport as PersonalOpsActionReport,
+    ActionProposalDismissalReport as ActionProposalDismissalReport,
+    ActionProposalDismissReport as ActionProposalDismissReport,
+    ActionProposalDismissalListReport as ActionProposalDismissalListReport,
+    ActionProposalUndismissReport as ActionProposalUndismissReport,
+    ActionProposalGroupPackageReport as ActionProposalGroupPackageReport,
+    ActionProposalGroupDismissReport as ActionProposalGroupDismissReport,
+    ActionProposalGroupOutcomeReport as ActionProposalGroupOutcomeReport,
+    ActionProposalGroupHistoryReport as ActionProposalGroupHistoryReport,
+    OperatorReviewSessionGroupSummary as OperatorReviewSessionGroupSummary,
+    OperatorReviewSessionReport as OperatorReviewSessionReport,
+    OperatorReviewSessionReportSummary as OperatorReviewSessionReportSummary,
+    OperatorReviewSessionReportDetail as OperatorReviewSessionReportDetail,
+    OperatorReviewSessionRetentionReport as OperatorReviewSessionRetentionReport,
+    ActionExportRetentionReport as ActionExportRetentionReport,
+    PersonalOpsActionExportReport as PersonalOpsActionExportReport,
+    ActionPackageValidationReport as ActionPackageValidationReport,
+    ActionReviewPackageReport as ActionReviewPackageReport,
+    ActionReviewPackageDetailReport as ActionReviewPackageDetailReport,
+    ActionReviewPackageDeleteReport as ActionReviewPackageDeleteReport,
+    PersonalOpsImportReport as PersonalOpsImportReport,
+    PersonalOpsImportQueueItemReport as PersonalOpsImportQueueItemReport,
+    PersonalOpsImportQueueUpdateReport as PersonalOpsImportQueueUpdateReport,
+    PersonalOpsImportQueueHealthReport as PersonalOpsImportQueueHealthReport,
+    PersonalOpsImportQueueHealthCheckReport as PersonalOpsImportQueueHealthCheckReport,
+    PersonalOpsQueueReviewBatchReport as PersonalOpsQueueReviewBatchReport,
+    PersonalOpsQueueReviewReport as PersonalOpsQueueReviewReport,
+    PersonalOpsOutcomeSyncReminderReport as PersonalOpsOutcomeSyncReminderReport,
+    PersonalOpsQueueScenarioReport as PersonalOpsQueueScenarioReport,
+    PersonalOpsQueueBurnInReport as PersonalOpsQueueBurnInReport,
+    PersonalOpsQueueBurnInReportSummary as PersonalOpsQueueBurnInReportSummary,
+    PersonalOpsQueueBurnInReportDetail as PersonalOpsQueueBurnInReportDetail,
+    BridgeSaveReport as BridgeSaveReport,
+    CoordinationSnapshotReport as CoordinationSnapshotReport,
+    LogsReport as LogsReport,
+    DaemonLogSummary as DaemonLogSummary,
+    RepeatedSignatureReport as RepeatedSignatureReport,
+    BurnInHealthReport as BurnInHealthReport,
+    SlackVolumeReport as SlackVolumeReport,
+    BurnInReport as BurnInReport,
+    BootstrapConfigReport as BootstrapConfigReport,
+    PolicyCheckReport as PolicyCheckReport,
+    PolicyDriftReport as PolicyDriftReport,
+    VerifyRuntimeReport as VerifyRuntimeReport,
+    StatusReport as StatusReport,
+    CoordinationReadinessReport as CoordinationReadinessReport,
+    CoordinationConsoleActionReport as CoordinationConsoleActionReport,
+    CoordinationProposalRouteRecommendation as CoordinationProposalRouteRecommendation,
+    CoordinationProposalReviewGroup as CoordinationProposalReviewGroup,
+    CoordinationProposalReviewReport as CoordinationProposalReviewReport,
+    CoordinationConsoleGuideStep as CoordinationConsoleGuideStep,
+    CoordinationNextSignalReport as CoordinationNextSignalReport,
+    HandoffOutcomeQualityBucket as HandoffOutcomeQualityBucket,
+    HandoffOutcomeQualityReport as HandoffOutcomeQualityReport,
+    CoordinationConsoleReport as CoordinationConsoleReport,
+    NoiseCandidateReviewItem as NoiseCandidateReviewItem,
+    NoiseCandidateReviewReport as NoiseCandidateReviewReport,
+    OperatorDailyStateReport as OperatorDailyStateReport,
+    OperatorHandoffDrillReport as OperatorHandoffDrillReport,
+)
+
+_GENERIC_OPERATION_ERROR = "operation failed; inspect local logs for details"
 
 
 DEFAULT_BRIDGE_DB_PATH = Path.home() / ".local" / "share" / "bridge-db" / "bridge.db"
 BRIDGE_SNAPSHOT_RETENTION_PER_SYSTEM = 10
-ACTION_EXPORT_DIR = EVENTS_DIR / "action-exports"
 BURN_IN_REPORT_DIR = EVENTS_DIR / "burn-in-reports"
 OPERATOR_STATE_REPORT_DIR = EVENTS_DIR / "operator-state-reports"
 OPERATOR_REVIEW_SESSION_REPORT_DIR = EVENTS_DIR / "operator-review-session-reports"
 PERSONAL_OPS_IMPORT_QUEUE = EVENTS_DIR / "personal-ops-import-queue.jsonl"
-ACTION_PROPOSAL_DISMISSALS = EVENTS_DIR / "action-proposal-dismissals.jsonl"
-ACTION_PROPOSAL_GROUP_HISTORY = EVENTS_DIR / "action-proposal-group-history.jsonl"
-ACTION_EXPORT_SCHEMA_VERSION = "notification-hub.personal_ops_action_export.v1"
 PERSONAL_OPS_IMPORT_QUEUE_SCHEMA_VERSION = "notification-hub.personal_ops_import_queue.v1"
 ACTION_PROPOSAL_REVIEW_WINDOW_HOURS = 24
-ACTION_PROPOSAL_MIN_CANDIDATES = 25
-ACTION_PROPOSAL_CANDIDATE_MULTIPLIER = 5
 PERSONAL_OPS_QUEUE_STATUSES = {
     "queued",
     "reviewed",
@@ -1009,338 +211,6 @@ def _as_str(value: object) -> str | None:
     if isinstance(value, str):
         return value
     return None
-
-
-def _jsonl_dicts(path: Path) -> list[dict[str, object]]:
-    if not path.exists():
-        return []
-    records: list[dict[str, object]] = []
-    with path.open("r", encoding="utf-8") as handle:
-        for line in handle:
-            stripped = line.strip()
-            if not stripped:
-                continue
-            try:
-                raw = json.loads(stripped)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(raw, dict):
-                records.append(cast(dict[str, object], raw))
-    return records
-
-
-def _jsonl_append(path: Path, record: dict[str, object]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(record, sort_keys=True) + "\n")
-    os.chmod(path, 0o600)
-
-
-def _group_history_report(raw: dict[str, object]) -> ActionProposalGroupHistoryReport | None:
-    group_key = _as_str(raw.get("group_key"))
-    event_type = _as_str(raw.get("event_type"))
-    recorded_at = _as_str(raw.get("recorded_at"))
-    status = _as_str(raw.get("status"))
-    if group_key is None or event_type is None or recorded_at is None or status is None:
-        return None
-    raw_action_ids = raw.get("action_ids")
-    action_ids = (
-        [item for item in cast(list[object], raw_action_ids) if isinstance(item, str)]
-        if isinstance(raw_action_ids, list)
-        else []
-    )
-    raw_action_keys = raw.get("action_keys")
-    action_keys = (
-        [item for item in cast(list[object], raw_action_keys) if isinstance(item, str)]
-        if isinstance(raw_action_keys, list)
-        else []
-    )
-    return {
-        "group_key": group_key,
-        "event_type": event_type,
-        "recorded_at": recorded_at,
-        "status": status,
-        "action_count": _as_int(raw.get("action_count")) or len(action_ids),
-        "action_ids": action_ids,
-        "action_keys": action_keys,
-        "package_path": _as_str(raw.get("package_path")),
-        "queued_count": _as_int(raw.get("queued_count")),
-        "dismissed_count": _as_int(raw.get("dismissed_count")),
-        "outcome": _as_str(raw.get("outcome")),
-        "reason": _as_str(raw.get("reason")),
-        "error": _as_str(raw.get("error")),
-    }
-
-
-def list_action_proposal_group_history(
-    *,
-    limit: int = 25,
-    group_key: str | None = None,
-    history_path: Path | None = None,
-) -> list[ActionProposalGroupHistoryReport]:
-    """Return recent proposal-group lifecycle records without applying work."""
-    records: list[ActionProposalGroupHistoryReport] = []
-    for raw in reversed(_jsonl_dicts(history_path or ACTION_PROPOSAL_GROUP_HISTORY)):
-        report = _group_history_report(raw)
-        if report is None:
-            continue
-        if group_key is not None and report["group_key"] != group_key:
-            continue
-        records.append(report)
-        if len(records) >= max(limit, 1):
-            break
-    return records
-
-
-def _recent_group_history(
-    *,
-    since: datetime,
-    limit: int,
-    history_path: Path | None = None,
-) -> list[ActionProposalGroupHistoryReport]:
-    records: list[ActionProposalGroupHistoryReport] = []
-    for raw in reversed(_jsonl_dicts(history_path or ACTION_PROPOSAL_GROUP_HISTORY)):
-        report = _group_history_report(raw)
-        if report is None:
-            continue
-        recorded_at = _parse_iso_datetime(report["recorded_at"])
-        if recorded_at is None or recorded_at < since:
-            continue
-        records.append(report)
-        if len(records) >= max(limit, 1):
-            break
-    return records
-
-
-def _record_action_proposal_group_history(
-    *,
-    group_key: str,
-    event_type: str,
-    status: str,
-    actions: list[PersonalOpsActionReport],
-    package_path: str | None = None,
-    queued_count: int | None = None,
-    dismissed_count: int | None = None,
-    outcome: str | None = None,
-    reason: str | None = None,
-    error: str | None = None,
-    history_path: Path | None = None,
-) -> ActionProposalGroupHistoryReport:
-    record: ActionProposalGroupHistoryReport = {
-        "group_key": group_key,
-        "event_type": event_type,
-        "recorded_at": datetime.now(timezone.utc).isoformat(),
-        "status": status,
-        "action_count": len(actions),
-        "action_ids": [action["action_id"] for action in actions],
-        "action_keys": [action["dismissal_key"] for action in actions],
-        "package_path": package_path,
-        "queued_count": queued_count,
-        "dismissed_count": dismissed_count,
-        "outcome": outcome,
-        "reason": reason,
-        "error": error,
-    }
-    _jsonl_append(history_path or ACTION_PROPOSAL_GROUP_HISTORY, dict(record))
-    return record
-
-
-def _dismissal_report(raw: dict[str, object]) -> ActionProposalDismissalReport | None:
-    dismissal_key = _as_str(raw.get("dismissal_key"))
-    deleted_at = _as_str(raw.get("deleted_at"))
-    dismissed_at = _as_str(raw.get("dismissed_at")) or deleted_at
-    if dismissal_key is None or dismissed_at is None:
-        return None
-    return {
-        "dismissal_key": dismissal_key,
-        "dismissed_at": dismissed_at,
-        "deleted_at": deleted_at,
-        "active": deleted_at is None,
-        "reason": _as_str(raw.get("reason")) or "",
-        "source": _as_str(raw.get("source")),
-        "project": _as_str(raw.get("project")),
-        "intent": _as_str(raw.get("intent")),
-        "title": _as_str(raw.get("title")),
-        "body": _as_str(raw.get("body")),
-        "evidence_event_id": _as_str(raw.get("evidence_event_id")),
-    }
-
-
-def list_action_proposal_dismissals(
-    *,
-    limit: int = 25,
-    dismissals_path: Path | None = None,
-    include_inactive: bool = False,
-) -> list[ActionProposalDismissalReport]:
-    """Return latest proposal dismissals first."""
-    path = dismissals_path or ACTION_PROPOSAL_DISMISSALS
-    records: list[ActionProposalDismissalReport] = []
-    seen: set[str] = set()
-    for raw in reversed(_jsonl_dicts(path)):
-        report = _dismissal_report(raw)
-        if report is None or report["dismissal_key"] in seen:
-            continue
-        seen.add(report["dismissal_key"])
-        if not include_inactive and not report["active"]:
-            continue
-        records.append(report)
-        if len(records) >= max(limit, 1):
-            break
-    return records
-
-
-def run_action_proposal_dismissal_list(
-    *,
-    limit: int = 25,
-    dismissal_key: str | None = None,
-    include_inactive: bool = False,
-    dismissals_path: Path | None = None,
-) -> ActionProposalDismissalListReport:
-    """List or inspect local proposal dismissals without applying work."""
-    path = dismissals_path or ACTION_PROPOSAL_DISMISSALS
-    dismissals = list_action_proposal_dismissals(
-        limit=10_000 if dismissal_key else max(limit, 1),
-        dismissals_path=dismissals_path,
-        include_inactive=include_inactive,
-    )
-    if dismissal_key:
-        dismissals = [item for item in dismissals if item["dismissal_key"] == dismissal_key]
-    return {
-        "status": "ok",
-        "path": str(path),
-        "dismissal_count": len(dismissals),
-        "dismissals": dismissals[: max(limit, 1)],
-        "applied": False,
-    }
-
-
-def _active_action_proposal_dismissals(
-    dismissals_path: Path | None = None,
-) -> dict[str, ActionProposalDismissalReport]:
-    return {
-        dismissal["dismissal_key"]: dismissal
-        for dismissal in list_action_proposal_dismissals(
-            limit=10_000, dismissals_path=dismissals_path
-        )
-    }
-
-
-def dismiss_action_proposal(
-    *,
-    dismissal_key: str,
-    reason: str,
-    source: str | None = None,
-    project: str | None = None,
-    intent: str | None = None,
-    title: str | None = None,
-    body: str | None = None,
-    evidence_event_id: str | None = None,
-    dismissals_path: Path | None = None,
-) -> ActionProposalDismissReport:
-    """Persist a local operator dismissal for a repeated action proposal."""
-    key = dismissal_key.strip()
-    if not key:
-        return {
-            "status": "degraded",
-            "path": str(dismissals_path or ACTION_PROPOSAL_DISMISSALS),
-            "dismissal": None,
-            "applied": False,
-            "error": "dismissal_key is required",
-        }
-    path = dismissals_path or ACTION_PROPOSAL_DISMISSALS
-    dismissed_at = datetime.now(timezone.utc).isoformat()
-    dismissal: ActionProposalDismissalReport = {
-        "dismissal_key": key,
-        "dismissed_at": dismissed_at,
-        "deleted_at": None,
-        "active": True,
-        "reason": reason.strip() or "dismissed as known repeated noise",
-        "source": source,
-        "project": project,
-        "intent": intent,
-        "title": title,
-        "body": body,
-        "evidence_event_id": evidence_event_id,
-    }
-    try:
-        _jsonl_append(path, dict(dismissal))
-    except OSError as exc:
-        return {
-            "status": "degraded",
-            "path": str(path),
-            "dismissal": None,
-            "applied": False,
-            "error": str(exc),
-        }
-    return {
-        "status": "ok",
-        "path": str(path),
-        "dismissal": dismissal,
-        "applied": False,
-        "error": None,
-    }
-
-
-def undismiss_action_proposal(
-    *,
-    dismissal_key: str,
-    reason: str,
-    dismissals_path: Path | None = None,
-) -> ActionProposalUndismissReport:
-    """Add an undismiss tombstone without deleting dismissal history."""
-    key = dismissal_key.strip()
-    path = dismissals_path or ACTION_PROPOSAL_DISMISSALS
-    if not key:
-        return {
-            "status": "degraded",
-            "path": str(path),
-            "dismissal_key": dismissal_key,
-            "removed": False,
-            "applied": False,
-            "error": "dismissal_key is required",
-        }
-    active = _active_action_proposal_dismissals(dismissals_path).get(key)
-    if active is None:
-        return {
-            "status": "degraded",
-            "path": str(path),
-            "dismissal_key": key,
-            "removed": False,
-            "applied": False,
-            "error": "dismissal not found",
-        }
-    deleted_at = datetime.now(timezone.utc).isoformat()
-    tombstone: dict[str, object] = {
-        "dismissal_key": key,
-        "dismissed_at": active["dismissed_at"],
-        "deleted_at": deleted_at,
-        "reason": reason.strip() or "undismissed by operator",
-        "source": active["source"],
-        "project": active["project"],
-        "intent": active["intent"],
-        "title": active["title"],
-        "body": active["body"],
-        "evidence_event_id": active["evidence_event_id"],
-    }
-    try:
-        _jsonl_append(path, tombstone)
-    except OSError as exc:
-        return {
-            "status": "degraded",
-            "path": str(path),
-            "dismissal_key": key,
-            "removed": False,
-            "applied": False,
-            "error": str(exc),
-        }
-    return {
-        "status": "ok",
-        "path": str(path),
-        "dismissal_key": key,
-        "removed": True,
-        "applied": False,
-        "error": None,
-    }
 
 
 def _save_bridge_snapshot(
@@ -1401,418 +271,15 @@ def _save_bridge_snapshot(
             "snapshot_date": snapshot_date,
             "error": None,
         }
-    except sqlite3.Error as exc:
+    except sqlite3.Error:
         return {
             "attempted": True,
             "status": "degraded",
             "db_path": str(target_path),
             "snapshot_id": None,
             "snapshot_date": snapshot_date,
-            "error": str(exc),
+            "error": _GENERIC_OPERATION_ERROR,
         }
-
-
-def _tail_text_file(path: Path, *, lines: int) -> list[str]:
-    if lines <= 0 or not path.exists():
-        return []
-    with path.open("r", encoding="utf-8", errors="replace") as handle:
-        return [line.rstrip("\n") for line in handle.readlines()[-lines:]]
-
-
-_EVENT_ACCESS_RE = re.compile(r'"POST /events HTTP/1\.1" (?P<status>\d{3})')
-_DAEMON_START_MARKERS = (
-    "INFO:     Started server process",
-    "INFO:     Uvicorn running on ",
-)
-_SLACK_DELIVERY_FAILURE_PREFIXES = (
-    "Slack send failed",
-    "Slack digest failed",
-    "Slack webhook returned",
-    "Slack digest webhook returned",
-)
-
-
-def _lines_since_latest_daemon_start(lines: list[str]) -> list[str]:
-    """Return log lines scoped to the latest visible daemon start marker."""
-    latest_start_index: int | None = None
-    for index, line in enumerate(lines):
-        if any(line.startswith(marker) for marker in _DAEMON_START_MARKERS):
-            latest_start_index = index
-    if latest_start_index is None:
-        return lines
-    return lines[latest_start_index + 1 :]
-
-
-def _summarize_daemon_logs(stdout_tail: list[str], stderr_tail: list[str]) -> DaemonLogSummary:
-    status_counts: dict[str, int] = {}
-    for line in stdout_tail:
-        match = _EVENT_ACCESS_RE.search(line)
-        if match is None:
-            continue
-        status = match.group("status")
-        status_counts[status] = status_counts.get(status, 0) + 1
-
-    current_stderr_tail = _lines_since_latest_daemon_start(stderr_tail)
-    validation_errors = [
-        line for line in current_stderr_tail if line.startswith("Rejected event payload")
-    ]
-    slack_delivery_failures = [
-        line
-        for line in current_stderr_tail
-        if any(line.startswith(prefix) for prefix in _SLACK_DELIVERY_FAILURE_PREFIXES)
-    ]
-    return {
-        "access_status_counts": status_counts,
-        "accepted_event_posts": sum(
-            count for status, count in status_counts.items() if status.startswith("2")
-        ),
-        "rejected_event_posts": status_counts.get("422", 0),
-        "validation_error_count": len(validation_errors),
-        "recent_validation_errors": validation_errors[-5:],
-        "slack_delivery_failure_count": len(slack_delivery_failures),
-        "recent_slack_delivery_failures": slack_delivery_failures[-5:],
-    }
-
-
-def _event_report(event: StoredEvent) -> RecentEventReport:
-    return {
-        "event_id": event.event_id,
-        "timestamp": event.timestamp.isoformat(),
-        "source": event.source,
-        "level": event.level,
-        "classified_level": event.classified_level,
-        "project": event.project,
-        "title": event.title,
-        "body": event.body,
-        "intent": infer_intent(event),
-    }
-
-
-def _inbox_item(event: StoredEvent) -> InboxItemReport:
-    return {
-        "event_id": event.event_id,
-        "timestamp": event.timestamp.isoformat(),
-        "source": event.source,
-        "project": event.project,
-        "level": event.classified_level or event.level,
-        "intent": infer_intent(event),
-        "title": event.title,
-        "body": event.body,
-    }
-
-
-def _build_inbox_rollups(events: list[StoredEvent]) -> list[InboxRollupReport]:
-    grouped: dict[tuple[str, str | None, str, str, str, str], list[StoredEvent]] = {}
-    for event in events:
-        intent = infer_intent(event)
-        key = (event.source, event.project, intent, event.level, event.title, event.body)
-        grouped.setdefault(key, []).append(event)
-
-    rollups: list[InboxRollupReport] = []
-    for (source, project, intent, level, title, body), items in grouped.items():
-        if len(items) < 2:
-            continue
-        latest = max(items, key=lambda item: item.timestamp)
-        rollups.append(
-            {
-                "count": len(items),
-                "source": source,
-                "project": project,
-                "intent": intent,
-                "level": level,
-                "title": title,
-                "body": body,
-                "latest_timestamp": latest.timestamp.isoformat(),
-                "latest_event_id": latest.event_id,
-                "latest_context": dict(latest.context),
-            }
-        )
-
-    return sorted(
-        rollups,
-        key=lambda item: (item["count"], item["latest_timestamp"]),
-        reverse=True,
-    )
-
-
-def _build_near_rollup_singles(events: list[StoredEvent]) -> list[InboxRollupReport]:
-    """Return events that appear exactly once — invisible to the rollup pipeline but worth surfacing."""
-    grouped: dict[tuple[str, str | None, str, str, str, str], list[StoredEvent]] = {}
-    for event in events:
-        intent = infer_intent(event)
-        key = (event.source, event.project, intent, event.level, event.title, event.body)
-        grouped.setdefault(key, []).append(event)
-
-    singles: list[InboxRollupReport] = []
-    for (source, project, intent, level, title, body), items in grouped.items():
-        if len(items) != 1:
-            continue
-        item = items[0]
-        singles.append(
-            {
-                "count": 1,
-                "source": source,
-                "project": project,
-                "intent": intent,
-                "level": level,
-                "title": title,
-                "body": body,
-                "latest_timestamp": item.timestamp.isoformat(),
-                "latest_event_id": item.event_id,
-                "latest_context": dict(item.context),
-            }
-        )
-
-    return sorted(singles, key=lambda item: item["latest_timestamp"], reverse=True)
-
-
-def _action_priority(intent: str, level: str) -> str:
-    if intent in {"needs_attention", "blocked", "automation_failed"} or level == "urgent":
-        return "high"
-    if intent in {"waiting_on_user", "ready_to_review", "ready_to_merge"}:
-        return "medium"
-    return "low"
-
-
-def _action_state(intent: str) -> str:
-    if intent in {"blocked", "waiting_on_user"}:
-        return "waiting"
-    if intent in {"ready_to_review", "ready_to_merge"}:
-        return "ready"
-    if intent == "completed":
-        return "done"
-    return "open"
-
-
-def _suggested_action(intent: str, title: str) -> str:
-    if intent == "blocked":
-        return "Review blocker and decide the next unblock step."
-    if intent == "waiting_on_user":
-        return "Review the waiting item and approve, reply, or dismiss it."
-    if intent in {"ready_to_review", "ready_to_merge"}:
-        return "Review the ready work and decide whether to land it."
-    if intent == "automation_failed":
-        return "Inspect the failed automation and rerun or repair it."
-    if intent == "needs_attention":
-        return "Review the attention item and choose the next operator action."
-    if intent == "completed":
-        return "Archive or use as recent completion context."
-    return f"Review repeated signal: {title}."
-
-
-def _proposal_dismissal_key(rollup: InboxRollupReport) -> str:
-    stable_parts = {
-        "source": rollup["source"],
-        "project": rollup["project"] or "",
-        "intent": rollup["intent"],
-        "level": rollup["level"],
-        "title": rollup["title"],
-        "body": rollup["body"],
-    }
-    digest = hashlib.sha256(json.dumps(stable_parts, sort_keys=True).encode("utf-8")).hexdigest()[
-        :16
-    ]
-    source_part = re.sub(r"[^a-z0-9]+", "-", rollup["source"].lower()).strip("-") or "source"
-    project_part = (
-        re.sub(r"[^a-z0-9]+", "-", (rollup["project"] or "general").lower()).strip("-") or "general"
-    )
-    intent_part = re.sub(r"[^a-z0-9]+", "-", rollup["intent"].lower()).strip("-") or "intent"
-    return f"proposal:{source_part}:{project_part}:{intent_part}:{digest}"
-
-
-def _action_from_rollup(rollup: InboxRollupReport) -> PersonalOpsActionReport:
-    project_part = rollup["project"] or "general"
-    normalized_title = re.sub(r"[^a-z0-9]+", "-", rollup["title"].lower()).strip("-") or "signal"
-    evidence_part = (
-        re.sub(r"[^a-z0-9]+", "-", rollup["latest_event_id"].lower()).strip("-") or "event"
-    )
-    action_id = (
-        f"notification-hub:{rollup['source']}:{project_part}:"
-        f"{rollup['intent']}:{normalized_title}:{evidence_part}"
-    )
-    evidence_context = dict(rollup.get("latest_context", {}))
-    return {
-        "action_id": action_id,
-        "dismissal_key": _proposal_dismissal_key(rollup),
-        "source": rollup["source"],
-        "project": rollup["project"],
-        "intent": rollup["intent"],
-        "priority": _action_priority(rollup["intent"], rollup["level"]),
-        "state": _action_state(rollup["intent"]),
-        "title": rollup["title"],
-        "summary": f"{rollup['count']} repeated {rollup['source']} events: {rollup['body']}",
-        "signal_level": rollup["level"],
-        "signal_body": rollup["body"],
-        "suggested_next_action": _suggested_action(rollup["intent"], rollup["title"]),
-        "evidence_event_id": rollup["latest_event_id"],
-        "evidence_timestamp": rollup["latest_timestamp"],
-        "evidence_context": evidence_context,
-        "evidence_quality": _evidence_quality(evidence_context),
-        "count": rollup["count"],
-    }
-
-
-def _action_proposal_candidate_limit(limit: int) -> int:
-    item_limit = max(limit, 1)
-    return max(
-        ACTION_PROPOSAL_MIN_CANDIDATES,
-        item_limit * ACTION_PROPOSAL_CANDIDATE_MULTIPLIER,
-    )
-
-
-def _write_action_review_package(
-    report: dict[str, object],
-    *,
-    output_dir: Path | None = None,
-) -> dict[str, object]:
-    target_dir = output_dir or ACTION_EXPORT_DIR
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-%f")
-    target_path = target_dir / f"personal-ops-actions-{timestamp}.json"
-    try:
-        target_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-        target_path.write_text(
-            json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-        )
-        os.chmod(target_path, 0o600)
-    except OSError as exc:
-        return {
-            "requested": True,
-            "status": "degraded",
-            "path": str(target_path),
-            "error": str(exc),
-        }
-    return {
-        "requested": True,
-        "status": "ok",
-        "path": str(target_path),
-        "error": None,
-    }
-
-
-def list_action_review_packages(
-    *,
-    review_dir: Path | None = None,
-    limit: int = 10,
-) -> list[ActionReviewPackageReport]:
-    """List recent saved action review packages without importing or applying them."""
-    target_dir = review_dir or ACTION_EXPORT_DIR
-    try:
-        candidates = sorted(
-            target_dir.glob("personal-ops-actions-*.json"),
-            key=lambda path: path.stat().st_mtime,
-            reverse=True,
-        )
-    except OSError:
-        return []
-
-    reports: list[ActionReviewPackageReport] = []
-    for path in candidates[: max(limit, 1)]:
-        try:
-            stat = path.stat()
-        except OSError:
-            continue
-        validation = validate_action_package(path)
-        reports.append(
-            {
-                "path": str(path),
-                "name": path.name,
-                "modified_at": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
-                "size_bytes": stat.st_size,
-                "validation_status": validation["status"],
-                "action_count": validation["action_count"],
-                "valid_action_count": validation["valid_action_count"],
-                "error_count": validation["error_count"],
-            }
-        )
-    return reports
-
-
-def prune_action_export_files(
-    *,
-    keep: int = 20,
-    dry_run: bool = True,
-    export_dir: Path | None = None,
-) -> ActionExportRetentionReport:
-    """Prune older saved action-export files, keeping the newest N."""
-    target_dir = export_dir or ACTION_EXPORT_DIR
-    safe_keep = max(keep, 1)
-    try:
-        all_files = sorted(
-            target_dir.glob("personal-ops-actions-*.json"),
-            key=lambda p: p.stat().st_mtime,
-            reverse=True,
-        )
-    except OSError:
-        all_files = []
-
-    to_delete = all_files[safe_keep:]
-    deleted_files: list[str] = []
-    error: str | None = None
-    status = "ok"
-
-    if not dry_run:
-        for path in to_delete:
-            try:
-                path.unlink()
-            except FileNotFoundError:
-                continue
-            except OSError as exc:
-                status = "degraded"
-                error = str(exc)
-                break
-            deleted_files.append(path.name)
-
-    if dry_run:
-        next_action = (
-            "Run again with --apply to delete older action-export files."
-            if to_delete
-            else "No action-export files need pruning."
-        )
-    elif status == "ok":
-        next_action = (
-            "Older action-export files were pruned."
-            if deleted_files
-            else "No action-export files needed pruning."
-        )
-    else:
-        next_action = "Fix the file deletion error, then rerun retention."
-
-    return {
-        "status": status,
-        "export_dir": str(target_dir),
-        "keep": safe_keep,
-        "dry_run": dry_run,
-        "total_count": len(all_files),
-        "kept_count": min(len(all_files), safe_keep),
-        "candidate_count": len(to_delete),
-        "deleted_count": len(deleted_files),
-        "candidate_files": [p.name for p in to_delete],
-        "deleted_files": deleted_files,
-        "next_action": next_action,
-        "applied": not dry_run,
-        "error": error,
-    }
-
-
-def _empty_package_validation(path: Path, error: str) -> ActionPackageValidationReport:
-    return {
-        "status": "degraded",
-        "path": str(path),
-        "schema_version": None,
-        "action_count": 0,
-        "valid_action_count": 0,
-        "warning_count": 0,
-        "error_count": 1,
-        "warnings": [],
-        "errors": [error],
-    }
-
-
-def _is_safe_action_review_package_name(name: str) -> bool:
-    return (
-        Path(name).name == name
-        and re.fullmatch(r"personal-ops-actions-\d{8}-\d{6}(?:-\d{6})?\.json", name) is not None
-    )
 
 
 def load_action_review_package_detail(
@@ -1823,19 +290,20 @@ def load_action_review_package_detail(
 ) -> ActionReviewPackageDetailReport:
     """Load a saved review package summary without importing or applying it."""
     target_dir = review_dir or ACTION_EXPORT_DIR
-    target_path = target_dir / name
-    if not _is_safe_action_review_package_name(name):
+    target_path = action_review_package_path_for_name(name=name, review_dir=target_dir)
+    if target_path is None:
+        display_path = target_dir / name
         error = "invalid review package name"
         return {
             "status": "degraded",
-            "path": str(target_path),
+            "path": str(display_path),
             "name": name,
             "schema_version": None,
             "generated_at": None,
             "hours": None,
             "actions": [],
             "queue_items": [],
-            "validation": _empty_package_validation(target_path, error),
+            "validation": _empty_package_validation(display_path, error),
             "applied": False,
             "error": error,
         }
@@ -1843,7 +311,7 @@ def load_action_review_package_detail(
     validation = validate_action_package(target_path)
     try:
         payload = json.loads(target_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, json.JSONDecodeError):
         return {
             "status": "degraded",
             "path": str(target_path),
@@ -1855,7 +323,7 @@ def load_action_review_package_detail(
             "queue_items": [],
             "validation": validation,
             "applied": False,
-            "error": str(exc),
+            "error": _GENERIC_OPERATION_ERROR,
         }
 
     if not isinstance(payload, dict):
@@ -1894,73 +362,6 @@ def load_action_review_package_detail(
         "applied": False,
         "error": None if validation["status"] == "ok" else "package validation failed",
     }
-
-
-def delete_action_review_package(
-    *,
-    name: str,
-    review_dir: Path | None = None,
-) -> ActionReviewPackageDeleteReport:
-    """Delete one saved review package without importing or applying it."""
-    target_dir = review_dir or ACTION_EXPORT_DIR
-    target_path = target_dir / name
-    if not _is_safe_action_review_package_name(name):
-        return {
-            "status": "degraded",
-            "path": str(target_path),
-            "name": name,
-            "deleted": False,
-            "applied": False,
-            "error": "invalid review package name",
-        }
-    try:
-        target_path.unlink()
-    except FileNotFoundError:
-        return {
-            "status": "degraded",
-            "path": str(target_path),
-            "name": name,
-            "deleted": False,
-            "applied": False,
-            "error": "review package not found",
-        }
-    except OSError as exc:
-        return {
-            "status": "degraded",
-            "path": str(target_path),
-            "name": name,
-            "deleted": False,
-            "applied": False,
-            "error": str(exc),
-        }
-    return {
-        "status": "ok",
-        "path": str(target_path),
-        "name": name,
-        "deleted": True,
-        "applied": False,
-        "error": None,
-    }
-
-
-def _load_action_package_payload(path: Path) -> dict[str, object] | None:
-    try:
-        payload = json.loads(path.expanduser().read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    if not isinstance(payload, dict):
-        return None
-    return cast(dict[str, object], payload)
-
-
-def _action_dicts_from_payload(payload: dict[str, object]) -> list[dict[str, object]]:
-    actions_value = payload.get("actions")
-    actions: list[dict[str, object]] = []
-    if isinstance(actions_value, list):
-        for action_value in cast(list[object], actions_value):
-            if isinstance(action_value, dict):
-                actions.append(cast(dict[str, object], action_value))
-    return actions
 
 
 def _read_import_queue_items(queue_path: Path) -> list[dict[str, object]]:
@@ -2217,12 +618,12 @@ def write_operator_review_session_report(
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             json.dump(payload, handle, indent=2, sort_keys=True)
             handle.write("\n")
-    except OSError as exc:
+    except OSError:
         return {
             "requested": True,
             "status": "degraded",
             "path": str(target_path),
-            "error": str(exc),
+            "error": _GENERIC_OPERATION_ERROR,
         }
     return {
         "requested": True,
@@ -2338,7 +739,7 @@ def load_operator_review_session_report_detail(
             "applied": False,
             "error": None,
         }
-    except (OSError, json.JSONDecodeError, ValueError) as exc:
+    except (OSError, json.JSONDecodeError, ValueError):
         return {
             "status": "degraded",
             "path": str(target_path),
@@ -2348,7 +749,7 @@ def load_operator_review_session_report_detail(
             "summary": None,
             "report": None,
             "applied": False,
-            "error": str(exc),
+            "error": _GENERIC_OPERATION_ERROR,
         }
 
 
@@ -2374,9 +775,9 @@ def prune_operator_review_session_reports(
                 path.unlink()
             except FileNotFoundError:
                 continue
-            except OSError as exc:
+            except OSError:
                 status = "degraded"
-                error = str(exc)
+                error = _GENERIC_OPERATION_ERROR
                 break
             deleted_reports.append(report)
 
@@ -2436,13 +837,9 @@ def _queue_item_timestamp(item: dict[str, object], *fields: str) -> datetime | N
     return None
 
 
-def _oldest_queue_timestamp(
-    items: list[dict[str, object]], *fields: str
-) -> datetime | None:
+def _oldest_queue_timestamp(items: list[dict[str, object]], *fields: str) -> datetime | None:
     datetimes = [
-        parsed
-        for item in items
-        if (parsed := _queue_item_timestamp(item, *fields)) is not None
+        parsed for item in items if (parsed := _queue_item_timestamp(item, *fields)) is not None
     ]
     return min(datetimes) if datetimes else None
 
@@ -2513,9 +910,7 @@ def summarize_personal_ops_import_queue(
     oldest_pending_age = (
         (now - oldest_pending).total_seconds() if oldest_pending is not None else None
     )
-    stale_pending_count = _stale_pending_queue_item_count(
-        pending_items, now, stale_after_hours
-    )
+    stale_pending_count = _stale_pending_queue_item_count(pending_items, now, stale_after_hours)
     queued_count = counts["queued"]
     promoted_pending_count = promotion_outcomes["pending"]
     status = "warn" if queued_count > 0 or promoted_pending_count > 0 else "ok"
@@ -2825,12 +1220,12 @@ def _write_personal_ops_queue_burn_in_report(
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             json.dump(payload, handle, indent=2, sort_keys=True)
             handle.write("\n")
-    except OSError as exc:
+    except OSError:
         return {
             "requested": True,
             "status": "degraded",
             "path": str(target_path),
-            "error": str(exc),
+            "error": _GENERIC_OPERATION_ERROR,
         }
     return {
         "requested": True,
@@ -2861,12 +1256,12 @@ def write_operator_daily_state_report(
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             json.dump(payload, handle, indent=2, sort_keys=True)
             handle.write("\n")
-    except OSError as exc:
+    except OSError:
         return {
             "requested": True,
             "status": "degraded",
             "path": str(target_path),
-            "error": str(exc),
+            "error": _GENERIC_OPERATION_ERROR,
         }
     return {
         "requested": True,
@@ -2984,7 +1379,7 @@ def load_personal_ops_queue_burn_in_report_detail(
             "applied": False,
             "error": None,
         }
-    except (OSError, json.JSONDecodeError, ValueError) as exc:
+    except (OSError, json.JSONDecodeError, ValueError):
         return {
             "status": "degraded",
             "path": str(target_path),
@@ -2994,7 +1389,7 @@ def load_personal_ops_queue_burn_in_report_detail(
             "summary": None,
             "report": None,
             "applied": False,
-            "error": str(exc),
+            "error": _GENERIC_OPERATION_ERROR,
         }
 
 
@@ -3125,7 +1520,7 @@ def _enqueue_personal_ops_import_actions(
             if not isinstance(action_id, str) or action_id in existing_action_ids:
                 skipped_count += 1
                 continue
-            queue_seed = f"{action_id}:{package_path.expanduser()}".encode("utf-8")
+            queue_seed = f"{action_id}:{package_path}".encode("utf-8")
             queue_item = {
                 "schema_version": PERSONAL_OPS_IMPORT_QUEUE_SCHEMA_VERSION,
                 "queue_id": hashlib.sha256(queue_seed).hexdigest()[:16],
@@ -3275,9 +1670,7 @@ def _queue_update_next_action(
     if status == "promoted":
         item_report = _import_queue_item_report(item)
         if item_report["promotion_outcome"] == "pending":
-            return (
-                "Accept or reject the matching personal-ops task suggestion, then record the outcome."
-            )
+            return "Accept or reject the matching personal-ops task suggestion, then record the outcome."
         return "Promotion outcome is recorded; no queue action is needed."
     if status == "rejected":
         return "No personal-ops action will be created for this handoff."
@@ -3312,12 +1705,12 @@ def update_personal_ops_import_queue_item(
 
     try:
         raw_items = _read_import_queue_items(target_queue_path)
-    except OSError as exc:
+    except OSError:
         return _queue_update_degraded_report(
             queue_id=queue_id,
             queue_path=target_queue_path,
             next_action="Fix queue read errors, then retry the lifecycle update.",
-            error=str(exc),
+            error=_GENERIC_OPERATION_ERROR,
         )
 
     matched: dict[str, object] | None = None
@@ -3349,12 +1742,12 @@ def update_personal_ops_import_queue_item(
 
     try:
         _write_import_queue_items(target_queue_path, raw_items)
-    except OSError as exc:
+    except OSError:
         return _queue_update_degraded_report(
             queue_id=queue_id,
             queue_path=target_queue_path,
             next_action="Fix queue write errors, then retry the lifecycle update.",
-            error=str(exc),
+            error=_GENERIC_OPERATION_ERROR,
         )
 
     return {
@@ -3366,67 +1759,6 @@ def update_personal_ops_import_queue_item(
         "next_action": _queue_update_next_action(status=status, item=matched),
         "error": None,
     }
-
-
-def _require_str(value: object, field: str, errors: list[str]) -> str | None:
-    if isinstance(value, str) and value:
-        return value
-    errors.append(f"missing or invalid string field: {field}")
-    return None
-
-
-def _validate_action_record(action: object, *, index: int) -> list[str]:
-    errors: list[str] = []
-    if not isinstance(action, dict):
-        return [f"action {index} is not an object"]
-    record = cast(dict[str, object], action)
-    for field in (
-        "action_id",
-        "source",
-        "intent",
-        "priority",
-        "state",
-        "title",
-        "summary",
-        "suggested_next_action",
-        "evidence_event_id",
-        "evidence_timestamp",
-    ):
-        _require_str(record.get(field), f"actions[{index}].{field}", errors)
-    priority = record.get("priority")
-    if isinstance(priority, str) and priority not in {"high", "medium", "low"}:
-        errors.append(f"actions[{index}].priority must be high, medium, or low")
-    state = record.get("state")
-    if isinstance(state, str) and state not in {"open", "waiting", "ready", "done"}:
-        errors.append(f"actions[{index}].state must be open, waiting, ready, or done")
-    count = record.get("count")
-    if not isinstance(count, int) or count < 1:
-        errors.append(f"actions[{index}].count must be a positive integer")
-    context = record.get("evidence_context")
-    if context is not None:
-        if not isinstance(context, dict):
-            errors.append(f"actions[{index}].evidence_context must be an object when present")
-        else:
-            for key, value in cast(dict[object, object], context).items():
-                if not isinstance(key, str):
-                    errors.append(f"actions[{index}].evidence_context keys must be strings")
-                    break
-                if not isinstance(value, (str, int, float, bool)) and value is not None:
-                    errors.append(f"actions[{index}].evidence_context.{key} must be a scalar value")
-                    break
-    return errors
-
-
-def _intent_bucket(intent: Intent) -> str:
-    if intent in ("needs_attention", "automation_failed"):
-        return "needs_attention"
-    if intent in ("blocked", "waiting_on_user"):
-        return "waiting_or_blocked"
-    if intent in ("ready_to_review", "ready_to_merge", "handoff_created"):
-        return "ready"
-    if intent == "completed":
-        return "completed"
-    return "informational"
 
 
 def _suggest_fix_for_warning(warning: str) -> str:
@@ -3514,7 +1846,7 @@ def run_smoke_check() -> SmokeReport:
             "response_status": response.status_code,
             "error": None if log_verified else "event not found in log",
         }
-    except httpx.HTTPError as exc:
+    except httpx.HTTPError:
         return {
             "status": "degraded",
             "health_url": health_url,
@@ -3522,7 +1854,7 @@ def run_smoke_check() -> SmokeReport:
             "event_id": None,
             "log_verified": False,
             "response_status": None,
-            "error": str(exc),
+            "error": _GENERIC_OPERATION_ERROR,
         }
 
 
@@ -3538,21 +1870,21 @@ def run_logs(*, events: int = 5, lines: int = 20) -> LogsReport:
         stored_events = read_jsonl(path=EVENTS_LOG)
         event_limit = max(events, 0)
         recent_stored_events = stored_events[-event_limit:] if event_limit else []
-        recent_events = [_event_report(event) for event in recent_stored_events]
-        stdout_tail = _tail_text_file(DAEMON_STDOUT_LOG, lines=lines)
-        stderr_tail = _tail_text_file(DAEMON_STDERR_LOG, lines=lines)
-    except (OSError, ValueError) as exc:
+        recent_events = [event_report(event) for event in recent_stored_events]
+        stdout_tail = tail_text_file(DAEMON_STDOUT_LOG, lines=lines)
+        stderr_tail = tail_text_file(DAEMON_STDERR_LOG, lines=lines)
+    except (OSError, ValueError):
         return {
             "status": "degraded",
             "events_log": str(EVENTS_LOG),
             "stdout_log": str(DAEMON_STDOUT_LOG),
             "stderr_log": str(DAEMON_STDERR_LOG),
             "recent_events": [],
-            "daemon_summary": _summarize_daemon_logs([], []),
+            "daemon_summary": summarize_daemon_logs([], []),
             "stdout_tail": [],
             "stderr_tail": [],
             "missing_paths": missing_paths,
-            "error": str(exc),
+            "error": _GENERIC_OPERATION_ERROR,
         }
 
     return {
@@ -3561,7 +1893,7 @@ def run_logs(*, events: int = 5, lines: int = 20) -> LogsReport:
         "stdout_log": str(DAEMON_STDOUT_LOG),
         "stderr_log": str(DAEMON_STDERR_LOG),
         "recent_events": recent_events,
-        "daemon_summary": _summarize_daemon_logs(stdout_tail, stderr_tail),
+        "daemon_summary": summarize_daemon_logs(stdout_tail, stderr_tail),
         "stdout_tail": stdout_tail,
         "stderr_tail": stderr_tail,
         "missing_paths": missing_paths,
@@ -3619,6 +1951,19 @@ def _filter_known_noise_candidates(
     ]
 
 
+def _tail_text_file_if_recent(path: Path, *, lines: int, cutoff: datetime) -> list[str]:
+    """Tail daemon logs only when the file changed inside the burn-in window."""
+    if lines <= 0 or not path.exists():
+        return []
+    try:
+        modified_at = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
+    except OSError:
+        return []
+    if modified_at < cutoff:
+        return []
+    return tail_text_file(path, lines=lines)
+
+
 def run_burn_in(*, minutes: int = 10, lines: int = 200) -> BurnInReport:
     """Summarize recent health failures and repeated/noisy event signatures."""
     window_minutes = max(minutes, 1)
@@ -3664,10 +2009,18 @@ def run_burn_in(*, minutes: int = 10, lines: int = 200) -> BurnInReport:
             for (source, level), count in slack_counts.items()
         ]
         slack_volume.sort(key=lambda item: item["count"], reverse=True)
-        stdout_tail = _tail_text_file(DAEMON_STDOUT_LOG, lines=tail_lines)
-        stderr_tail = _tail_text_file(DAEMON_STDERR_LOG, lines=tail_lines)
-        daemon_summary = _summarize_daemon_logs(stdout_tail, stderr_tail)
-    except (OSError, ValueError) as exc:
+        stdout_tail = _tail_text_file_if_recent(
+            DAEMON_STDOUT_LOG,
+            lines=tail_lines,
+            cutoff=cutoff,
+        )
+        stderr_tail = _tail_text_file_if_recent(
+            DAEMON_STDERR_LOG,
+            lines=tail_lines,
+            cutoff=cutoff,
+        )
+        daemon_summary = summarize_daemon_logs(stdout_tail, stderr_tail)
+    except (OSError, ValueError):
         return {
             "status": "degraded",
             "minutes": window_minutes,
@@ -3687,8 +2040,8 @@ def run_burn_in(*, minutes: int = 10, lines: int = 200) -> BurnInReport:
             "repeated_signatures": [],
             "slack_eligible_events": 0,
             "slack_volume": [],
-            "daemon_summary": _summarize_daemon_logs([], []),
-            "error": str(exc),
+            "daemon_summary": summarize_daemon_logs([], []),
+            "error": _GENERIC_OPERATION_ERROR,
         }
 
     health_status = (
@@ -3735,7 +2088,7 @@ def run_inbox(*, hours: int = 24, limit: int = 10) -> InboxReport:
             for event in read_jsonl(path=EVENTS_LOG)
             if event.timestamp.astimezone(timezone.utc) >= cutoff
         ]
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError):
         return {
             "status": "degraded",
             "hours": window_hours,
@@ -3747,7 +2100,7 @@ def run_inbox(*, hours: int = 24, limit: int = 10) -> InboxReport:
             "rollups": [],
             "near_rollup_singles": [],
             "noise_candidates": [],
-            "error": str(exc),
+            "error": _GENERIC_OPERATION_ERROR,
         }
 
     buckets: dict[str, list[InboxItemReport]] = {
@@ -3757,9 +2110,10 @@ def run_inbox(*, hours: int = 24, limit: int = 10) -> InboxReport:
         "completed": [],
     }
     for event in sorted(stored_events, key=lambda item: item.timestamp, reverse=True):
-        bucket = _intent_bucket(infer_intent(event))
+        inbox_item = _inbox_item(event)
+        bucket = _intent_bucket(inbox_item["intent"])
         if bucket in buckets:
-            buckets[bucket].append(_inbox_item(event))
+            buckets[bucket].append(inbox_item)
 
     burn_in = run_burn_in(minutes=window_hours * 60, lines=200)
     return {
@@ -3932,75 +2286,6 @@ def run_personal_ops_action_export(
     return report
 
 
-def validate_action_package(path: Path) -> ActionPackageValidationReport:
-    """Validate a saved personal-ops action package without importing it."""
-    errors: list[str] = []
-    warnings: list[str] = []
-    schema_version: str | None = None
-    action_count = 0
-    valid_action_count = 0
-
-    try:
-        payload = json.loads(path.expanduser().read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        return {
-            "status": "degraded",
-            "path": str(path),
-            "schema_version": None,
-            "action_count": 0,
-            "valid_action_count": 0,
-            "warning_count": 0,
-            "error_count": 1,
-            "warnings": [],
-            "errors": [str(exc)],
-        }
-
-    if not isinstance(payload, dict):
-        errors.append("package root must be an object")
-        actions: list[object] = []
-    else:
-        package = cast(dict[str, object], payload)
-        raw_schema = package.get("schema_version")
-        schema_version = raw_schema if isinstance(raw_schema, str) else None
-        if schema_version != ACTION_EXPORT_SCHEMA_VERSION:
-            errors.append(f"schema_version must be {ACTION_EXPORT_SCHEMA_VERSION}")
-        actions_value = package.get("actions")
-        actions = cast(list[object], actions_value) if isinstance(actions_value, list) else []
-        if not isinstance(actions_value, list):
-            errors.append("actions must be a list")
-        if not actions:
-            warnings.append("package contains no action proposals")
-
-    seen_action_ids: set[str] = set()
-    action_count = len(actions)
-    for index, action in enumerate(actions):
-        action_errors = _validate_action_record(action, index=index)
-        if isinstance(action, dict):
-            action_record = cast(dict[str, object], action)
-            action_id = action_record.get("action_id")
-            if isinstance(action_id, str):
-                if action_id in seen_action_ids:
-                    action_errors.append(f"duplicate action_id: {action_id}")
-                seen_action_ids.add(action_id)
-        if action_errors:
-            errors.extend(action_errors)
-        else:
-            valid_action_count += 1
-
-    status = "degraded" if errors else "ok"
-    return {
-        "status": status,
-        "path": str(path),
-        "schema_version": schema_version,
-        "action_count": action_count,
-        "valid_action_count": valid_action_count,
-        "warning_count": len(warnings),
-        "error_count": len(errors),
-        "warnings": warnings,
-        "errors": errors,
-    }
-
-
 def run_personal_ops_import_stub(
     *,
     path: Path,
@@ -4034,7 +2319,7 @@ def run_personal_ops_import_stub(
                 package_path=path,
                 queue_path=queue_path,
             )
-        except OSError as exc:
+        except OSError:
             return {
                 "status": "degraded",
                 "path": str(path),
@@ -4046,7 +2331,7 @@ def run_personal_ops_import_stub(
                 "queue_path": str(queue_path) if queue_path is not None else None,
                 "validation": validation,
                 "next_action": "Fix queue write errors before importing this package.",
-                "error": str(exc),
+                "error": _GENERIC_OPERATION_ERROR,
             }
 
     return {
@@ -4219,9 +2504,9 @@ def save_action_proposal_group_package(
             error=error,
             history_path=group_history_path,
         )
-    except OSError as exc:
+    except OSError:
         status = "degraded"
-        error = str(exc)
+        error = _GENERIC_OPERATION_ERROR
         next_action = "Fix group history write errors before using group lifecycle controls."
     return {
         "status": status,
@@ -4323,9 +2608,9 @@ def dismiss_action_proposal_group(
             error=error,
             history_path=group_history_path,
         )
-    except OSError as exc:
+    except OSError:
         status = "degraded"
-        error = str(exc)
+        error = _GENERIC_OPERATION_ERROR
     return {
         "status": status,
         "group_key": safe_group_key,
@@ -4397,7 +2682,7 @@ def record_action_proposal_group_outcome(
             reason=reason.strip() or "operator recorded group outcome",
             history_path=group_history_path,
         )
-    except OSError as exc:
+    except OSError:
         return {
             "status": "degraded",
             "group_key": safe_group_key,
@@ -4405,7 +2690,7 @@ def record_action_proposal_group_outcome(
             "group_history": None,
             "next_action": "Fix group history write errors before recording group outcomes.",
             "applied": False,
-            "error": str(exc),
+            "error": _GENERIC_OPERATION_ERROR,
         }
 
     return {
@@ -4631,13 +2916,13 @@ def bootstrap_policy_config(*, force: bool = False) -> BootstrapConfigReport:
         config_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         shutil.copyfile(example_path, config_path)
         os.chmod(config_path, 0o600)
-    except OSError as exc:
+    except OSError:
         return {
             "status": "degraded",
             "copied": False,
             "config_path": str(config_path),
             "example_path": str(example_path),
-            "error": str(exc),
+            "error": _GENERIC_OPERATION_ERROR,
         }
 
     return {
@@ -5192,8 +3477,7 @@ def _lineage_reason(
                 "so it remains handled history."
             )
         return (
-            f"Latest {outcome} group outcome matched this action id, "
-            "so it remains handled history."
+            f"Latest {outcome} group outcome matched this action id, so it remains handled history."
         )
     if queue_item is not None:
         if status == "resolved":
@@ -5308,32 +3592,6 @@ def _action_group_key(action: PersonalOpsActionReport) -> tuple[str, str | None,
         action["priority"],
         action["state"],
     )
-
-
-def _evidence_quality(context: dict[str, object] | None) -> str:
-    if not context:
-        return "thin"
-    keys = {key for key, value in context.items() if value not in ("", None)}
-    has_anchor = bool(keys & {"thread_id", "message_id"})
-    has_work_item = bool(
-        keys & {"draft_id", "approval_id", "provider_draft_id", "review_id", "queue_id"}
-    )
-    return "rich" if has_anchor and has_work_item else "thin"
-
-
-def _action_evidence_quality(action: PersonalOpsActionReport) -> str:
-    quality = _as_str(cast(dict[str, object], action).get("evidence_quality"))
-    if quality in {"rich", "thin"}:
-        return quality
-    return _evidence_quality(action.get("evidence_context"))
-
-
-def _raw_queue_item_evidence_quality(item: dict[str, object]) -> str:
-    action = _as_dict(item.get("action"))
-    quality = _as_str(action.get("evidence_quality"))
-    if quality in {"rich", "thin"}:
-        return quality
-    return _evidence_quality(_as_dict(action.get("evidence_context")))
 
 
 def _empty_outcome_quality_bucket() -> HandoffOutcomeQualityBucket:
@@ -5730,11 +3988,7 @@ def _rich_handled_follow_up_actions(
             return outcome_time < evidence_time
         return True
 
-    return [
-        item
-        for item in handled_actions
-        if needs_review(item)
-    ]
+    return [item for item in handled_actions if needs_review(item)]
 
 
 def _handled_history_summary(
