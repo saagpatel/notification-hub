@@ -1,8 +1,8 @@
 # Handoff — notification-hub
 
-**Status:** First-rich queue guard landed; rich follow-up review parked; monitor posture restored
-**Branch:** codex/record-rich-followup-parked
-**Last verified remote commit before this pass:** 186856e (main after first-rich queue guard)
+**Status:** Synthetic mail repeats dismissed locally; monitor posture restored
+**Branch:** main
+**Last verified remote commit before this pass:** 1225954 (main after parked-rich-follow-up docs)
 **Tests:** `uv run pytest`, `uv run pyright`, `uv run ruff check`, runtime/status/queue/burn-in verification passed
 
 ## Completed This Session
@@ -18,10 +18,11 @@
   `needs_follow_up`, making it handled history. `/review` now hides queue controls for thin or
   mixed first-proof groups, and the queue path rejects unsafe first-proof selections unless they
   contain exactly one rich-evidence handoff.
-- **2026-05-30 rich follow-up parking** — fresh mail approval evidence under
-  `personal-ops:mail:waiting_on_user:high:waiting` rotated twice, was reviewed, and was recorded
-  locally as `needs_follow_up`; no mail was sent, no handoff was queued, and no downstream
-  personal-ops work was promoted.
+- **2026-05-30 rich follow-up parking and dismissal** — fresh mail approval evidence under
+  `personal-ops:mail:waiting_on_user:high:waiting` rotated repeatedly, was reviewed, and was
+  recorded locally as `needs_follow_up`; the five synthetic/workflow repeat proposal keys were then
+  dismissed locally. No mail was sent, no handoff was queued, and no downstream personal-ops work
+  was promoted.
 - **2026-05-30 runtime readiness cleanup** — burn-in now ignores daemon log files whose mtime is
   outside the requested burn-in window, so stale Slack/validation evidence does not block fresh
   runtime readiness.
@@ -68,8 +69,10 @@
 
 - Source-tree and live runtime verification report notification-hub healthy.
 - Coordination Console is in monitor mode with `active_action_count: 0`,
-  `rich_follow_up_review_count: 0`, no queued handoffs, and no pending promoted outcomes. Handled
-  mail follow-up history is currently 5 items (3 rich / 2 thin).
+  `rich_follow_up_review_count: 0`, no queued handoffs, and no pending promoted outcomes.
+- Current burn-in still surfaces repeated synthetic mail workflow events as noise candidates, so the
+  next improvement should address the source or a narrow policy treatment without broadly
+  suppressing real urgent mail approvals.
 - First-rich proof collection remains operator-mediated until one rich promoted handoff resolves.
 
 ## Blocked
@@ -78,10 +81,13 @@
 
 ## Next Steps
 
-1. **Use the First Rich Proof Gate on the next real rich proposal** — save and validate the package,
+1. **Investigate synthetic mail workflow repeats** — identify why personal-ops keeps emitting
+   `Draft Ready`, `Approval Requested`, and `Send Succeeded` repeats, then fix source-side or add a
+   narrow policy treatment that does not hide real approval requests.
+2. **Use the First Rich Proof Gate on the next real rich proposal** — save and validate the package,
    queue exactly one rich handoff, and record the promoted outcome before widening authority.
-2. **Resolve ADR 0001 later** — lineage rich-vs-thin supersession is still deferred until a real promoted/resolved rich handoff appears under a prior `needs_follow_up` stable key
-3. **Observe `near_rollup_singles` in real use** — tune only if one-off resolved echoes or informational first occurrences become repeated operator noise
+3. **Resolve ADR 0001 later** — lineage rich-vs-thin supersession is still deferred until a real promoted/resolved rich handoff appears under a prior `needs_follow_up` stable key
+4. **Observe `near_rollup_singles` in real use** — tune only if one-off resolved echoes or informational first occurrences become repeated operator noise
 
 ## Key Decisions
 
