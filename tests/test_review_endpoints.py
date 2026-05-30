@@ -28,6 +28,7 @@ async def test_review_page_endpoint(client: AsyncClient) -> None:
     assert "Coordination Readiness" in resp.text
     assert "Coordination Console" in resp.text
     assert "Real Signal Readiness" in resp.text
+    assert "First Rich Proof Gate" in resp.text
     assert "No resolved rich-evidence handoff outcomes yet" in resp.text
     assert "Latest proof" in resp.text
     assert "rich resolved" in resp.text
@@ -54,6 +55,9 @@ async def test_review_page_endpoint(client: AsyncClient) -> None:
     assert "Readiness explanation" in resp.text
     assert "Blocked by" in resp.text
     assert "runtime, policy, queue, and saved burn-in proof are clear" in resp.text
+    assert "function renderFirstRichProofGate" in resp.text
+    assert "first_rich_handoff_gate" in resp.text
+    assert "Rich candidates" in resp.text
     assert "function metric" in resp.text
 
 

@@ -1,12 +1,19 @@
 # Handoff — notification-hub
 
-**Status:** Live runtime refreshed; dashboard freshness/readiness explanation and Pyright readiness pass complete
-**Branch:** main
-**Last verified remote commit before this pass:** 217ab7c (action proposal shaping split)
+**Status:** First-rich proof gate implemented after dependency closeout
+**Branch:** codex/first-rich-proof-gate
+**Last verified remote commit before this pass:** 4c2e5f0 (main after dependency closeout)
 **Tests:** 386 repo tests passing, 9 MCP tests passing, Ruff and Pyright passing
 
 ## Completed This Session
 
+- **2026-05-30 dependency closeout** — cleared the open Dependabot lane, verified `main` /
+  `origin/main` at `4c2e5f0`, confirmed GitHub CI and CodeQL success, and restarted the daemon
+  after dependency updates so live runtime uses the final merged dependency set.
+- **2026-05-30 first-rich proof gate** — Coordination Console now emits a structured
+  `first_rich_handoff_gate`, and `/review` renders it as a First Rich Proof Gate with
+  active rich/thin counts, queue lifecycle counts, resolved rich outcome count, candidate action
+  ids, and the exact safe next action.
 - **2026-05-30 runtime readiness cleanup** — burn-in now ignores daemon log files whose mtime is
   outside the requested burn-in window, so stale Slack/validation evidence does not block fresh
   runtime readiness.
@@ -48,14 +55,13 @@
 
 ## In Progress
 
-- Source-tree and live browser/API verification report notification-hub healthy and ready to expand.
-- Coordination Console is in monitor mode with no active proposals, no queued handoffs, and no
-  pending promoted outcomes.
+- Source-tree and live browser/API verification reported notification-hub healthy after dependency
+  closeout.
+- Coordination Console can now show an active proposal while keeping first-rich proof collection
+  operator-mediated until one rich promoted handoff resolves.
 - `/review` now makes the main Real Signal Readiness panel less ambiguous about live health versus
-  saved proof, the Coordination Readiness panel explains why the gate is ready or blocked, and the
-  top summary shows daemon uptime for process-freshness checks.
-- The only red Dependabot signal inspected in this pass, PR #49, has its code blocker fixed locally;
-  dependency pin changes and PR merges are still pending.
+  saved proof, explains the Coordination Readiness gate, shows daemon uptime, and renders the
+  structured First Rich Proof Gate for the first proof workflow.
 
 ## Blocked
 
@@ -63,10 +69,10 @@
 
 ## Next Steps
 
-1. **Resolve ADR 0001 later** — lineage rich-vs-thin supersession is still deferred until a real promoted/resolved rich handoff appears under a prior `needs_follow_up` stable key
-2. **Observe `near_rollup_singles` in real use** — tune only if one-off resolved echoes or informational first occurrences become repeated operator noise
-3. **Triage remaining Dependabot PRs** — PR #49's code blocker is fixed locally; dependency pin
-   changes and merges still need a clean dependency lane
+1. **Use the First Rich Proof Gate on the next real proposal** — save and validate the package,
+   queue exactly one rich handoff, and record the promoted outcome before widening authority.
+2. **Resolve ADR 0001 later** — lineage rich-vs-thin supersession is still deferred until a real promoted/resolved rich handoff appears under a prior `needs_follow_up` stable key
+3. **Observe `near_rollup_singles` in real use** — tune only if one-off resolved echoes or informational first occurrences become repeated operator noise
 
 ## Key Decisions
 
