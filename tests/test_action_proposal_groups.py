@@ -92,6 +92,115 @@ def test_action_proposal_group_package_can_save_selected_group(tmp_path: Path) -
     assert report["group_history"]["action_count"] == 2
 
 
+def test_action_proposal_group_queue_blocks_thin_first_proof(tmp_path: Path) -> None:
+    inbox_report: dict[str, object] = {
+        "status": "ok",
+        "hours": 2,
+        "events_seen": 2,
+        "needs_attention": [],
+        "waiting_or_blocked": [],
+        "ready": [],
+        "completed": [],
+        "rollups": [
+            {
+                "count": 2,
+                "source": "codex",
+                "project": "bridge-db",
+                "intent": "needs_attention",
+                "level": "urgent",
+                "title": "Codex is waiting",
+                "body": "Codex is waiting for your response.",
+                "latest_timestamp": "2026-05-09T00:00:00+00:00",
+                "latest_event_id": "thin123",
+            },
+        ],
+        "noise_candidates": [],
+        "error": None,
+    }
+
+    with patch("notification_hub.operations.run_inbox", return_value=inbox_report):
+        report = save_action_proposal_group_package(
+            group_key="codex:bridge-db:needs_attention:high:open",
+            hours=2,
+            limit=5,
+            enqueue=True,
+            review_dir=tmp_path,
+            queue_path=tmp_path / "queue.jsonl",
+            group_history_path=tmp_path / "group-history.jsonl",
+        )
+
+    assert report["status"] == "degraded"
+    assert report["action_count"] == 1
+    assert report["import_result"] is None
+    assert report["group_history"] is None
+    assert "no rich-evidence proposal" in str(report["error"])
+    assert not list(tmp_path.glob("personal-ops-actions-*.json"))
+
+
+def test_action_proposal_group_queue_allows_single_rich_promote_route(
+    tmp_path: Path,
+) -> None:
+    inbox_report: dict[str, object] = {
+        "status": "ok",
+        "hours": 2,
+        "events_seen": 4,
+        "needs_attention": [],
+        "waiting_or_blocked": [],
+        "ready": [],
+        "completed": [],
+        "rollups": [
+            {
+                "count": 2,
+                "source": "personal-ops",
+                "project": "mail",
+                "intent": "waiting_on_user",
+                "level": "urgent",
+                "title": "Approval Requested",
+                "body": "Initial reply needed",
+                "latest_timestamp": "2026-05-09T00:00:00+00:00",
+                "latest_event_id": "rich123",
+                "latest_context": {
+                    "thread_id": "thread-rich",
+                    "draft_id": "draft-rich",
+                    "approval_id": "approval-rich",
+                },
+            },
+            {
+                "count": 2,
+                "source": "personal-ops",
+                "project": "mail",
+                "intent": "waiting_on_user",
+                "level": "urgent",
+                "title": "Approval Requested",
+                "body": "Phase 36 prepared handoff",
+                "latest_timestamp": "2026-05-09T00:01:00+00:00",
+                "latest_event_id": "thin456",
+            },
+        ],
+        "noise_candidates": [],
+        "error": None,
+    }
+
+    with patch("notification_hub.operations.run_inbox", return_value=inbox_report):
+        report = save_action_proposal_group_package(
+            group_key="personal-ops:mail:waiting_on_user:high:waiting",
+            route="promote",
+            hours=2,
+            limit=5,
+            enqueue=True,
+            review_dir=tmp_path,
+            queue_path=tmp_path / "queue.jsonl",
+            group_history_path=tmp_path / "group-history.jsonl",
+        )
+
+    assert report["status"] == "ok"
+    assert report["action_count"] == 1
+    assert report["import_result"] is not None
+    assert report["import_result"]["queued_count"] == 1
+    assert report["group_history"] is not None
+    assert report["group_history"]["event_type"] == "queued_promote"
+
+
 def test_action_proposal_group_package_can_save_promote_route(tmp_path: Path) -> None:
     inbox_report: dict[str, object] = {
         "status": "ok",
@@ -253,6 +362,11 @@ def test_action_review_package_names_are_collision_safe(tmp_path: Path) -> None:
                 "body": "Outbound workflow reply",
                 "latest_timestamp": "2026-05-09T00:00:00+00:00",
                 "latest_event_id": "abc123",
+                "latest_context": {
+                    "thread_id": "thread-abc123",
+                    "draft_id": "draft-abc123",
+                    "approval_id": "approval-abc123",
+                },
             }
         ],
         "noise_candidates": [],
@@ -296,6 +410,11 @@ def test_action_proposal_group_package_can_enqueue_selected_group(tmp_path: Path
                 "body": "Outbound workflow reply",
                 "latest_timestamp": "2026-05-09T00:00:00+00:00",
                 "latest_event_id": "abc123",
+                "latest_context": {
+                    "thread_id": "thread-abc123",
+                    "draft_id": "draft-abc123",
+                    "approval_id": "approval-abc123",
+                },
             }
         ],
         "noise_candidates": [],

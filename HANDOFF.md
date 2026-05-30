@@ -1,9 +1,9 @@
 # Handoff — notification-hub
 
-**Status:** First-rich proof gate implemented after dependency closeout
-**Branch:** codex/first-rich-proof-gate
-**Last verified remote commit before this pass:** 4c2e5f0 (main after dependency closeout)
-**Tests:** 386 repo tests passing, 9 MCP tests passing, Ruff and Pyright passing
+**Status:** First-rich queue guard implemented; rich follow-up review remains visible
+**Branch:** codex/guard-thin-first-proof
+**Last verified remote commit before this pass:** cf40318 (main after first-rich proof gate)
+**Tests:** full verification pending for this branch; targeted tests, Ruff, and Pyright passed
 
 ## Completed This Session
 
@@ -14,6 +14,10 @@
   `first_rich_handoff_gate`, and `/review` renders it as a First Rich Proof Gate with
   active rich/thin counts, queue lifecycle counts, resolved rich outcome count, candidate action
   ids, and the exact safe next action.
+- **2026-05-30 first-rich queue guard** — thin-only `Codex is waiting` was recorded locally as
+  `needs_follow_up`, making it handled history. `/review` now hides queue controls for thin or
+  mixed first-proof groups, and the queue path rejects unsafe first-proof selections unless they
+  contain exactly one rich-evidence handoff.
 - **2026-05-30 runtime readiness cleanup** — burn-in now ignores daemon log files whose mtime is
   outside the requested burn-in window, so stale Slack/validation evidence does not block fresh
   runtime readiness.
@@ -69,10 +73,13 @@
 
 ## Next Steps
 
-1. **Use the First Rich Proof Gate on the next real proposal** — save and validate the package,
+1. **Review the current rich handled follow-up** — fresh personal-ops mail evidence rotated under
+   prior `needs_follow_up` history during verification; do not queue or promote it without an
+   explicit operator decision.
+2. **Use the First Rich Proof Gate on the next real rich proposal** — save and validate the package,
    queue exactly one rich handoff, and record the promoted outcome before widening authority.
-2. **Resolve ADR 0001 later** — lineage rich-vs-thin supersession is still deferred until a real promoted/resolved rich handoff appears under a prior `needs_follow_up` stable key
-3. **Observe `near_rollup_singles` in real use** — tune only if one-off resolved echoes or informational first occurrences become repeated operator noise
+3. **Resolve ADR 0001 later** — lineage rich-vs-thin supersession is still deferred until a real promoted/resolved rich handoff appears under a prior `needs_follow_up` stable key
+4. **Observe `near_rollup_singles` in real use** — tune only if one-off resolved echoes or informational first occurrences become repeated operator noise
 
 ## Key Decisions
 

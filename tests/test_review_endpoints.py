@@ -58,6 +58,9 @@ async def test_review_page_endpoint(client: AsyncClient) -> None:
     assert "function renderFirstRichProofGate" in resp.text
     assert "first_rich_handoff_gate" in resp.text
     assert "Rich candidates" in resp.text
+    assert "function firstRichQueueBlocked" in resp.text
+    assert "Queue blocked" in resp.text
+    assert "first rich proof requires exactly one rich-evidence handoff" in resp.text
     assert "function metric" in resp.text
 
 
