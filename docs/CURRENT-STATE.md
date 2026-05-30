@@ -1,6 +1,6 @@
 # Current State
 
-Last updated: 2026-05-30 (first-rich queue guard and rich follow-up review posture)
+Last updated: 2026-05-30 (rich follow-up parked; monitor posture restored)
 
 ## Session Update (2026-05-30)
 
@@ -21,10 +21,10 @@ Last updated: 2026-05-30 (first-rich queue guard and rich follow-up review postu
 - The thin-only `codex:bridge-db:needs_attention:high:open` `Codex is waiting` proposal was recorded
   locally as `needs_follow_up`, so it is handled history and cannot be mistaken for first-rich proof
   work.
-- During verification, fresh rich evidence rotated under the existing
-  `personal-ops:mail:waiting_on_user:high:waiting` `needs_follow_up` lineage. Coordination Console
-  is therefore in `notify_review` posture with zero active proposals and no queued or pending
-  handoffs. This is a useful operator review signal, not daemon degradation.
+- During follow-up, fresh mail approval evidence under the existing
+  `personal-ops:mail:waiting_on_user:high:waiting` `needs_follow_up` lineage rotated twice and was
+  explicitly kept parked both times. Coordination Console is back in monitor posture with zero
+  active proposals, no queued or pending handoffs, and `rich_follow_up_review_count: 0`.
 - Local `main` matched `origin/main` before this pass; worktree drift was the untracked local
   `.claude/` directory plus this session's changes.
 - Runtime status is OK again: daemon reachable, watcher active, runtime wiring current, policy
@@ -45,9 +45,12 @@ Last updated: 2026-05-30 (first-rich queue guard and rich follow-up review postu
 - The LaunchAgent was restarted after operator approval. The live daemon is on a fresh PID, live
   `/review` now reports `ready_to_expand`, and Coordination Console is in monitor mode with
   `active_action_count: 0`, no queued handoffs, no pending promoted outcomes, and
-  `rich_follow_up_review_count: 0`.
-- A fresh saved burn-in proof was created:
-  `/Users/d/.local/share/notification-hub/burn-in-reports/personal-ops-queue-burn-in-20260530-110041.json`.
+  `rich_follow_up_review_count: 0`; handled mail follow-up history is currently 5 items
+  (3 rich / 2 thin).
+- Fresh saved burn-in proofs were created:
+  `/Users/d/.local/share/notification-hub/burn-in-reports/personal-ops-queue-burn-in-20260530-110041.json`
+  and
+  `/Users/d/.local/share/notification-hub/burn-in-reports/personal-ops-queue-burn-in-20260530-123125.json`.
 - `/review` now separates live runtime status from saved burn-in proof in the Real Signal
   Readiness panel. Saved proof older than seven days is called out with a warning age badge and no
   longer lets that panel show the compact `ready` state by itself.
@@ -65,11 +68,9 @@ Last updated: 2026-05-30 (first-rich queue guard and rich follow-up review postu
 
 **Active backlog (priority order):**
 
-1. Review the current rich handled follow-up in `/review` before queueing or promotion; only use it
-   for first-rich proof if the operator explicitly chooses to re-open it as one rich handoff.
-2. Use the First Rich Proof Gate during the next real rich active proposal: queue exactly one rich
+1. Use the First Rich Proof Gate during the next real rich active proposal: queue exactly one rich
    handoff only after package save/validation, then record the promoted outcome.
-3. Continue observing `near_rollup_singles`; tune only if one-off resolved echoes or informational
+2. Continue observing `near_rollup_singles`; tune only if one-off resolved echoes or informational
    first occurrences become repeated operator noise.
 
 ## Session Update (2026-05-17)
