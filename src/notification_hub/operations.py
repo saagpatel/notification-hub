@@ -1951,6 +1951,19 @@ def _filter_known_noise_candidates(
     ]
 
 
+def _tail_text_file_if_recent(path: Path, *, lines: int, cutoff: datetime) -> list[str]:
+    """Tail daemon logs only when the file changed inside the burn-in window."""
+    if lines <= 0 or not path.exists():
+        return []
+    try:
+        modified_at = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
+    except OSError:
+        return []
+    if modified_at < cutoff:
+        return []
+    return tail_text_file(path, lines=lines)
+
+
 def run_burn_in(*, minutes: int = 10, lines: int = 200) -> BurnInReport:
     """Summarize recent health failures and repeated/noisy event signatures."""
     window_minutes = max(minutes, 1)
@@ -1996,8 +2009,16 @@ def run_burn_in(*, minutes: int = 10, lines: int = 200) -> BurnInReport:
             for (source, level), count in slack_counts.items()
         ]
         slack_volume.sort(key=lambda item: item["count"], reverse=True)
-        stdout_tail = tail_text_file(DAEMON_STDOUT_LOG, lines=tail_lines)
-        stderr_tail = tail_text_file(DAEMON_STDERR_LOG, lines=tail_lines)
+        stdout_tail = _tail_text_file_if_recent(
+            DAEMON_STDOUT_LOG,
+            lines=tail_lines,
+            cutoff=cutoff,
+        )
+        stderr_tail = _tail_text_file_if_recent(
+            DAEMON_STDERR_LOG,
+            lines=tail_lines,
+            cutoff=cutoff,
+        )
         daemon_summary = summarize_daemon_logs(stdout_tail, stderr_tail)
     except (OSError, ValueError):
         return {

@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncGenerator, Sequence
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, TypedDict, cast
@@ -257,7 +257,7 @@ async def _review_runtime_status() -> dict[str, object]:
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     """Start bridge watcher on startup, stop on shutdown."""
     global _start_time, _observer, _retention_task
     _start_time = time.monotonic()
@@ -581,6 +581,28 @@ REVIEW_HTML = """<!doctype html>
       }
       return `${Math.round(hours / 24)}d`;
     }
+    function durationLabel(seconds) {
+      const value = Number(seconds);
+      if (!Number.isFinite(value)) {
+        return "unknown";
+      }
+      const minutes = Math.max(0, Math.round(value / 60));
+      if (minutes < 60) {
+        return `${minutes}m`;
+      }
+      const hours = Math.round(minutes / 60);
+      if (hours < 48) {
+        return `${hours}h`;
+      }
+      return `${Math.round(hours / 24)}d`;
+    }
+    function olderThanDays(timestamp, days) {
+      const parsed = Date.parse(timestamp || "");
+      if (Number.isNaN(parsed)) {
+        return true;
+      }
+      return Date.now() - parsed > days * 24 * 60 * 60 * 1000;
+    }
     function renderList(target, rows, render, emptyText) {
       if (!rows || rows.length === 0) {
         empty(target, emptyText);
@@ -646,9 +668,13 @@ REVIEW_HTML = """<!doctype html>
       const pending = queue.promoted_pending_count ?? 0;
       const stale = queue.promoted_pending_stale_count ?? 0;
       const readyForLive = Boolean(latestProof.ready_for_live_promotion);
+      const latestProofTimestamp = latestProof.generated_at || latestProof.modified_at;
+      const latestProofAge = latestProof.name ? ageLabel(latestProofTimestamp) : "none";
+      const latestProofStale = latestProof.name ? olderThanDays(latestProofTimestamp, 7) : true;
+      const liveRuntimeStatus = readiness.runtime_status || data.runtime_status || "unknown";
       const status = active > 0 || richFollowUp > 0 || queued > 0 || pending > 0 || stale > 0
         ? "action"
-        : readiness.decision === "ready_to_expand" && readyForLive
+        : readiness.decision === "ready_to_expand" && readyForLive && !latestProofStale
           ? "ready"
           : "watch";
       const nextCommand = (data.next_commands || [])[0]
@@ -663,10 +689,13 @@ REVIEW_HTML = """<!doctype html>
           ${warnBadge(`queued ${queued}`, queued > 0)}
           ${warnBadge(`pending ${pending}`, pending > 0)}
           ${warnBadge(`stale ${stale}`, stale > 0)}
-          ${badge(`latest proof ${latestProof.status || "none"}`)}
+          ${badge(`live runtime ${liveRuntimeStatus}`)}
+          ${badge(`saved proof ${latestProof.status || "none"}`)}
+          ${warnBadge(`proof age ${latestProofAge}`, latestProofStale)}
           ${warnBadge(`rich resolved ${(outcomeQuality.rich || {}).resolved ?? 0}`, ((outcomeQuality.rich || {}).resolved ?? 0) === 0)}
         </div>
-        <div class="next"><strong>Latest proof</strong>: ${esc(latestProof.name || "No saved proof")} (${esc(latestProof.ready_for_live_promotion ? "ready" : "not ready")}, noise ${esc(latestProof.noise_candidate_count ?? 0)})</div>
+        <div class="next"><strong>Live runtime</strong>: ${esc(liveRuntimeStatus)}; readiness decision ${esc(readiness.decision || "unknown")}.</div>
+        <div class="next"><strong>Saved proof</strong>: ${esc(latestProof.name || "No saved proof")} (${esc(latestProof.ready_for_live_promotion ? "ready" : "not ready")}, age ${esc(latestProofAge)}, noise ${esc(latestProof.noise_candidate_count ?? 0)})</div>
         <div class="next"><strong>Handled follow-ups</strong>: ${esc(review.handled_history_summary || "No handled follow-up history.")}</div>
         <div class="next"><strong>Guardrail</strong>: ${esc(outcomeGuardrail(outcomeQuality))}</div>
         <div class="next"><strong>First rich handoff checklist</strong>: ${esc(firstRichHandoffChecklist(outcomeQuality).join(" -> "))}</div>
@@ -679,6 +708,7 @@ REVIEW_HTML = """<!doctype html>
       const data = await res.json();
       summary.replaceChildren(
         metric("Runtime", data.runtime.status),
+        metric("Uptime", durationLabel(data.runtime.uptime_seconds)),
         metric("Events", data.inbox.events_seen),
         metric("Actions", data.actions.actions.length),
         metric("Rollups", data.inbox.rollups.length),

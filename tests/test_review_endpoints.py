@@ -45,6 +45,11 @@ async def test_review_page_endpoint(client: AsyncClient) -> None:
     assert "save_burn_in_report=true" in resp.text
     assert "Rich evidence ready" in resp.text
     assert "Saved proof" in resp.text
+    assert "Live runtime" in resp.text
+    assert "proof age" in resp.text
+    assert 'metric("Uptime", durationLabel(data.runtime.uptime_seconds))' in resp.text
+    assert "function durationLabel" in resp.text
+    assert "function olderThanDays" in resp.text
     assert "function metric" in resp.text
 
 

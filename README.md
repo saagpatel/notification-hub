@@ -237,6 +237,8 @@ The burn-in command summarizes recent accepted/rejected event posts and repeated
 so noisy producers are easy to spot. Validation-error counts are scoped to the latest visible daemon
 start so fixed pre-restart errors do not keep appearing as current burn-in failures. Recent Slack
 delivery failures now degrade burn-in health so configured-but-broken delivery does not look clean.
+Daemon log files that have not changed inside the requested burn-in window are ignored for burn-in
+health, so older post-start failures do not block a fresh readiness check.
 Repeated-event candidates now include review-only noise-rule suggestions so policy changes can be
 copied deliberately instead of inferred from raw event rows.
 The verify-runtime command combines doctor, policy-check, `/health/details`, runtime wiring checks,
@@ -370,6 +372,20 @@ project = "personal-ops"
 title_contains = "system needs attention"
 body_contains = "run personal-ops doctor"
 window_minutes = 30
+
+[[noise.rules]]
+source = "personal-ops"
+project = "personal-ops"
+title_contains = "task suggestion pending"
+level = "info"
+window_minutes = 10
+
+[[noise.rules]]
+source = "personal-ops"
+project = "mail"
+title_contains = "draft updated"
+level = "info"
+window_minutes = 10
 
 [[noise.rules]]
 source = "personal-ops"

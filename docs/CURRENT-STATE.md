@@ -1,6 +1,53 @@
 # Current State
 
-Last updated: 2026-05-17 (action proposal shaping split)
+Last updated: 2026-05-30 (live runtime refresh, dashboard freshness, and Pyright readiness)
+
+## Session Update (2026-05-30)
+
+**Current verification:**
+
+- Local `main` matched `origin/main` before this pass; worktree drift was the untracked local
+  `.claude/` directory plus this session's changes.
+- Runtime status is OK again: daemon reachable, watcher active, runtime wiring current, policy
+  check OK, queue OK, no queued handoffs, no pending promoted outcomes, and no Slack delivery
+  failures in the current burn-in window.
+- The earlier degraded status was caused by stale daemon stderr evidence: the stderr log had not
+  changed since the old Slack timeout, but burn-in still counted the old post-start failure.
+  Burn-in now ignores daemon log files that have not changed inside the requested window.
+- Repeated `personal-ops` `Task suggestion pending` events are now covered by an explicit
+  `noise.rules` policy entry in both the repo sample config and the live local policy file. They
+  remain visible as repeated signatures and policy-covered Coordination Console history, but no
+  longer appear as active noise candidates.
+- Repeated informational `personal-ops` mail `Draft Updated` events surfaced after restart and are
+  now covered by an explicit sample/live `noise.rules` entry. They remain visible as repeated
+  signatures but no longer block clean burn-in proof.
+- Explicit Slack transport verification passed with `notification-hub-delivery-check --json
+  --slack`; one real Slack transport-check notification was sent.
+- The LaunchAgent was restarted after operator approval. The live daemon is on a fresh PID, live
+  `/review` now reports `ready_to_expand`, and Coordination Console is in monitor mode with
+  `active_action_count: 0`, no queued handoffs, no pending promoted outcomes, and
+  `rich_follow_up_review_count: 0`.
+- A fresh saved burn-in proof was created:
+  `/Users/d/.local/share/notification-hub/burn-in-reports/personal-ops-queue-burn-in-20260530-110041.json`.
+- `/review` now separates live runtime status from saved burn-in proof in the Real Signal
+  Readiness panel. Saved proof older than seven days is called out with a warning age badge and no
+  longer lets that panel show the compact `ready` state by itself.
+- `/review` also shows daemon uptime in the top summary so process freshness is visible from the
+  browser after restarts.
+- Dependabot PR #49's failed Pyright 1.1.409 check was diagnosed. The failure was caused by the
+  deprecated `AsyncIterator` return annotation on the FastAPI `@asynccontextmanager` lifespan
+  function; `server.py` now uses `AsyncGenerator[None]`, and both the pinned Pyright and
+  `pyright==1.1.409` pass locally.
+- `.claude/` is now ignored as Claude-owned local state rather than source drift. The existing
+  local directory contains a portable-skill symlink and empty agent-memory directories.
+
+**Active backlog (priority order):**
+
+1. Continue observing `near_rollup_singles`; tune only if one-off resolved echoes or informational
+   first occurrences become repeated operator noise.
+2. Triage remaining open Dependabot PRs after runtime/operator readiness work stays green. PR #49's
+   code blocker is fixed locally, but dependency pins were not changed in this mixed runtime patch
+   set.
 
 ## Session Update (2026-05-17)
 

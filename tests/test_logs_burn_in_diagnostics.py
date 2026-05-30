@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -464,4 +465,48 @@ def test_burn_in_degrades_on_slack_delivery_failures(
         "validation_error_count": 0,
         "slack_delivery_failure_count": 1,
         "status": "degraded",
+    }
+
+
+def test_burn_in_ignores_stale_daemon_log_files(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events_log = tmp_path / "events.jsonl"
+    events_log.write_text("", encoding="utf-8")
+    stdout_log = tmp_path / "stdout.log"
+    stderr_log = tmp_path / "stderr.log"
+    stdout_log.write_text(
+        'INFO:     127.0.0.1:1 - "POST /events HTTP/1.1" 422 Unprocessable Entity\n',
+        encoding="utf-8",
+    )
+    stderr_log.write_text(
+        "\n".join(
+            [
+                "Rejected event payload from 127.0.0.1: [{'type': 'old_error'}]",
+                "Slack send failed for old: The read operation timed out",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    old_timestamp = 1
+    os.utime(stdout_log, (old_timestamp, old_timestamp))
+    os.utime(stderr_log, (old_timestamp, old_timestamp))
+
+    monkeypatch.setattr(ops_mod, "EVENTS_LOG", events_log)
+    monkeypatch.setattr(ops_mod, "DAEMON_STDOUT_LOG", stdout_log)
+    monkeypatch.setattr(ops_mod, "DAEMON_STDERR_LOG", stderr_log)
+
+    report = run_burn_in(minutes=10, lines=20)
+
+    assert report["accepted_event_posts"] == 0
+    assert report["rejected_event_posts"] == 0
+    assert report["validation_error_count"] == 0
+    assert report["health"] == {
+        "accepted_event_posts": 0,
+        "rejected_event_posts": 0,
+        "validation_error_count": 0,
+        "slack_delivery_failure_count": 0,
+        "status": "ok",
     }
