@@ -9,6 +9,8 @@ import httpx
 import notification_hub.channels as channels_mod
 import notification_hub.config as config_mod
 
+_GENERIC_DIAGNOSTIC_ERROR = "diagnostic check failed; inspect local logs for details"
+
 
 class DeliveryStatus(TypedDict):
     push_notifier_available: bool
@@ -153,12 +155,12 @@ def collect_doctor_report() -> dict[str, object]:
             "url": health_url,
             "payload": payload,
         }
-    except (httpx.HTTPError, OSError) as exc:
+    except (httpx.HTTPError, OSError):
         local_api = {
             "reachable": False,
             "status_code": None,
             "url": health_url,
-            "error": str(exc),
+            "error": _GENERIC_DIAGNOSTIC_ERROR,
         }
 
     paths = cast(PathStatus, readiness["paths"])
