@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 
 import pytest
+from httpx import ASGITransport, AsyncClient
 
 import notification_hub.channels as channels_mod
 import notification_hub.config as config_mod
@@ -14,6 +15,13 @@ import notification_hub.server as server_mod
 import notification_hub.watcher as watcher_mod
 from notification_hub.config import clear_policy_cache, clear_webhook_cache
 from notification_hub.pipeline import reset_suppression_engine
+
+
+@pytest.fixture
+async def client() -> AsyncIterator[AsyncClient]:
+    transport = ASGITransport(app=server_mod.app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        yield c
 
 
 @pytest.fixture(autouse=True)

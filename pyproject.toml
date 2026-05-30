@@ -4,11 +4,11 @@ version = "0.1.0"
 description = "Unified notification daemon for Claude Code, Codex, and Claude.ai"
 requires-python = ">=3.12"
 dependencies = [
-    "fastapi>=0.115.0",
-    "uvicorn[standard]>=0.34.0",
+    "fastapi>=0.136.1",
+    "uvicorn[standard]>=0.48.0",
     "watchdog>=6.0.0",
     "httpx>=0.28.0",
-    "pydantic>=2.10.0",
+    "pydantic>=2.13.4",
 ]
 
 [dependency-groups]
@@ -16,8 +16,8 @@ dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.25.0",
     "httpx>=0.28.0",
-    "pyright>=1.1.390",
-    "ruff>=0.8.0",
+    "pyright>=1.1.409",
+    "ruff>=0.15.15",
 ]
 
 [project.scripts]
