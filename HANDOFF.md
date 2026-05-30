@@ -1,9 +1,9 @@
 # Handoff — notification-hub
 
-**Status:** First-rich queue guard implemented; rich follow-up review remains visible
-**Branch:** codex/guard-thin-first-proof
-**Last verified remote commit before this pass:** cf40318 (main after first-rich proof gate)
-**Tests:** full verification pending for this branch; targeted tests, Ruff, and Pyright passed
+**Status:** First-rich queue guard landed; rich follow-up review parked; monitor posture restored
+**Branch:** codex/record-rich-followup-parked
+**Last verified remote commit before this pass:** 186856e (main after first-rich queue guard)
+**Tests:** `uv run pytest`, `uv run pyright`, `uv run ruff check`, runtime/status/queue/burn-in verification passed
 
 ## Completed This Session
 
@@ -18,6 +18,10 @@
   `needs_follow_up`, making it handled history. `/review` now hides queue controls for thin or
   mixed first-proof groups, and the queue path rejects unsafe first-proof selections unless they
   contain exactly one rich-evidence handoff.
+- **2026-05-30 rich follow-up parking** — fresh mail approval evidence under
+  `personal-ops:mail:waiting_on_user:high:waiting` rotated twice, was reviewed, and was recorded
+  locally as `needs_follow_up`; no mail was sent, no handoff was queued, and no downstream
+  personal-ops work was promoted.
 - **2026-05-30 runtime readiness cleanup** — burn-in now ignores daemon log files whose mtime is
   outside the requested burn-in window, so stale Slack/validation evidence does not block fresh
   runtime readiness.
@@ -39,6 +43,9 @@
 - **2026-05-30 fresh proof** — saved
   `/Users/d/.local/share/notification-hub/burn-in-reports/personal-ops-queue-burn-in-20260530-110041.json`
   with runtime OK, queue OK, and zero noise candidates.
+- **2026-05-30 fresh follow-up proof** — saved
+  `/Users/d/.local/share/notification-hub/burn-in-reports/personal-ops-queue-burn-in-20260530-123125.json`
+  after parking the rich follow-up group; runtime OK, queue OK, and zero noise candidates.
 - **2026-05-30 local state cleanup** — `.claude/` is now ignored as Claude-owned local state.
 - **2026-05-30 Dependabot/Pyright readiness** — diagnosed PR #49's failed Pyright 1.1.409 check
   and updated the FastAPI lifespan annotation from `AsyncIterator` to `AsyncGenerator`; pinned
@@ -59,13 +66,11 @@
 
 ## In Progress
 
-- Source-tree and live browser/API verification reported notification-hub healthy after dependency
-  closeout.
-- Coordination Console can now show an active proposal while keeping first-rich proof collection
-  operator-mediated until one rich promoted handoff resolves.
-- `/review` now makes the main Real Signal Readiness panel less ambiguous about live health versus
-  saved proof, explains the Coordination Readiness gate, shows daemon uptime, and renders the
-  structured First Rich Proof Gate for the first proof workflow.
+- Source-tree and live runtime verification report notification-hub healthy.
+- Coordination Console is in monitor mode with `active_action_count: 0`,
+  `rich_follow_up_review_count: 0`, no queued handoffs, and no pending promoted outcomes. Handled
+  mail follow-up history is currently 5 items (3 rich / 2 thin).
+- First-rich proof collection remains operator-mediated until one rich promoted handoff resolves.
 
 ## Blocked
 
@@ -73,13 +78,10 @@
 
 ## Next Steps
 
-1. **Review the current rich handled follow-up** — fresh personal-ops mail evidence rotated under
-   prior `needs_follow_up` history during verification; do not queue or promote it without an
-   explicit operator decision.
-2. **Use the First Rich Proof Gate on the next real rich proposal** — save and validate the package,
+1. **Use the First Rich Proof Gate on the next real rich proposal** — save and validate the package,
    queue exactly one rich handoff, and record the promoted outcome before widening authority.
-3. **Resolve ADR 0001 later** — lineage rich-vs-thin supersession is still deferred until a real promoted/resolved rich handoff appears under a prior `needs_follow_up` stable key
-4. **Observe `near_rollup_singles` in real use** — tune only if one-off resolved echoes or informational first occurrences become repeated operator noise
+2. **Resolve ADR 0001 later** — lineage rich-vs-thin supersession is still deferred until a real promoted/resolved rich handoff appears under a prior `needs_follow_up` stable key
+3. **Observe `near_rollup_singles` in real use** — tune only if one-off resolved echoes or informational first occurrences become repeated operator noise
 
 ## Key Decisions
 
