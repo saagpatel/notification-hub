@@ -259,6 +259,9 @@ def test_coordination_console_summarizes_ready_expansion(tmp_path: Path) -> None
     assert report["first_rich_handoff_gate"]["rich_action_ids"] == ["action-1"]
     assert report["first_rich_handoff_gate"]["thin_action_ids"] == ["action-2"]
     assert "queue exactly one rich handoff" in report["first_rich_handoff_gate"]["next_action"]
+    assert report["proposal_review"]["next_action"] == (
+        "Save one review package, inspect grouped evidence, then queue only the right handoff(s)."
+    )
     assert report["guide_stage"] == "package_review"
     assert report["guide_steps"][0]["title"] == "Save review package"
     assert report["guide_steps"][0]["action_id"] == "action-1"
@@ -409,6 +412,111 @@ def test_next_signal_aligns_with_thin_only_first_rich_gate() -> None:
     assert report["title"] == "Active proposal lacks rich proof"
     assert report["watch_posture"] == "notify_review"
     assert report["next_action"] == gate["next_action"]
+
+
+def test_coordination_console_aligns_thin_only_proposal_review_with_gate(
+    tmp_path: Path,
+) -> None:
+    with (
+        patch(
+            "notification_hub.operations.run_coordination_readiness",
+            return_value={
+                "status": "ok",
+                "decision": "ready_to_expand",
+                "summary": "ready",
+                "queue_status": "ok",
+                "queued_count": 0,
+                "pending_count": 0,
+                "stale_count": 0,
+                "saved_burn_in_reports": 1,
+                "latest_burn_in_ready": True,
+                "latest_burn_in_noise_candidates": 0,
+                "runtime_status": "ok",
+                "policy_warning_count": 0,
+                "next_action": "Review proposals.",
+                "evidence": [],
+                "applied": False,
+            },
+        ),
+        patch(
+            "notification_hub.operations.run_personal_ops_action_export",
+            return_value={
+                "status": "ok",
+                "schema_version": "notification-hub.personal_ops_action_export.v1",
+                "generated_at": "2026-05-10T04:40:00+00:00",
+                "hours": 2,
+                "actions": [
+                    {
+                        "action_id": "thin-action",
+                        "source": "codex",
+                        "project": "bridge-db",
+                        "intent": "needs_attention",
+                        "priority": "high",
+                        "state": "open",
+                        "title": "Codex is waiting",
+                        "summary": "Codex is waiting for your response.",
+                        "signal_body": "Codex is waiting for your response.",
+                        "suggested_next_action": "Review the attention item.",
+                        "evidence_event_id": "thin-event",
+                        "evidence_timestamp": "2026-05-10T04:40:00+00:00",
+                        "evidence_context": {},
+                        "evidence_quality": "thin",
+                        "count": 3,
+                    }
+                ],
+                "dismissed_action_count": 0,
+                "dismissals": [],
+                "review_package": {
+                    "requested": False,
+                    "status": "not_requested",
+                    "path": None,
+                    "error": None,
+                },
+                "inbox": {"rollups": []},
+                "error": None,
+            },
+        ),
+        patch(
+            "notification_hub.operations.run_personal_ops_import_queue_health_check",
+            return_value={
+                "status": "ok",
+                "health": coordination_status()["import_queue"],
+                "queued_items": [],
+                "pending_promotion_items": [],
+                "next_commands": [],
+                "applied": False,
+            },
+        ),
+        patch(
+            "notification_hub.operations.run_personal_ops_outcome_sync_reminder",
+            return_value={
+                "status": "ok",
+                "should_remind": False,
+                "pending_count": 0,
+                "stale_count": 0,
+                "reminders": [],
+                "next_commands": [],
+                "next_action": "No pending.",
+                "applied": False,
+            },
+        ),
+        patch(
+            "notification_hub.operations.list_personal_ops_queue_burn_in_reports",
+            return_value=[coordination_burn_in_report()],
+        ),
+        patch("notification_hub.operations._read_import_queue_items", return_value=[]),
+    ):
+        report = run_coordination_console(
+            hours=2,
+            limit=3,
+            group_history_path=tmp_path / "group-history.jsonl",
+        )
+
+    assert report["first_rich_handoff_gate"]["status"] == "blocked_thin_only"
+    assert report["proposal_review"]["next_action"] == (
+        "Review the thin proposal manually or mark it needs-follow-up; do not queue it as "
+        "the first rich handoff proof."
+    )
 
 
 def test_coordination_console_keeps_thin_mail_promote_cues_in_follow_up(
