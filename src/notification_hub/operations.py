@@ -4614,6 +4614,11 @@ def run_coordination_console(
         queue_health=queue_health,
         outcome_quality=outcome_quality,
     )
+    if first_rich_handoff_gate["status"] == "blocked_thin_only":
+        proposal_review["next_action"] = (
+            "Review the thin proposal manually or mark it needs-follow-up; do not queue it as "
+            "the first rich handoff proof."
+        )
     next_signal = _build_next_signal_report(
         readiness=readiness,
         actions=actions,
