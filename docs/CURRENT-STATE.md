@@ -1,6 +1,6 @@
 # Current State
 
-Last updated: 2026-05-30 (rich follow-up parked; monitor posture restored)
+Last updated: 2026-05-30 (synthetic mail repeats dismissed; monitor posture restored)
 
 ## Session Update (2026-05-30)
 
@@ -22,9 +22,10 @@ Last updated: 2026-05-30 (rich follow-up parked; monitor posture restored)
   locally as `needs_follow_up`, so it is handled history and cannot be mistaken for first-rich proof
   work.
 - During follow-up, fresh mail approval evidence under the existing
-  `personal-ops:mail:waiting_on_user:high:waiting` `needs_follow_up` lineage rotated twice and was
-  explicitly kept parked both times. Coordination Console is back in monitor posture with zero
-  active proposals, no queued or pending handoffs, and `rich_follow_up_review_count: 0`.
+  `personal-ops:mail:waiting_on_user:high:waiting` `needs_follow_up` lineage rotated repeatedly.
+  The group was explicitly kept parked, then the five synthetic/workflow repeat proposal keys were
+  dismissed locally. Coordination Console is back in monitor posture with zero active proposals, no
+  queued or pending handoffs, and `rich_follow_up_review_count: 0`.
 - Local `main` matched `origin/main` before this pass; worktree drift was the untracked local
   `.claude/` directory plus this session's changes.
 - Runtime status is OK again: daemon reachable, watcher active, runtime wiring current, policy
@@ -45,8 +46,8 @@ Last updated: 2026-05-30 (rich follow-up parked; monitor posture restored)
 - The LaunchAgent was restarted after operator approval. The live daemon is on a fresh PID, live
   `/review` now reports `ready_to_expand`, and Coordination Console is in monitor mode with
   `active_action_count: 0`, no queued handoffs, no pending promoted outcomes, and
-  `rich_follow_up_review_count: 0`; handled mail follow-up history is currently 5 items
-  (3 rich / 2 thin).
+  `rich_follow_up_review_count: 0`; the synthetic mail approval repeats are hidden by local
+  dismissal keys rather than queued or promoted.
 - Fresh saved burn-in proofs were created:
   `/Users/d/.local/share/notification-hub/burn-in-reports/personal-ops-queue-burn-in-20260530-110041.json`
   and
@@ -68,9 +69,12 @@ Last updated: 2026-05-30 (rich follow-up parked; monitor posture restored)
 
 **Active backlog (priority order):**
 
-1. Use the First Rich Proof Gate during the next real rich active proposal: queue exactly one rich
+1. Investigate the source of repeated synthetic personal-ops mail workflow events (`Draft Ready`,
+   `Approval Requested`, `Send Succeeded`) so burn-in stops surfacing them as noise candidates
+   without broadly suppressing real urgent mail approvals.
+2. Use the First Rich Proof Gate during the next real rich active proposal: queue exactly one rich
    handoff only after package save/validation, then record the promoted outcome.
-2. Continue observing `near_rollup_singles`; tune only if one-off resolved echoes or informational
+3. Continue observing `near_rollup_singles`; tune only if one-off resolved echoes or informational
    first occurrences become repeated operator noise.
 
 ## Session Update (2026-05-17)
