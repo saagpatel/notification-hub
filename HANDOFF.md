@@ -1,6 +1,6 @@
 # Handoff — notification-hub
 
-**Status:** Live runtime refreshed; dashboard freshness and Pyright readiness pass complete
+**Status:** Live runtime refreshed; dashboard freshness/readiness explanation and Pyright readiness pass complete
 **Branch:** main
 **Last verified remote commit before this pass:** 217ab7c (action proposal shaping split)
 **Tests:** 386 repo tests passing, 9 MCP tests passing, Ruff and Pyright passing
@@ -21,6 +21,8 @@
 - **2026-05-30 dashboard freshness improvement** — `/review` now separates live runtime status
   from saved burn-in proof, warns when the latest saved proof is older than seven days, and shows
   daemon uptime in the top summary.
+- **2026-05-30 dashboard readiness explanation** — `/review` now names readiness blockers when
+  degraded and confirms runtime, policy, queue, and saved burn-in proof when ready.
 - **2026-05-30 LaunchAgent refresh** — restarted the live daemon after operator approval; live
   `/review` now reports `ready_to_expand` and monitor mode.
 - **2026-05-30 fresh proof** — saved
@@ -50,7 +52,8 @@
 - Coordination Console is in monitor mode with no active proposals, no queued handoffs, and no
   pending promoted outcomes.
 - `/review` now makes the main Real Signal Readiness panel less ambiguous about live health versus
-  saved proof, and the top summary shows daemon uptime for process-freshness checks.
+  saved proof, the Coordination Readiness panel explains why the gate is ready or blocked, and the
+  top summary shows daemon uptime for process-freshness checks.
 - The only red Dependabot signal inspected in this pass, PR #49, has its code blocker fixed locally;
   dependency pin changes and PR merges are still pending.
 

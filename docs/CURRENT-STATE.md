@@ -1,6 +1,6 @@
 # Current State
 
-Last updated: 2026-05-30 (live runtime refresh, dashboard freshness, and Pyright readiness)
+Last updated: 2026-05-30 (live runtime refresh, dashboard readiness explanation, and Pyright readiness)
 
 ## Session Update (2026-05-30)
 
@@ -34,6 +34,9 @@ Last updated: 2026-05-30 (live runtime refresh, dashboard freshness, and Pyright
   longer lets that panel show the compact `ready` state by itself.
 - `/review` also shows daemon uptime in the top summary so process freshness is visible from the
   browser after restarts.
+- `/review` now adds a plain-language Coordination Readiness explanation. When readiness is
+  blocked, the panel lists the current blocker category; when it is ready, it explicitly confirms
+  that runtime, policy, queue, and saved burn-in proof are clear.
 - Dependabot PR #49's failed Pyright 1.1.409 check was diagnosed. The failure was caused by the
   deprecated `AsyncIterator` return annotation on the FastAPI `@asynccontextmanager` lifespan
   function; `server.py` now uses `AsyncGenerator[None]`, and both the pinned Pyright and

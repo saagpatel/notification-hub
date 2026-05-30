@@ -655,6 +655,40 @@ REVIEW_HTML = """<!doctype html>
           : `noise up ${noiseDelta}`;
       return `${readyTrend}; ${noiseTrend} versus previous proof.`;
     }
+    function readinessExplanation(readiness) {
+      const blockers = [];
+      if ((readiness.runtime_status || "unknown") !== "ok") {
+        blockers.push(`runtime is ${readiness.runtime_status || "unknown"}`);
+      }
+      if ((readiness.policy_warning_count ?? 0) > 0) {
+        blockers.push(`${readiness.policy_warning_count} policy warning(s)`);
+      }
+      if ((readiness.queued_count ?? 0) > 0) {
+        blockers.push(`${readiness.queued_count} queued handoff(s)`);
+      }
+      if ((readiness.pending_count ?? 0) > 0) {
+        blockers.push(`${readiness.pending_count} pending promoted outcome(s)`);
+      }
+      if ((readiness.stale_count ?? 0) > 0) {
+        blockers.push(`${readiness.stale_count} stale promoted outcome(s)`);
+      }
+      if ((readiness.latest_burn_in_noise_candidates ?? 0) > 0) {
+        blockers.push(`${readiness.latest_burn_in_noise_candidates} burn-in noise candidate(s)`);
+      }
+      if ((readiness.saved_burn_in_reports ?? 0) === 0) {
+        blockers.push("no saved burn-in proof");
+      }
+      if (readiness.latest_burn_in_ready === false) {
+        blockers.push("latest burn-in proof is not ready");
+      }
+      if (blockers.length > 0) {
+        return `Blocked by ${blockers.join(", ")}.`;
+      }
+      if (readiness.decision === "ready_to_expand") {
+        return "Ready because runtime, policy, queue, and saved burn-in proof are clear.";
+      }
+      return readiness.summary || "Readiness is still being evaluated.";
+    }
     function renderRealSignalReadiness(data) {
       const readiness = data.readiness || {};
       const queue = data.queue_health || {};
@@ -737,6 +771,7 @@ REVIEW_HTML = """<!doctype html>
           ${warnBadge(`noise ${readiness.latest_burn_in_noise_candidates ?? 0}`, (readiness.latest_burn_in_noise_candidates ?? 0) > 0)}
           ${badge(`reports ${readiness.saved_burn_in_reports ?? 0}`)}
         </div>
+        <div class="next"><strong>Readiness explanation</strong>: ${esc(readinessExplanation(readiness))}</div>
         <div class="next">${esc(readiness.summary || "")}</div>
         <div class="next">${esc(readiness.next_action || "")}</div>
       `));
