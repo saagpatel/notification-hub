@@ -136,6 +136,7 @@ from notification_hub.operations_types import (
     CoordinationNextSignalReport as CoordinationNextSignalReport,
     HandoffOutcomeQualityBucket as HandoffOutcomeQualityBucket,
     HandoffOutcomeQualityReport as HandoffOutcomeQualityReport,
+    FirstRichHandoffGateReport as FirstRichHandoffGateReport,
     CoordinationConsoleReport as CoordinationConsoleReport,
     NoiseCandidateReviewItem as NoiseCandidateReviewItem,
     NoiseCandidateReviewReport as NoiseCandidateReviewReport,
@@ -3308,6 +3309,7 @@ def _build_next_signal_report(
     active_actions: list[CoordinationConsoleActionReport],
     handled_actions: list[CoordinationConsoleActionReport],
     queue_health: PersonalOpsImportQueueHealthReport,
+    first_rich_handoff_gate: FirstRichHandoffGateReport,
     dismissals: list[ActionProposalDismissalReport],
     limit: int,
 ) -> CoordinationNextSignalReport:
@@ -3324,7 +3326,17 @@ def _build_next_signal_report(
         "rich_handled_follow_up_recheck",
     ]
     rich_follow_up_actions = _rich_handled_follow_up_actions(handled_actions)
-    if active_actions:
+    if active_actions and first_rich_handoff_gate["status"] == "blocked_thin_only":
+        title = "Active proposal lacks rich proof"
+        summary = (
+            "The next real signal is visible, but it is thin evidence and cannot be used "
+            "as the first rich handoff proof."
+        )
+        status = "review"
+        watch_posture = "notify_review"
+        quiet_reason = None
+        next_action = first_rich_handoff_gate["next_action"]
+    elif active_actions:
         title = "Active proposal waiting"
         summary = "The next real signal is already visible as an action proposal."
         status = "ready"
@@ -3667,6 +3679,84 @@ def _build_handoff_outcome_quality(
         "rich": rich,
         "thin": thin,
         "unknown": unknown,
+        "next_action": next_action,
+    }
+
+
+def _build_first_rich_handoff_gate(
+    *,
+    active_actions: list[CoordinationConsoleActionReport],
+    queue_health: PersonalOpsImportQueueHealthReport,
+    outcome_quality: HandoffOutcomeQualityReport,
+) -> FirstRichHandoffGateReport:
+    rich_action_ids = [
+        item["action"]["action_id"]
+        for item in active_actions
+        if _action_evidence_quality(item["action"]) == "rich"
+    ]
+    thin_action_ids = [
+        item["action"]["action_id"]
+        for item in active_actions
+        if _action_evidence_quality(item["action"]) != "rich"
+    ]
+    rich_resolved = outcome_quality["rich"]["resolved"]
+    queued_count = queue_health["queued_count"]
+    pending_count = queue_health["promoted_pending_count"]
+    stale_count = queue_health["promoted_pending_stale_count"]
+    operator_mediated = rich_resolved == 0
+
+    if rich_resolved > 0:
+        status = "satisfied"
+        title = "First rich handoff proof recorded"
+        summary = "At least one rich-evidence promoted handoff has a resolved outcome."
+        next_action = "Keep comparing rich and thin outcomes before widening automation."
+    elif queued_count > 0 or pending_count > 0 or stale_count > 0:
+        status = "finish_lifecycle"
+        title = "First rich handoff lifecycle in progress"
+        summary = (
+            "A queue or promotion lifecycle is active; finish it before adding another "
+            "handoff to the proof lane."
+        )
+        next_action = queue_health["next_action"]
+    elif rich_action_ids:
+        status = "proof_required"
+        title = "First rich handoff proof required"
+        summary = (
+            "No resolved rich-evidence handoff exists yet; use exactly one rich active "
+            "proposal as the first proof candidate."
+        )
+        next_action = (
+            "Save and validate the rich proposal package, queue exactly one rich handoff, "
+            "then record its promoted outcome."
+        )
+    elif active_actions:
+        status = "blocked_thin_only"
+        title = "No rich proof candidate yet"
+        summary = (
+            "Active proposals are visible, but none have rich evidence. Keep them "
+            "operator-mediated and do not use them as first proof."
+        )
+        next_action = "Wait for a rich-evidence proposal or mark the current group needs-follow-up."
+    else:
+        status = "waiting"
+        title = "Waiting for first rich proof candidate"
+        summary = "No active proposal is available for the first rich handoff proof lane."
+        next_action = "Monitor /review for the next real rich-evidence handoff signal."
+
+    return {
+        "status": status,
+        "title": title,
+        "summary": summary,
+        "operator_mediated": operator_mediated,
+        "active_count": len(active_actions),
+        "active_rich_count": len(rich_action_ids),
+        "active_thin_count": len(thin_action_ids),
+        "queued_count": queued_count,
+        "pending_count": pending_count,
+        "stale_count": stale_count,
+        "rich_resolved_count": rich_resolved,
+        "rich_action_ids": rich_action_ids,
+        "thin_action_ids": thin_action_ids,
         "next_action": next_action,
     }
 
@@ -4519,12 +4609,18 @@ def run_coordination_console(
     )
 
     queue_health = queue["health"]
+    first_rich_handoff_gate = _build_first_rich_handoff_gate(
+        active_actions=active_actions,
+        queue_health=queue_health,
+        outcome_quality=outcome_quality,
+    )
     next_signal = _build_next_signal_report(
         readiness=readiness,
         actions=actions,
         active_actions=active_actions,
         handled_actions=handled_actions,
         queue_health=queue_health,
+        first_rich_handoff_gate=first_rich_handoff_gate,
         dismissals=action_dismissals,
         limit=safe_limit,
     )
@@ -4545,6 +4641,8 @@ def run_coordination_console(
         next_action = queue_health["next_action"]
     elif readiness["decision"] != "ready_to_expand":
         next_action = readiness["next_action"]
+    elif first_rich_handoff_gate["status"] == "blocked_thin_only":
+        next_action = first_rich_handoff_gate["next_action"]
     elif any(action["lineage_status"] == "new" for action in active_actions):
         next_action = (
             "Save and validate a review package, then queue one handoff for operator review."
@@ -4582,6 +4680,7 @@ def run_coordination_console(
         "dismissals": action_dismissals[:safe_limit],
         "next_signal": next_signal,
         "outcome_quality": outcome_quality,
+        "first_rich_handoff_gate": first_rich_handoff_gate,
         "queue_health": queue_health,
         "queued_items": queue["queued_items"][:safe_limit],
         "pending_promotion_items": queue["pending_promotion_items"][:safe_limit],

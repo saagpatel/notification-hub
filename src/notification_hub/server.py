@@ -404,6 +404,10 @@ REVIEW_HTML = """<!doctype html>
       <ul id="realSignalReadiness"></ul>
     </section>
     <section class="focus">
+      <h2>First Rich Proof Gate</h2>
+      <ul id="firstRichProofGate"></ul>
+    </section>
+    <section class="focus">
       <h2>Proposal Review</h2>
       <ul id="proposalReview"></ul>
     </section>
@@ -513,6 +517,7 @@ REVIEW_HTML = """<!doctype html>
     const coordinationReadiness = document.getElementById("coordinationReadiness");
     const coordinationConsole = document.getElementById("coordinationConsole");
     const realSignalReadiness = document.getElementById("realSignalReadiness");
+    const firstRichProofGate = document.getElementById("firstRichProofGate");
     const proposalReview = document.getElementById("proposalReview");
     const operatorDecisionRequired = document.getElementById("operatorDecisionRequired");
     const noiseCandidateReview = document.getElementById("noiseCandidateReview");
@@ -737,6 +742,26 @@ REVIEW_HTML = """<!doctype html>
         <div class="next">${esc(data.next_action || signal.next_action || "")}</div>
       `));
     }
+    function renderFirstRichProofGate(data) {
+      const gate = data.first_rich_handoff_gate || {};
+      firstRichProofGate.replaceChildren(item(`
+        <div class="line"><span class="title">${esc(gate.title || "First rich proof gate")}</span><span class="meta">${esc(gate.status || "unknown")}</span></div>
+        <div class="badge-row">
+          ${warnBadge(`operator-mediated ${gate.operator_mediated ? "yes" : "no"}`, Boolean(gate.operator_mediated))}
+          ${warnBadge(`active ${gate.active_count ?? 0}`, (gate.active_count ?? 0) > 0)}
+          ${warnBadge(`rich active ${gate.active_rich_count ?? 0}`, (gate.active_rich_count ?? 0) > 0)}
+          ${warnBadge(`thin active ${gate.active_thin_count ?? 0}`, (gate.active_thin_count ?? 0) > 0)}
+          ${warnBadge(`queued ${gate.queued_count ?? 0}`, (gate.queued_count ?? 0) > 0)}
+          ${warnBadge(`pending ${gate.pending_count ?? 0}`, (gate.pending_count ?? 0) > 0)}
+          ${warnBadge(`stale ${gate.stale_count ?? 0}`, (gate.stale_count ?? 0) > 0)}
+          ${warnBadge(`rich resolved ${gate.rich_resolved_count ?? 0}`, (gate.rich_resolved_count ?? 0) === 0)}
+        </div>
+        <div class="next">${esc(gate.summary || "")}</div>
+        <div class="next"><strong>Rich candidates</strong>: ${esc((gate.rich_action_ids || []).join(", ") || "none")}</div>
+        <div class="next"><strong>Thin candidates</strong>: ${esc((gate.thin_action_ids || []).join(", ") || "none")}</div>
+        <div class="next"><strong>Next action</strong>: ${esc(gate.next_action || "")}</div>
+      `));
+    }
     async function load() {
       const res = await fetch("/review/data?hours=2&limit=6");
       const data = await res.json();
@@ -849,6 +874,7 @@ REVIEW_HTML = """<!doctype html>
         <div class="next">${esc(data.next_action || "")}</div>
       `), ...(guideRows.length ? guideRows : [item(`<div class="next">No guide steps.</div>`)]));
       renderRealSignalReadiness(data);
+      renderFirstRichProofGate(data);
       const reviewGroups = review.groups || [];
       const groupRows = reviewGroups.slice(0, 5).map(group => item(`
         <div class="line"><span class="title">${esc(group.source)}${group.project ? " / " + esc(group.project) : ""}</span><span class="meta">${esc(group.intent)} x${esc(group.action_count)}</span></div>

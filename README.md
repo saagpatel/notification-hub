@@ -179,8 +179,10 @@ readiness, and the saved report status.
 The `/review` page also includes a Real Signal Readiness lane that combines active proposals,
 handled follow-ups, queue state, latest saved proof, the next safe command, and a rich-outcome
 guardrail so expansion stays operator-mediated until a real rich-evidence handoff resolves.
-It also shows a first-rich-handoff checklist and compares the latest saved burn-in proof against the
-previous proof for readiness and noise drift.
+It also shows a structured First Rich Proof Gate with rich/thin active proposal counts, queue
+lifecycle state, and the exact next safe action for collecting the first resolved rich-evidence
+handoff proof. The page compares the latest saved burn-in proof against the previous proof for
+readiness and noise drift.
 The Coordination Readiness panel includes a plain-language explanation that lists the current
 readiness blocker when degraded, or confirms that runtime, policy, queue, and saved burn-in proof are
 clear when ready.

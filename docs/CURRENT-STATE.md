@@ -1,11 +1,20 @@
 # Current State
 
-Last updated: 2026-05-30 (live runtime refresh, dashboard readiness explanation, and Pyright readiness)
+Last updated: 2026-05-30 (first-rich proof gate and dependency closeout)
 
 ## Session Update (2026-05-30)
 
 **Current verification:**
 
+- Post-merge dependency closeout is complete: the open Dependabot lane was cleared, `main` and
+  `origin/main` were aligned at `4c2e5f0`, CI and CodeQL were green, and the daemon was restarted
+  again after the dependency updates so live runtime uses the final merged dependency set.
+- `/review` now includes a structured First Rich Proof Gate. The gate separates first-proof status
+  from generic readiness, shows active rich/thin proposal counts, queued/pending/stale lifecycle
+  counts, resolved rich outcome count, candidate action ids, and the exact safe next action.
+- With no resolved rich-evidence handoff outcome yet, the gate stays operator-mediated by design.
+  If a rich active proposal appears, the safe path is to save and validate the package, queue
+  exactly one rich handoff, then record the promoted outcome before widening authority.
 - Local `main` matched `origin/main` before this pass; worktree drift was the untracked local
   `.claude/` directory plus this session's changes.
 - Runtime status is OK again: daemon reachable, watcher active, runtime wiring current, policy
@@ -46,11 +55,10 @@ Last updated: 2026-05-30 (live runtime refresh, dashboard readiness explanation,
 
 **Active backlog (priority order):**
 
-1. Continue observing `near_rollup_singles`; tune only if one-off resolved echoes or informational
+1. Use the First Rich Proof Gate during the next real active proposal: queue exactly one rich
+   handoff only after package save/validation, then record the promoted outcome.
+2. Continue observing `near_rollup_singles`; tune only if one-off resolved echoes or informational
    first occurrences become repeated operator noise.
-2. Triage remaining open Dependabot PRs after runtime/operator readiness work stays green. PR #49's
-   code blocker is fixed locally, but dependency pins were not changed in this mixed runtime patch
-   set.
 
 ## Session Update (2026-05-17)
 
@@ -459,8 +467,9 @@ tuning pass.
 - The review page now also includes a Real Signal Readiness lane that combines active proposals,
   handled follow-ups, queue state, latest saved proof, the next safe command, and a rich-outcome
   guardrail so coordination expansion waits for a real resolved rich-evidence handoff.
-  It also shows a first-rich-handoff checklist and compares the latest saved burn-in proof against
-  the previous proof for readiness and noise drift.
+  It also shows a structured First Rich Proof Gate for rich/thin candidate counts, lifecycle state,
+  proof status, and the next safe action. Saved burn-in proof is compared against the previous proof
+  for readiness and noise drift.
 - Codex now has an active `notification-hub-signal-watch` heartbeat that should stay report-only and
   use the read-only Coordination Console, queue health, and runtime verification surfaces to decide
   whether there is an active operator handoff or only the narrowed monitor posture.

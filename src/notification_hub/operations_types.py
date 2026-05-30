@@ -834,6 +834,23 @@ class HandoffOutcomeQualityReport(TypedDict):
     next_action: str
 
 
+class FirstRichHandoffGateReport(TypedDict):
+    status: str
+    title: str
+    summary: str
+    operator_mediated: bool
+    active_count: int
+    active_rich_count: int
+    active_thin_count: int
+    queued_count: int
+    pending_count: int
+    stale_count: int
+    rich_resolved_count: int
+    rich_action_ids: list[str]
+    thin_action_ids: list[str]
+    next_action: str
+
+
 class CoordinationConsoleReport(TypedDict):
     status: str
     readiness: CoordinationReadinessReport
@@ -847,6 +864,7 @@ class CoordinationConsoleReport(TypedDict):
     dismissals: list[ActionProposalDismissalReport]
     next_signal: CoordinationNextSignalReport
     outcome_quality: HandoffOutcomeQualityReport
+    first_rich_handoff_gate: FirstRichHandoffGateReport
     queue_health: PersonalOpsImportQueueHealthReport
     queued_items: list[PersonalOpsImportQueueItemReport]
     pending_promotion_items: list[PersonalOpsImportQueueItemReport]

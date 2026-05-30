@@ -6,8 +6,10 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
+import notification_hub.operations as ops_mod
 from notification_hub.operations import run_coordination_console, run_coordination_readiness
 from tests.coordination_console_fixtures import (
+    coordination_action_report,
     coordination_burn_in_report,
     coordination_status,
 )
@@ -249,6 +251,14 @@ def test_coordination_console_summarizes_ready_expansion(tmp_path: Path) -> None
     assert report["outcome_quality"]["summary"] == (
         "No promoted handoff outcomes are recorded yet."
     )
+    assert report["first_rich_handoff_gate"]["status"] == "proof_required"
+    assert report["first_rich_handoff_gate"]["operator_mediated"] is True
+    assert report["first_rich_handoff_gate"]["active_count"] == 2
+    assert report["first_rich_handoff_gate"]["active_rich_count"] == 1
+    assert report["first_rich_handoff_gate"]["active_thin_count"] == 1
+    assert report["first_rich_handoff_gate"]["rich_action_ids"] == ["action-1"]
+    assert report["first_rich_handoff_gate"]["thin_action_ids"] == ["action-2"]
+    assert "queue exactly one rich handoff" in report["first_rich_handoff_gate"]["next_action"]
     assert report["guide_stage"] == "package_review"
     assert report["guide_steps"][0]["title"] == "Save review package"
     assert report["guide_steps"][0]["action_id"] == "action-1"
@@ -349,6 +359,56 @@ def test_coordination_console_default_hours_matches_action_export() -> None:
         run_coordination_console()
 
     mock_actions.assert_called_once_with(hours=24, limit=5)
+
+
+def test_next_signal_aligns_with_thin_only_first_rich_gate() -> None:
+    build_gate = getattr(ops_mod, "_build_first_rich_handoff_gate")
+    build_quality = getattr(ops_mod, "_build_handoff_outcome_quality")
+    build_next_signal = getattr(ops_mod, "_build_next_signal_report")
+    thin_action = coordination_action_report()
+    thin_action["lineage_status"] = "new"
+    thin_action["action"]["action_id"] = "thin-action"
+    thin_action["action"]["evidence_context"] = {}
+    thin_action["action"]["evidence_quality"] = "thin"
+    queue_health = coordination_status()["import_queue"]
+    outcome_quality = build_quality([])
+    gate = build_gate(
+        active_actions=[thin_action],
+        queue_health=queue_health,
+        outcome_quality=outcome_quality,
+    )
+    report = build_next_signal(
+        readiness={
+            "status": "ok",
+            "decision": "ready_to_expand",
+            "summary": "ready",
+            "queue_status": "ok",
+            "queued_count": 0,
+            "pending_count": 0,
+            "stale_count": 0,
+            "saved_burn_in_reports": 1,
+            "latest_burn_in_ready": True,
+            "latest_burn_in_noise_candidates": 0,
+            "runtime_status": "ok",
+            "policy_warning_count": 0,
+            "next_action": "Plan the next compact coordination console slice.",
+            "evidence": [],
+            "applied": False,
+        },
+        actions={"dismissed_action_count": 0, "inbox": {"rollups": []}},
+        active_actions=[thin_action],
+        handled_actions=[],
+        queue_health=queue_health,
+        first_rich_handoff_gate=gate,
+        dismissals=[],
+        limit=3,
+    )
+
+    assert gate["status"] == "blocked_thin_only"
+    assert report["status"] == "review"
+    assert report["title"] == "Active proposal lacks rich proof"
+    assert report["watch_posture"] == "notify_review"
+    assert report["next_action"] == gate["next_action"]
 
 
 def test_coordination_console_keeps_thin_mail_promote_cues_in_follow_up(
