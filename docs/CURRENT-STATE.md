@@ -751,7 +751,7 @@ uv run --frozen notification-hub retention --max-events 2000
 
 Expected current outcome:
 
-- `pytest`: 370 passed
+- `pytest`: ≥376 passed (376 confirmed as of 2026-05-12 session; current suite may be higher)
 - `ruff`: clean
 - `pyright`: 0 errors
 - `/health/details`: `status: ok`, watcher active, push available, Slack configured
