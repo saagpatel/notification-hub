@@ -75,6 +75,7 @@ def test_action_proposal_group_package_can_save_selected_group(tmp_path: Path) -
             hours=2,
             limit=5,
             review_dir=tmp_path,
+            dismissals_path=tmp_path / "dismissals.jsonl",
             group_history_path=tmp_path / "group-history.jsonl",
         )
 
@@ -126,6 +127,7 @@ def test_action_proposal_group_queue_blocks_thin_first_proof(tmp_path: Path) -> 
             enqueue=True,
             review_dir=tmp_path,
             queue_path=tmp_path / "queue.jsonl",
+            dismissals_path=tmp_path / "dismissals.jsonl",
             group_history_path=tmp_path / "group-history.jsonl",
         )
 
@@ -190,6 +192,7 @@ def test_action_proposal_group_queue_allows_single_rich_promote_route(
             enqueue=True,
             review_dir=tmp_path,
             queue_path=tmp_path / "queue.jsonl",
+            dismissals_path=tmp_path / "dismissals.jsonl",
             group_history_path=tmp_path / "group-history.jsonl",
         )
 
@@ -261,6 +264,7 @@ def test_action_proposal_group_package_can_save_promote_route(tmp_path: Path) ->
             hours=2,
             limit=5,
             review_dir=tmp_path,
+            dismissals_path=tmp_path / "dismissals.jsonl",
             group_history_path=tmp_path / "group-history.jsonl",
         )
 
@@ -329,6 +333,7 @@ def test_action_proposal_group_package_can_save_operator_decision_route(tmp_path
             hours=2,
             limit=5,
             review_dir=tmp_path,
+            dismissals_path=tmp_path / "dismissals.jsonl",
             group_history_path=tmp_path / "group-history.jsonl",
         )
 
@@ -377,11 +382,13 @@ def test_action_review_package_names_are_collision_safe(tmp_path: Path) -> None:
         first = save_action_proposal_group_package(
             group_key="personal-ops:mail:waiting_on_user:high:waiting",
             review_dir=tmp_path,
+            dismissals_path=tmp_path / "dismissals.jsonl",
             group_history_path=tmp_path / "group-history.jsonl",
         )
         second = save_action_proposal_group_package(
             group_key="personal-ops:mail:waiting_on_user:high:waiting",
             review_dir=tmp_path,
+            dismissals_path=tmp_path / "dismissals.jsonl",
             group_history_path=tmp_path / "group-history.jsonl",
         )
 
@@ -429,6 +436,7 @@ def test_action_proposal_group_package_can_enqueue_selected_group(tmp_path: Path
             enqueue=True,
             review_dir=tmp_path,
             queue_path=tmp_path / "queue.jsonl",
+            dismissals_path=tmp_path / "dismissals.jsonl",
             group_history_path=tmp_path / "group-history.jsonl",
         )
 
@@ -659,6 +667,7 @@ def test_action_proposal_group_outcome_records_local_decision(tmp_path: Path) ->
             reason="operator follow-up required",
             hours=2,
             limit=5,
+            dismissals_path=tmp_path / "dismissals.jsonl",
             group_history_path=tmp_path / "group-history.jsonl",
         )
 
