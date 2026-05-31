@@ -552,7 +552,7 @@ def test_personal_ops_action_export_filters_phase_34_mail_echoes() -> None:
     assert report["dismissed_action_count"] == 2
 
 
-def test_personal_ops_action_export_preserves_mail_evidence_context() -> None:
+def test_personal_ops_action_export_preserves_mail_evidence_context(tmp_path: Path) -> None:
     inbox_report: dict[str, object] = {
         "status": "ok",
         "hours": 2,
@@ -584,7 +584,11 @@ def test_personal_ops_action_export_preserves_mail_evidence_context() -> None:
     }
 
     with patch("notification_hub.operations.run_inbox", return_value=inbox_report):
-        report = run_personal_ops_action_export(hours=2, limit=5)
+        report = run_personal_ops_action_export(
+            hours=2,
+            limit=5,
+            dismissals_path=tmp_path / "dismissals.jsonl",
+        )
 
     assert report["actions"][0].get("evidence_context") == {
         "thread_id": "thread-123",
@@ -752,7 +756,7 @@ def test_action_proposal_dismissals_can_be_listed_and_undismissed(tmp_path: Path
     assert inactive_after["dismissals"][0]["deleted_at"] is not None
 
 
-def test_personal_ops_action_export_keeps_repeated_titles_unique() -> None:
+def test_personal_ops_action_export_keeps_repeated_titles_unique(tmp_path: Path) -> None:
     inbox_report: dict[str, object] = {
         "status": "ok",
         "hours": 2,
@@ -795,7 +799,11 @@ def test_personal_ops_action_export_keeps_repeated_titles_unique() -> None:
     }
 
     with patch("notification_hub.operations.run_inbox", return_value=inbox_report):
-        report = run_personal_ops_action_export(hours=2, limit=5)
+        report = run_personal_ops_action_export(
+            hours=2,
+            limit=5,
+            dismissals_path=tmp_path / "dismissals.jsonl",
+        )
 
     action_ids = [action["action_id"] for action in report["actions"]]
     assert len(action_ids) == len(set(action_ids))

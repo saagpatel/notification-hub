@@ -1,6 +1,36 @@
 # Current State
 
-Last updated: 2026-05-30 (synthetic mail repeats dismissed; monitor posture restored)
+Last updated: 2026-05-31 (thin waiting echo parked; monitor posture verified)
+
+## Session Update (2026-05-31)
+
+**Current verification:**
+
+- `main` and `origin/main` were aligned at `33adb8a` before this pass; the worktree was clean.
+- A new thin-only `codex:we-just-overhauled-my-global-codex:needs_attention:high:open`
+  `Codex is waiting` proposal appeared. It was recorded locally as `needs_follow_up`, so it remains
+  handled history and is not eligible for the first-rich proof lane.
+- Coordination Console and `/review` are back in monitor posture with `active_action_count: 0`,
+  `rich_follow_up_review_count: 0`, no queued handoffs, and no pending promoted outcomes.
+- First Rich Proof Gate is still waiting for the next real rich-evidence handoff signal. Active
+  rich, thin, and queued counts are all zero.
+- Runtime remains healthy: daemon reachable, watcher active, runtime wiring current, policy check
+  OK, queue OK, no queued handoffs, no pending promoted outcomes, and no Slack delivery failures.
+- A fresh 30-minute burn-in returned `status: ok`, zero validation errors, zero rejected event
+  posts, zero Slack delivery failures, and no noise candidates. The synthetic
+  `personal-ops` mail approval repeats are quiet in the current burn-in window.
+- `/review` dismissal rows now label dismissal state as `dismissal active` / `dismissal inactive`
+  so hidden local dismissals are not visually confused with active proposal work.
+
+**Active backlog (priority order):**
+
+1. Keep observing the synthetic personal-ops mail workflow source (`Draft Ready`,
+   `Approval Requested`, `Send Succeeded`), but do not add broad suppression while the current
+   burn-in window is clean.
+2. Use the First Rich Proof Gate during the next real rich active proposal: queue exactly one rich
+   handoff only after package save/validation, then record the promoted outcome.
+3. Continue observing `near_rollup_singles`; tune only if one-off resolved echoes or informational
+   first occurrences become repeated operator noise.
 
 ## Session Update (2026-05-30)
 
@@ -66,16 +96,6 @@ Last updated: 2026-05-30 (synthetic mail repeats dismissed; monitor posture rest
   `pyright==1.1.409` pass locally.
 - `.claude/` is now ignored as Claude-owned local state rather than source drift. The existing
   local directory contains a portable-skill symlink and empty agent-memory directories.
-
-**Active backlog (priority order):**
-
-1. Investigate the source of repeated synthetic personal-ops mail workflow events (`Draft Ready`,
-   `Approval Requested`, `Send Succeeded`) so burn-in stops surfacing them as noise candidates
-   without broadly suppressing real urgent mail approvals.
-2. Use the First Rich Proof Gate during the next real rich active proposal: queue exactly one rich
-   handoff only after package save/validation, then record the promoted outcome.
-3. Continue observing `near_rollup_singles`; tune only if one-off resolved echoes or informational
-   first occurrences become repeated operator noise.
 
 ## Session Update (2026-05-17)
 

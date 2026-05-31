@@ -1170,7 +1170,7 @@ REVIEW_HTML = """<!doctype html>
       const res = await fetch("/review/action-proposal-dismissals?limit=10");
       const data = await res.json();
       renderList(dismissals, data.dismissals, d => item(`
-        <div class="line"><span class="title">${esc(d.title || d.dismissal_key)}</span><span class="meta">${d.active ? "active" : "inactive"}</span></div>
+        <div class="line"><span class="title">${esc(d.title || d.dismissal_key)}</span><span class="meta">${d.active ? "dismissal active" : "dismissal inactive"}</span></div>
         <div class="next">${esc(d.reason || "")}</div>
         <div class="next">${esc(d.dismissal_key)}</div>
         <div class="button-row">

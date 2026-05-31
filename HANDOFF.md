@@ -1,12 +1,22 @@
 # Handoff — notification-hub
 
-**Status:** Synthetic mail repeats dismissed locally; monitor posture restored
-**Branch:** main
-**Last verified remote commit before this pass:** 1225954 (main after parked-rich-follow-up docs)
-**Tests:** `uv run pytest`, `uv run pyright`, `uv run ruff check`, runtime/status/queue/burn-in verification passed
+**Status:** Monitor posture verified; waiting for first real rich proof candidate
+**Branch:** codex/refresh-monitor-posture-docs
+**Last verified remote commit before this pass:** 33adb8a (main after Codex communication docs)
+**Tests:** `uv run pytest`, `uv run pyright`, `uv run ruff check`, runtime/status/queue/burn-in/browser verification passed
 
 ## Completed This Session
 
+- **2026-05-31 thin waiting echo parking** — a new thin-only
+  `codex:we-just-overhauled-my-global-codex:needs_attention:high:open` `Codex is waiting` proposal
+  was recorded locally as `needs_follow_up`. No handoff was queued, no notification was sent, and
+  First Rich Proof Gate remains waiting for a real rich-evidence candidate.
+- **2026-05-31 monitor verification** — Coordination Console and `/review` report monitor posture
+  with active proposals `0`, rich follow-up `0`, queued handoffs `0`, pending promoted outcomes `0`,
+  runtime `ok`, queue `ok`, Slack delivery failures `0`, and no burn-in noise candidates in the
+  current 30-minute window.
+- **2026-05-31 dismissal wording cleanup** — `/review` dismissal rows now say `dismissal active` or
+  `dismissal inactive` so hidden local dismissals are not mistaken for active proposal work.
 - **2026-05-30 dependency closeout** — cleared the open Dependabot lane, verified `main` /
   `origin/main` at `4c2e5f0`, confirmed GitHub CI and CodeQL success, and restarted the daemon
   after dependency updates so live runtime uses the final merged dependency set.
@@ -70,9 +80,8 @@
 - Source-tree and live runtime verification report notification-hub healthy.
 - Coordination Console is in monitor mode with `active_action_count: 0`,
   `rich_follow_up_review_count: 0`, no queued handoffs, and no pending promoted outcomes.
-- Current burn-in still surfaces repeated synthetic mail workflow events as noise candidates, so the
-  next improvement should address the source or a narrow policy treatment without broadly
-  suppressing real urgent mail approvals.
+- Current 30-minute burn-in is clean: repeated synthetic mail workflow events are not active noise
+  candidates right now. Keep observing before adding any broader suppression.
 - First-rich proof collection remains operator-mediated until one rich promoted handoff resolves.
 
 ## Blocked
@@ -81,9 +90,9 @@
 
 ## Next Steps
 
-1. **Investigate synthetic mail workflow repeats** — identify why personal-ops keeps emitting
-   `Draft Ready`, `Approval Requested`, and `Send Succeeded` repeats, then fix source-side or add a
-   narrow policy treatment that does not hide real approval requests.
+1. **Observe synthetic mail workflow repeats** — if `Draft Ready`, `Approval Requested`, or
+   `Send Succeeded` repeats return as burn-in noise candidates, identify the source-side cause or
+   add a narrow policy treatment that does not hide real approval requests.
 2. **Use the First Rich Proof Gate on the next real rich proposal** — save and validate the package,
    queue exactly one rich handoff, and record the promoted outcome before widening authority.
 3. **Resolve ADR 0001 later** — lineage rich-vs-thin supersession is still deferred until a real promoted/resolved rich handoff appears under a prior `needs_follow_up` stable key

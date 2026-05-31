@@ -2381,6 +2381,7 @@ def save_action_proposal_group_package(
     enqueue: bool = False,
     review_dir: Path | None = None,
     queue_path: Path | None = None,
+    dismissals_path: Path | None = None,
     group_history_path: Path | None = None,
 ) -> ActionProposalGroupPackageReport:
     """Stage one active proposal group as a review package without applying personal-ops work."""
@@ -2424,6 +2425,7 @@ def save_action_proposal_group_package(
         group_key=safe_group_key,
         hours=max(hours, 1),
         limit=max(limit, 1),
+        dismissals_path=dismissals_path,
     )
     actions = _filter_actions_for_group_route(actions, route_key)
     if not actions:
@@ -2650,6 +2652,7 @@ def record_action_proposal_group_outcome(
     reason: str,
     hours: int = ACTION_PROPOSAL_REVIEW_WINDOW_HOURS,
     limit: int = 25,
+    dismissals_path: Path | None = None,
     group_history_path: Path | None = None,
 ) -> ActionProposalGroupOutcomeReport:
     """Record an operator-visible outcome for one proposal-review group."""
@@ -2680,6 +2683,7 @@ def record_action_proposal_group_outcome(
         group_key=safe_group_key,
         hours=max(hours, 1),
         limit=max(limit, 1),
+        dismissals_path=dismissals_path,
     )
     if not actions:
         return {
