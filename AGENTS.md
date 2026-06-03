@@ -54,3 +54,8 @@ notification-hub is a localhost-only notification daemon for Claude Code, Codex,
 - Relevant tests or checks were run, or the exact reason they were not run is stated.
 - Runtime or ops docs are updated when daemon behavior, hook behavior, or maintenance workflow changes.
 - Assumptions, risks, and next steps are summarized before closeout.
+
+<!-- secondbrain-breadcrumb -->
+## SecondBrain knowledge vault
+
+Prior lessons, decisions, and context for this project live in SecondBrain at `wiki/maps/projects/notification-hub.md`. The whole vault is searchable via the `engraph` MCP — query it for this project + its stack before non-trivial work.

@@ -64,3 +64,8 @@ uv run --frozen uvicorn notification_hub.server:app --host 127.0.0.1 --port 9199
 Use `docs/CURRENT-STATE.md` to resume quickly. Keep the system in monitor mode unless real repeated operator noise or a real promoted rich handoff gives enough evidence for the next narrow change.
 
 <!-- portfolio-context:end -->
+
+<!-- secondbrain-breadcrumb -->
+## SecondBrain knowledge vault
+
+Prior lessons, decisions, and context for this project live in SecondBrain at `wiki/maps/projects/notification-hub.md`. The whole vault is searchable via the `engraph` MCP — query it for this project + its stack before non-trivial work.
