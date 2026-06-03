@@ -66,6 +66,9 @@ uv run notification-hub operator-review-session
 uv run notification-hub operator-review-session --save-report
 uv run notification-hub operator-review-session-retention --keep 20
 uv run notification-hub operator-review-session-retention --keep 20 --apply
+uv run notification-hub action-export-retention --keep 20
+uv run notification-hub-action-export-retention --json
+uv run notification-hub action-export-retention --keep 20 --apply
 uv run notification-hub operator-handoff-drill
 uv run notification-hub personal-ops-actions --save-review-package
 uv run notification-hub validate-action-package path/to/actions.json
@@ -172,6 +175,9 @@ and the review page surfaces the latest saved session as its own at-a-glance pan
 The operator-review-session-retention command prunes old saved review-session reports; it defaults to
 a dry run and only deletes files when `--apply` is passed. The `/review` page also shows the same
 retention pressure as a read-only summary, so cleanup stays explicit.
+The action-export-retention command prunes older saved action-export files; it defaults to a dry run
+and only deletes files when `--apply` is passed. The `--keep N` option controls how many newest
+files are preserved (default 20).
 The operator-handoff-drill command runs the temporary queue lifecycle plus queue burn-in as a
 non-applying rehearsal before using the same review flow for a real handoff. The `/review` drill
 button saves the burn-in proof by default and shows rich-evidence readiness, live-promotion
@@ -543,6 +549,8 @@ uv run --frozen notification-hub operator-review-session
 uv run --frozen notification-hub operator-review-session --save-report
 uv run --frozen notification-hub operator-review-session-retention --keep 20
 uv run --frozen notification-hub operator-review-session-retention --keep 20 --apply
+uv run --frozen notification-hub action-export-retention --keep 20
+uv run --frozen notification-hub action-export-retention --keep 20 --apply
 uv run --frozen notification-hub operator-handoff-drill
 uv run --frozen notification-hub logs
 curl http://127.0.0.1:9199/review

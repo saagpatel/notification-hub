@@ -934,9 +934,10 @@ It is not part of normal day-to-day work.
 
 ## Safest Next Step
 
-Start future work from `main` (`26780cd`). The confirmed next-session backlog is in the
-Session Update section above. Work in priority order:
-action-export retention → single-event visibility → mcp_server smoke test → aa8fd718 draft cleanup.
+Use the active backlog in the most recent Session Update (2026-05-31) as the starting point.
+All items listed in the 2026-05-16 entry (action-export retention, near-rollup singles visibility,
+mcp_server smoke test, aa8fd718 draft cleanup) are complete per the 2026-05-17 and 2026-05-12
+session updates above.
 Keep apply behavior operator-mediated until the compact console proves it should own a broader workflow.
 
 ## Optional Follow-Up
