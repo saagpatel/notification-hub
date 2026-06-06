@@ -1874,6 +1874,7 @@ def run_logs(*, events: int = 5, lines: int = 20) -> LogsReport:
         recent_events = [event_report(event) for event in recent_stored_events]
         stdout_tail = tail_text_file(DAEMON_STDOUT_LOG, lines=lines)
         stderr_tail = tail_text_file(DAEMON_STDERR_LOG, lines=lines)
+        daemon_summary = summarize_daemon_logs(stdout_tail, stderr_tail)
     except (OSError, ValueError):
         return {
             "status": "degraded",
@@ -1888,13 +1889,23 @@ def run_logs(*, events: int = 5, lines: int = 20) -> LogsReport:
             "error": _GENERIC_OPERATION_ERROR,
         }
 
+    has_sampled_evidence = bool(recent_events or stdout_tail or stderr_tail)
+    logs_status = (
+        "ok"
+        if not missing_paths
+        and has_sampled_evidence
+        and daemon_summary["rejected_event_posts"] == 0
+        and daemon_summary["validation_error_count"] == 0
+        and daemon_summary["slack_delivery_failure_count"] == 0
+        else "degraded"
+    )
     return {
-        "status": "ok",
+        "status": logs_status,
         "events_log": str(EVENTS_LOG),
         "stdout_log": str(DAEMON_STDOUT_LOG),
         "stderr_log": str(DAEMON_STDERR_LOG),
         "recent_events": recent_events,
-        "daemon_summary": summarize_daemon_logs(stdout_tail, stderr_tail),
+        "daemon_summary": daemon_summary,
         "stdout_tail": stdout_tail,
         "stderr_tail": stderr_tail,
         "missing_paths": missing_paths,
@@ -2055,7 +2066,7 @@ def run_burn_in(*, minutes: int = 10, lines: int = 200) -> BurnInReport:
     noise_candidates = _filter_known_noise_candidates(repeated)[:10]
     noise_rule_suggestions = _noise_rule_suggestions(noise_candidates)
     return {
-        "status": "ok",
+        "status": health_status,
         "minutes": window_minutes,
         "events_seen": len(recent_events),
         "accepted_event_posts": daemon_summary["accepted_event_posts"],

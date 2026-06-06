@@ -165,13 +165,18 @@ history.
 The operator-daily-state command builds a resume-ready local snapshot across runtime health, queue
 health, Coordination Console next signal, burn-in, dismissals, and the current rich/thin outcome
 quality summary. Pass `--save-report` when you want a timestamped JSON report under
-`~/.local/share/notification-hub/operator-state-reports/`.
+`~/.local/share/notification-hub/operator-state-reports/`. The HTTP review surface keeps
+`/review/operator-daily-state` read-only; use `POST /review/operator-daily-state/report` when the
+review UI or a local script should save the same report.
 The operator-review-session command summarizes recent local review activity, including grouped
 proposal saves, queues, dismissals, outcomes, and queue follow-through. It is read-only and mirrors
 the review-session summary shown in `/review`; pass `--save-report` when you want a timestamped JSON
-audit report under `~/.local/share/notification-hub/operator-review-session-reports/`. Saved
-review-session reports can be listed and inspected from `/review` for a compact session timeline,
-and the review page surfaces the latest saved session as its own at-a-glance panel.
+audit report under `~/.local/share/notification-hub/operator-review-session-reports/`. The HTTP
+review surface keeps `/review/operator-review-session` read-only; use
+`POST /review/operator-review-session/report` when the review UI or a local script should save the
+same report. Saved review-session reports can be listed and inspected from `/review` for a compact
+session timeline, and the review page surfaces the latest saved session as its own at-a-glance
+panel.
 The operator-review-session-retention command prunes old saved review-session reports; it defaults to
 a dry run and only deletes files when `--apply` is passed. The `/review` page also shows the same
 retention pressure as a read-only summary, so cleanup stays explicit.
@@ -573,8 +578,9 @@ curl -X POST http://127.0.0.1:9199/review/action-proposal/DISMISSAL_KEY/undismis
   -H 'Content-Type: application/json' \
   -d '{"reason":"signal is useful again"}'
 curl http://127.0.0.1:9199/review/operator-daily-state
+curl -X POST http://127.0.0.1:9199/review/operator-daily-state/report
 curl http://127.0.0.1:9199/review/operator-review-session
-curl 'http://127.0.0.1:9199/review/operator-review-session?save_report=true'
+curl -X POST http://127.0.0.1:9199/review/operator-review-session/report
 curl http://127.0.0.1:9199/review/operator-review-session-reports
 curl http://127.0.0.1:9199/review/operator-review-session-report/operator-review-session-YYYYMMDD-HHMMSS.json
 curl -X POST http://127.0.0.1:9199/review/operator-handoff-drill

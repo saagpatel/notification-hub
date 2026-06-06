@@ -6,6 +6,8 @@ from unittest.mock import AsyncMock, patch
 
 from httpx import AsyncClient
 
+import notification_hub.server as server_mod
+
 
 async def test_review_page_inherits_action_proposal_review_window(
     client: AsyncClient,
@@ -216,6 +218,37 @@ async def test_review_data_endpoint_is_read_only(client: AsyncClient) -> None:
     mock_queue_health.assert_called_once_with(limit=3)
     mock_reminder.assert_called_once_with(limit=3)
     mock_readiness.assert_called_once_with(limit=3)
+
+
+async def test_review_runtime_status_uses_cli_status_truth() -> None:
+    with patch(
+        "notification_hub.server.run_status",
+        return_value={
+            "status": "degraded",
+            "health_url": "http://127.0.0.1:9199/health/details",
+            "daemon_reachable": True,
+            "watcher_active": True,
+            "events_processed": 4,
+            "uptime_seconds": 12.5,
+            "policy_config_found": True,
+            "policy_warning_count": 0,
+            "retention_enabled": True,
+            "retention_last_status": "ok",
+            "runtime_wiring_current": True,
+            "push_notifier_available": True,
+            "slack_configured": True,
+            "slack_delivery_failures": 2,
+            "import_queue": {"status": "ok", "needs_review": False},
+            "next_action": "Inspect notification-hub logs for Slack delivery failures.",
+        },
+    ) as mock_status:
+        report = await server_mod._review_runtime_status()  # pyright: ignore[reportPrivateUsage]
+
+    assert report["status"] == "degraded"
+    assert report["slack_delivery_failures"] == 2
+    assert report["next_action"] == "Inspect notification-hub logs for Slack delivery failures."
+    assert "import_queue" not in report
+    mock_status.assert_called_once_with()
 
 
 async def test_review_noise_candidates_endpoint_is_read_only(client: AsyncClient) -> None:

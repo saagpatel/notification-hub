@@ -1,12 +1,43 @@
 # Handoff — notification-hub
 
-**Status:** Monitor posture verified; waiting for first real rich proof candidate
-**Branch:** codex/refresh-monitor-posture-docs
-**Last verified remote commit before this pass:** 33adb8a (main after Codex communication docs)
-**Tests:** `uv run pytest`, `uv run pyright`, `uv run ruff check`, runtime/status/queue/burn-in/browser verification passed
+**Status:** Runtime truth hardening live; first-rich gate waiting for candidate
+**Branch:** codex/runtime-truth-review-hardening
+**Last verified remote commit before this pass:** main matched origin/main before branch creation
+**Tests:** `uv run --frozen pytest`, `uv run --frozen pyright`, `uv run --frozen ruff check`, Slack
+transport check, runtime doctor/status/burn-in/verify-runtime, live `/review/data`, and live POST
+report-save routes passed
 
 ## Completed This Session
 
+- **2026-06-06 runtime truth hardening** — `burn-in` now degrades at the top level whenever nested
+  health degrades, and `logs` preserves degraded status for bad or empty sampled evidence.
+  `/review/data` runtime state now uses `run_status`, so Slack failure count and next action match
+  the CLI runtime contract.
+- **2026-06-06 HTTP write cleanup** — `/review/operator-daily-state` and
+  `/review/operator-review-session` are GET/read-only even if `save_report=true` is present. Local
+  report saves now use explicit POST routes:
+  `/review/operator-daily-state/report` and `/review/operator-review-session/report`.
+- **2026-06-06 Slack/runtime verification** — `delivery-check --slack --json` passed and sent one
+  real Slack diagnostic notification. `doctor`, `status`, 10-minute `burn-in`, and `verify-runtime`
+  returned `status: ok` with Slack delivery failures `0`.
+- **2026-06-06 quality gates** — full local gates passed: `395` pytest tests, Pyright `0 errors`,
+  and Ruff clean.
+- **2026-06-06 live daemon activation** — restarted the LaunchAgent with the documented `bootout`,
+  `bootstrap`, and `kickstart` sequence. `launchctl print` showed the service running from this repo
+  with fresh uptime and PID `63498`.
+- **2026-06-06 live route verification** — live `/review/data` now reports runtime `ok`, Slack
+  delivery failures `0`, and `next_action: No action needed.` GET report endpoints ignore
+  `save_report=true`; POST report routes saved both an operator daily-state report and an
+  operator-review-session report without applying downstream work.
+- **2026-06-06 mail workflow observation** — current 10-minute burn-in and
+  `/review/noise-candidates` are clean, while wider 30-minute/2-hour inspection still shows older
+  synthetic personal-ops mail repeats. Coordination Console remains monitor mode with active
+  proposals `0`; no new noise rules were added because title/body-only suppression would be too
+  blunt for real approval requests.
+- **2026-06-06 first-rich gate check** — attempted the next strong lane, but the live gate is still
+  waiting: `active_action_count: 0`, `active_rich_count: 0`, `active_thin_count: 0`, no queued
+  handoffs, and no pending promoted outcomes. No package was saved, no handoff was queued, and no
+  outcome was recorded because there is no real active rich-evidence proposal.
 - **2026-05-31 thin waiting echo parking** — a new thin-only
   `codex:we-just-overhauled-my-global-codex:needs_attention:high:open` `Codex is waiting` proposal
   was recorded locally as `needs_follow_up`. No handoff was queued, no notification was sent, and
@@ -77,11 +108,9 @@
 
 ## In Progress
 
-- Source-tree and live runtime verification report notification-hub healthy.
-- Coordination Console is in monitor mode with `active_action_count: 0`,
-  `rich_follow_up_review_count: 0`, no queued handoffs, and no pending promoted outcomes.
-- Current 30-minute burn-in is clean: repeated synthetic mail workflow events are not active noise
-  candidates right now. Keep observing before adding any broader suppression.
+- Source-tree verification and live runtime checks report notification-hub healthy.
+- Current live 10-minute burn-in and `/review/noise-candidates` are clean. Older personal-ops mail
+  workflow repeats are visible only in wider windows and remain an observation item, not active work.
 - First-rich proof collection remains operator-mediated until one rich promoted handoff resolves.
 
 ## Blocked
@@ -90,13 +119,15 @@
 
 ## Next Steps
 
-1. **Observe synthetic mail workflow repeats** — if `Draft Ready`, `Approval Requested`, or
-   `Send Succeeded` repeats return as burn-in noise candidates, identify the source-side cause or
-   add a narrow policy treatment that does not hide real approval requests.
-2. **Use the First Rich Proof Gate on the next real rich proposal** — save and validate the package,
+1. **Use the First Rich Proof Gate on the next real rich proposal** — save and validate the package,
    queue exactly one rich handoff, and record the promoted outcome before widening authority.
-3. **Resolve ADR 0001 later** — lineage rich-vs-thin supersession is still deferred until a real promoted/resolved rich handoff appears under a prior `needs_follow_up` stable key
-4. **Observe `near_rollup_singles` in real use** — tune only if one-off resolved echoes or informational first occurrences become repeated operator noise
+2. **Revisit mail workflow policy only if live noise returns** — tune only if the same repeats
+   become current 10-minute candidates or active operator work; avoid broad `Approval Requested`
+   suppression.
+3. **Resolve ADR 0001 later** — lineage rich-vs-thin supersession is still deferred until a real
+   promoted/resolved rich handoff appears under a prior `needs_follow_up` stable key.
+4. **Observe `near_rollup_singles` in real use** — tune only if one-off resolved echoes or
+   informational first occurrences become repeated operator noise.
 
 ## Key Decisions
 
@@ -119,6 +150,8 @@
   runtime health; proof older than seven days is useful history, not fresh readiness evidence.
 - Live daemon UI/API posture can lag source-tree fixes until the LaunchAgent is restarted; use the
   `/review` uptime metric plus `launchctl print` when checking process freshness.
+- HTTP GET routes in `/review` should stay read-only; local report writes should use explicit POST
+  routes or CLI `--save-report`.
 - FastAPI lifespan functions decorated with `@asynccontextmanager` should return
   `AsyncGenerator[...]`, not `AsyncIterator[...]`, for Pyright 1.1.409+ compatibility.
 
@@ -131,5 +164,7 @@
 - config/policy.example.toml
 - src/notification_hub/operations.py
 - src/notification_hub/server.py
+- tests/test_cli_commands.py
 - tests/test_logs_burn_in_diagnostics.py
 - tests/test_review_endpoints.py
+- tests/test_review_operator_endpoints.py

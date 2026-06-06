@@ -46,6 +46,7 @@ from notification_hub.operations import (
     run_personal_ops_outcome_sync_reminder,
     run_personal_ops_queue_review,
     run_retention,
+    run_status,
     save_action_proposal_group_package,
     record_action_proposal_group_outcome,
     undismiss_action_proposal,
@@ -229,30 +230,23 @@ def _review_operator_focus(
 
 
 async def _review_runtime_status() -> dict[str, object]:
-    details = await _collect_health_details()
-    config = cast(dict[str, object], details.get("config", {}))
-    retention = cast(dict[str, object], details.get("retention", {}))
-    delivery = cast(dict[str, object], details.get("delivery", {}))
-    runtime_wiring = cast(dict[str, object], details.get("runtime_wiring", {}))
-    slack_failures = 0
+    status = await asyncio.to_thread(run_status)
     return {
-        "status": details.get("status", "degraded"),
-        "health_url": "http://127.0.0.1:9199/health/details",
-        "daemon_reachable": True,
-        "watcher_active": details.get("watcher_active"),
-        "events_processed": details.get("events_processed"),
-        "uptime_seconds": details.get("uptime_seconds"),
-        "policy_config_found": config.get("exists"),
-        "policy_warning_count": config.get("warning_count", 0),
-        "retention_enabled": retention.get("enabled"),
-        "retention_last_status": retention.get("last_status"),
-        "runtime_wiring_current": all(bool(value) for value in runtime_wiring.values()),
-        "push_notifier_available": delivery.get("push_notifier_available"),
-        "slack_configured": delivery.get("slack_webhook_configured"),
-        "slack_delivery_failures": slack_failures,
-        "next_action": "No action needed."
-        if details.get("status") == "ok"
-        else "Review health details.",
+        "status": status["status"],
+        "health_url": status["health_url"],
+        "daemon_reachable": status["daemon_reachable"],
+        "watcher_active": status["watcher_active"],
+        "events_processed": status["events_processed"],
+        "uptime_seconds": status["uptime_seconds"],
+        "policy_config_found": status["policy_config_found"],
+        "policy_warning_count": status["policy_warning_count"],
+        "retention_enabled": status["retention_enabled"],
+        "retention_last_status": status["retention_last_status"],
+        "runtime_wiring_current": status["runtime_wiring_current"],
+        "push_notifier_available": status["push_notifier_available"],
+        "slack_configured": status["slack_configured"],
+        "slack_delivery_failures": status["slack_delivery_failures"],
+        "next_action": status["next_action"],
     }
 
 
@@ -1235,7 +1229,10 @@ REVIEW_HTML = """<!doctype html>
     async function saveReviewSession() {
       const dailyRes = await fetch("/review/operator-daily-state?hours=24&limit=5");
       const daily = await dailyRes.json();
-      const sessionRes = await fetch("/review/operator-review-session?hours=2&limit=25&save_report=true");
+      const sessionRes = await fetch(
+        "/review/operator-review-session/report?hours=2&limit=25",
+        { method: "POST" }
+      );
       const session = await sessionRes.json();
       renderOperatorState(daily, session);
       await loadReviewSessionReports();
@@ -2162,14 +2159,28 @@ async def review_undismiss_action_proposal(
 async def review_operator_daily_state(
     hours: int = 24,
     limit: int = 10,
-    save_report: bool = False,
 ) -> dict[str, object]:
     """Build a resume-ready operator state snapshot without applying work."""
     report = await asyncio.to_thread(
         run_operator_daily_state,
         hours=max(hours, 1),
         limit=max(limit, 1),
-        save_report=save_report,
+        save_report=False,
+    )
+    return cast(dict[str, object], _review_response(report))
+
+
+@app.post("/review/operator-daily-state/report")
+async def review_operator_daily_state_report(
+    hours: int = 24,
+    limit: int = 10,
+) -> dict[str, object]:
+    """Build and save a resume-ready operator state snapshot."""
+    report = await asyncio.to_thread(
+        run_operator_daily_state,
+        hours=max(hours, 1),
+        limit=max(limit, 1),
+        save_report=True,
     )
     return cast(dict[str, object], _review_response(report))
 
@@ -2178,14 +2189,28 @@ async def review_operator_daily_state(
 async def review_operator_review_session(
     hours: int = 2,
     limit: int = 25,
-    save_report: bool = False,
 ) -> dict[str, object]:
     """Summarize recent review-session activity without applying work."""
     report = await asyncio.to_thread(
         run_operator_review_session,
         hours=max(hours, 1),
         limit=max(limit, 1),
-        save_report=save_report,
+        save_report=False,
+    )
+    return cast(dict[str, object], _review_response(report))
+
+
+@app.post("/review/operator-review-session/report")
+async def review_operator_review_session_report(
+    hours: int = 2,
+    limit: int = 25,
+) -> dict[str, object]:
+    """Save a review-session activity summary."""
+    report = await asyncio.to_thread(
+        run_operator_review_session,
+        hours=max(hours, 1),
+        limit=max(limit, 1),
+        save_report=True,
     )
     return cast(dict[str, object], _review_response(report))
 

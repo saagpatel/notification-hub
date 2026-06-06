@@ -1,6 +1,57 @@
 # Current State
 
-Last updated: 2026-05-31 (thin waiting echo parked; monitor posture verified)
+Last updated: 2026-06-06 (first-rich gate checked; waiting for candidate)
+
+## Session Update (2026-06-06)
+
+**Current verification:**
+
+- Work is on `codex/runtime-truth-review-hardening`.
+- Runtime truth reporting is tightened: `burn-in` now returns a degraded top-level status whenever
+  nested health degrades from rejected posts, validation errors, or Slack delivery failures.
+- `logs` also keeps a degraded top-level status when sampled daemon evidence includes rejected
+  posts, validation errors, Slack delivery failures, missing paths, or no sampled evidence.
+- `/review/data` runtime status now uses the same compact truth as `notification-hub status`, so
+  Slack failure count and next action match CLI runtime posture instead of being hardcoded clean.
+- Local HTTP report writes moved off GET. `/review/operator-daily-state` and
+  `/review/operator-review-session` are read-only, even if `save_report=true` is present; explicit
+  report saves use `POST /review/operator-daily-state/report` and
+  `POST /review/operator-review-session/report`.
+- Explicit Slack transport verification passed with `notification-hub delivery-check --slack
+  --json`; one real Slack diagnostic notification was sent.
+- Live runtime checks are healthy: `doctor`, `status`, `burn-in --minutes 10 --lines 200`, and
+  `verify-runtime` all returned `status: ok`; daemon reachable, watcher active, runtime wiring
+  current, policy OK, import queue OK, and Slack delivery failures `0`.
+- Full local gates passed: `uv run --frozen pytest` (`395 passed`), `uv run --frozen pyright`
+  (`0 errors`), and `uv run --frozen ruff check`.
+- The LaunchAgent was restarted with the documented `bootout` / `bootstrap` / `kickstart` sequence.
+  `launchctl print` showed the daemon running from this repo with fresh uptime and PID `63498`.
+- Live `/review/data` now serves the new runtime truth contract: runtime `status: ok`, Slack
+  delivery failures `0`, and `next_action: No action needed.`
+- Live GET report endpoints stay read-only even when `save_report=true` is present. Live POST
+  report routes wrote local reports successfully:
+  `/Users/d/.local/share/notification-hub/operator-state-reports/operator-daily-state-20260606-081623.json`
+  and
+  `/Users/d/.local/share/notification-hub/operator-review-session-reports/operator-review-session-20260606-081623.json`.
+- Follow-up observation at `2026-06-06T08:20:01Z` found the current 10-minute burn-in and
+  `/review/noise-candidates` clean: runtime health `ok`, no rejected posts, no validation errors, no
+  Slack delivery failures, and no live noise candidates. The wider 30-minute and 2-hour inspection
+  still shows older synthetic personal-ops mail workflow repeats (`Draft Ready`,
+  `Approval Requested`, `Send Succeeded`), but Coordination Console is monitor mode with
+  `active_action_count: 0`. No new noise rules were added because generic approval bodies would be
+  too blunt and could hide real approval requests.
+- First Rich Proof Gate check at `2026-06-06T08:24:13Z` found no current candidate:
+  `active_action_count: 0`, `active_rich_count: 0`, `active_thin_count: 0`, no queued handoffs, and
+  no pending promoted outcomes. No package was saved, no handoff was queued, and no outcome was
+  recorded because the first-rich lane requires a real active rich-evidence proposal.
+
+**Active backlog (priority order):**
+
+1. Continue first-rich proof collection only on the next real rich-evidence handoff signal.
+2. Keep using `status`, `burn-in`, and `verify-runtime` as the shared runtime truth contract; if one
+   surface degrades, the review surface should degrade with it.
+3. Revisit personal-ops mail workflow policy only if the same repeats become live 10-minute noise
+   candidates again or create active operator work.
 
 ## Session Update (2026-05-31)
 
@@ -469,11 +520,13 @@ tuning pass.
 - An `operator-daily-state` command and `/review/operator-daily-state` endpoint now build a
   resume-ready local state snapshot across runtime health, queue health, Coordination Console next
   signal, burn-in, dismissals, and the rich/thin outcome-quality summary. The command can save
-  timestamped JSON reports under local notification-hub runtime state.
+  timestamped JSON reports under local notification-hub runtime state; HTTP report saves use
+  `POST /review/operator-daily-state/report` so the GET endpoint stays read-only.
 - An `operator-review-session` command and `/review/operator-review-session` endpoint now summarize
   recent local review activity across grouped proposal saves, queues, dismissals, outcomes, and
   queue follow-through. The `/review` Operator State panel shows this alongside the daily state, and
-  `--save-report` or `save_report=true` writes timestamped local JSON audit reports. Saved
+  `--save-report` or `POST /review/operator-review-session/report` writes timestamped local JSON
+  audit reports. The GET endpoint stays read-only even when `save_report=true` is present. Saved
   review-session reports can now be listed and inspected from `/review` as a compact session
   timeline, while `operator-review-session-retention` prunes old saved reports after an explicit
   `--apply`. `/review/operator-review-session-retention` exposes the same cleanup pressure as a
@@ -753,8 +806,9 @@ curl http://127.0.0.1:9199/review/package/personal-ops-actions-YYYYMMDD-HHMMSS.j
 curl -X POST http://127.0.0.1:9199/review/package/personal-ops-actions-YYYYMMDD-HHMMSS.json/queue
 curl http://127.0.0.1:9199/review/import-queue
 curl http://127.0.0.1:9199/review/outcome-sync-reminder
+curl -X POST http://127.0.0.1:9199/review/operator-daily-state/report
 curl http://127.0.0.1:9199/review/operator-review-session
-curl 'http://127.0.0.1:9199/review/operator-review-session?save_report=true'
+curl -X POST http://127.0.0.1:9199/review/operator-review-session/report
 curl http://127.0.0.1:9199/review/operator-review-session-reports
 curl http://127.0.0.1:9199/review/operator-review-session-report/operator-review-session-YYYYMMDD-HHMMSS.json
 curl -X POST http://127.0.0.1:9199/review/action-proposal/DISMISSAL_KEY/dismiss -H 'Content-Type: application/json' -d '{"reason":"known repeated test signal"}'
@@ -865,8 +919,12 @@ Expected current outcome:
 - `POST /review/action-proposal-group/outcome`: records a local grouped-review outcome without
   applying downstream work
 - `/review/operator-daily-state`: returns a read-only operator state payload for the review surface
+- `POST /review/operator-daily-state/report`: saves the operator state payload to local runtime
+  state
 - `/review/operator-review-session`: returns a read-only summary of recent grouped-review and queue
-  follow-through activity; `save_report=true` writes the same summary to local runtime state
+  follow-through activity
+- `POST /review/operator-review-session/report`: saves the review-session summary to local runtime
+  state
 - `/review/operator-review-session-reports` and `/review/operator-review-session-report/{name}`:
   list and inspect saved review-session reports without applying work
 - `POST /review/operator-handoff-drill`: runs the temporary handoff lifecycle from the review surface
