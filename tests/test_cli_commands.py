@@ -714,6 +714,50 @@ def test_cli_burn_in_json_output(capsys: CaptureFixture[str]) -> None:
     mock_burn_in.assert_called_once_with(minutes=10, lines=20)
 
 
+def test_cli_burn_in_json_output_exits_nonzero_when_degraded(
+    capsys: CaptureFixture[str],
+) -> None:
+    with patch(
+        "notification_hub.cli.run_burn_in",
+        return_value={
+            "status": "degraded",
+            "minutes": 10,
+            "events_seen": 0,
+            "accepted_event_posts": 0,
+            "rejected_event_posts": 0,
+            "validation_error_count": 0,
+            "health": {
+                "accepted_event_posts": 0,
+                "rejected_event_posts": 0,
+                "validation_error_count": 0,
+                "slack_delivery_failure_count": 1,
+                "status": "degraded",
+            },
+            "noise_candidates": [],
+            "noise_rule_suggestions": [],
+            "repeated_signatures": [],
+            "slack_eligible_events": 0,
+            "slack_volume": [],
+            "daemon_summary": {
+                "access_status_counts": {},
+                "accepted_event_posts": 0,
+                "rejected_event_posts": 0,
+                "validation_error_count": 0,
+                "recent_validation_errors": [],
+                "slack_delivery_failure_count": 1,
+                "recent_slack_delivery_failures": ["Slack send failed"],
+            },
+            "error": None,
+        },
+    ) as mock_burn_in:
+        exit_code = main(["burn-in", "--json", "--minutes", "10", "--lines", "20"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert '"status": "degraded"' in captured.out
+    mock_burn_in.assert_called_once_with(minutes=10, lines=20)
+
+
 def test_cli_retention_json_output(capsys: CaptureFixture[str]) -> None:
     with patch(
         "notification_hub.cli.run_retention",

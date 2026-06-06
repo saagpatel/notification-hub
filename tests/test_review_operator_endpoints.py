@@ -38,6 +38,71 @@ async def test_review_operator_daily_state_endpoint_is_read_only(client: AsyncCl
     mock_daily_state.assert_called_once_with(hours=6, limit=3, save_report=False)
 
 
+async def test_review_operator_daily_state_get_ignores_save_report(
+    client: AsyncClient,
+) -> None:
+    with patch(
+        "notification_hub.server.run_operator_daily_state",
+        return_value={
+            "status": "ok",
+            "generated_at": "2026-05-10T04:50:00+00:00",
+            "hours": 24,
+            "runtime": {"status": "ok"},
+            "queue_health": {"status": "ok", "health": {"queued_count": 0}},
+            "coordination_console": {
+                "status": "ok",
+                "next_signal": {"title": "Waiting for next real signal"},
+            },
+            "burn_in": {"status": "ok"},
+            "dismissals": [],
+            "next_action": "Monitor /review for the next real handoff signal.",
+            "report_file": {"requested": False},
+            "applied": False,
+        },
+    ) as mock_daily_state:
+        resp = await client.get("/review/operator-daily-state?save_report=true")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["report_file"]["requested"] is False
+    mock_daily_state.assert_called_once_with(hours=24, limit=10, save_report=False)
+
+
+async def test_review_operator_daily_state_post_can_save_report(
+    client: AsyncClient,
+) -> None:
+    with patch(
+        "notification_hub.server.run_operator_daily_state",
+        return_value={
+            "status": "ok",
+            "generated_at": "2026-05-10T04:50:00+00:00",
+            "hours": 24,
+            "runtime": {"status": "ok"},
+            "queue_health": {"status": "ok", "health": {"queued_count": 0}},
+            "coordination_console": {
+                "status": "ok",
+                "next_signal": {"title": "Waiting for next real signal"},
+            },
+            "burn_in": {"status": "ok"},
+            "dismissals": [],
+            "next_action": "Monitor /review for the next real handoff signal.",
+            "report_file": {
+                "requested": True,
+                "status": "ok",
+                "path": "/tmp/operator-daily-state.json",
+                "error": None,
+            },
+            "applied": False,
+        },
+    ) as mock_daily_state:
+        resp = await client.post("/review/operator-daily-state/report?hours=6&limit=3")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["report_file"]["status"] == "ok"
+    mock_daily_state.assert_called_once_with(hours=6, limit=3, save_report=True)
+
+
 async def test_review_operator_review_session_endpoint_is_read_only(client: AsyncClient) -> None:
     with patch(
         "notification_hub.server.run_operator_review_session",
@@ -74,6 +139,42 @@ async def test_review_operator_review_session_endpoint_is_read_only(client: Asyn
     mock_review_session.assert_called_once_with(hours=4, limit=7, save_report=False)
 
 
+async def test_review_operator_review_session_get_ignores_save_report(
+    client: AsyncClient,
+) -> None:
+    with patch(
+        "notification_hub.server.run_operator_review_session",
+        return_value={
+            "status": "ok",
+            "generated_at": "2026-05-10T04:52:00+00:00",
+            "hours": 2,
+            "since": "2026-05-10T02:52:00+00:00",
+            "group_history_count": 1,
+            "queue_item_count": 1,
+            "saved_count": 1,
+            "queued_count": 0,
+            "dismissed_count": 0,
+            "outcome_count": 0,
+            "reviewed_count": 1,
+            "active_queue_count": 0,
+            "pending_promotion_count": 0,
+            "route_counts": {"promote": 1},
+            "group_summaries": [],
+            "recent_group_history": [],
+            "recent_queue_items": [],
+            "next_action": "Recent review activity is summarized.",
+            "report_file": {"requested": False, "status": "not_requested"},
+            "applied": False,
+        },
+    ) as mock_review_session:
+        resp = await client.get("/review/operator-review-session?save_report=true")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["report_file"]["requested"] is False
+    mock_review_session.assert_called_once_with(hours=2, limit=25, save_report=False)
+
+
 async def test_review_operator_review_session_endpoint_can_save_report(
     client: AsyncClient,
 ) -> None:
@@ -107,7 +208,7 @@ async def test_review_operator_review_session_endpoint_can_save_report(
             "applied": False,
         },
     ) as mock_review_session:
-        resp = await client.get("/review/operator-review-session?save_report=true")
+        resp = await client.post("/review/operator-review-session/report")
 
     assert resp.status_code == 200
     data = resp.json()

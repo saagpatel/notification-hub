@@ -65,7 +65,7 @@ def test_logs_report_tails_events_and_daemon_logs(
 
     report = run_logs(events=2, lines=2)
 
-    assert report["status"] == "ok"
+    assert report["status"] == "degraded"
     assert [event["event_id"] for event in report["recent_events"]] == ["id-1", "id-2"]
     assert report["daemon_summary"]["accepted_event_posts"] == 0
     assert report["daemon_summary"]["rejected_event_posts"] == 1
@@ -201,7 +201,7 @@ def test_logs_report_handles_zero_limits(
 
     report = run_logs(events=0, lines=0)
 
-    assert report["status"] == "ok"
+    assert report["status"] == "degraded"
     assert report["recent_events"] == []
     assert report["stdout_tail"] == []
     assert report["stderr_tail"] == []
@@ -268,7 +268,7 @@ def test_burn_in_reports_repeated_signatures_and_daemon_counts(
 
     report = run_burn_in(minutes=10, lines=10)
 
-    assert report["status"] == "ok"
+    assert report["status"] == "degraded"
     assert report["events_seen"] == 3
     assert report["accepted_event_posts"] == 1
     assert report["rejected_event_posts"] == 1
@@ -458,7 +458,7 @@ def test_burn_in_degrades_on_slack_delivery_failures(
 
     report = run_burn_in(minutes=10, lines=20)
 
-    assert report["status"] == "ok"
+    assert report["status"] == "degraded"
     assert report["health"] == {
         "accepted_event_posts": 1,
         "rejected_event_posts": 0,
