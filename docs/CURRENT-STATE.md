@@ -1,12 +1,13 @@
 # Current State
 
-Last updated: 2026-06-06 (first-rich gate checked; waiting for candidate)
+Last updated: 2026-06-06 (post-merge truth refresh; first-rich gate waiting)
 
 ## Session Update (2026-06-06)
 
 **Current verification:**
 
-- Work is on `codex/runtime-truth-review-hardening`.
+- Work is on `main`; the runtime-truth hardening branch was merged as PR #72, and local `main`
+  matches `origin/main` at `255574e`.
 - Runtime truth reporting is tightened: `burn-in` now returns a degraded top-level status whenever
   nested health degrades from rejected posts, validation errors, or Slack delivery failures.
 - `logs` also keeps a degraded top-level status when sampled daemon evidence includes rejected

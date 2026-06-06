@@ -1,14 +1,17 @@
 # Handoff — notification-hub
 
-**Status:** Runtime truth hardening live; first-rich gate waiting for candidate
-**Branch:** codex/runtime-truth-review-hardening
-**Last verified remote commit before this pass:** main matched origin/main before branch creation
+**Status:** Runtime truth hardening merged; first-rich gate waiting for candidate
+**Branch:** main
+**Last verified remote commit before this pass:** main matches origin/main at `255574e`
 **Tests:** `uv run --frozen pytest`, `uv run --frozen pyright`, `uv run --frozen ruff check`, Slack
 transport check, runtime doctor/status/burn-in/verify-runtime, live `/review/data`, and live POST
 report-save routes passed
 
 ## Completed This Session
 
+- **2026-06-06 post-merge truth refresh** — local `main` matches `origin/main` at `255574e`; PR
+  #72's runtime-truth/report-write hardening is merged, and the resume docs now point at `main`
+  rather than the completed feature branch.
 - **2026-06-06 runtime truth hardening** — `burn-in` now degrades at the top level whenever nested
   health degrades, and `logs` preserves degraded status for bad or empty sampled evidence.
   `/review/data` runtime state now uses `run_status`, so Slack failure count and next action match
