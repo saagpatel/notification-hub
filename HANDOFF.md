@@ -1,5 +1,27 @@
 # Handoff — notification-hub
 
+## Current freshness note — 2026-06-07
+
+Machine-wide handoffs now follow
+`/Users/d/.codex/docs/operating-layer/machine-wide-handoff-contract.md`.
+
+Fresh checks on 2026-06-07 found local `main` clean and aligned with
+`origin/main` at `97f5375`. Runtime status, logs, 10-minute burn-in,
+60-minute burn-in, and read-only runtime verification all reported `status:
+ok`; queued personal-ops handoffs `0`; pending promoted outcomes `0`;
+rejected posts `0`; validation errors `0`; and Slack delivery failures `0`.
+
+Quality gates also passed for this note: `uv run --frozen pytest`, `uv run
+--frozen pyright`, and `uv run --frozen ruff check`.
+
+Current nuance: Coordination Console now has one active thin Codex proposal for
+`analyze-everything-we-re-working-on`, so First Rich Proof Gate is
+`blocked_thin_only`. Do not queue it as first-rich proof. Either wait for a
+rich-evidence proposal or explicitly park this thin proposal as
+`needs_follow_up` after operator review. Explicit Slack transport, LaunchAgent
+restart, and live write-route checks were not rerun in this freshness note; use
+the repo verifier before claiming a new green closeout.
+
 **Status:** Runtime truth hardening merged; first-rich gate waiting for candidate
 **Branch:** main
 **Last verified remote commit before this pass:** main matches origin/main at `255574e`

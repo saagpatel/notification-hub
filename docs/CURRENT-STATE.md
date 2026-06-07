@@ -2,6 +2,34 @@
 
 Last updated: 2026-06-06 (post-merge truth refresh; first-rich gate waiting)
 
+## Freshness note (2026-06-07)
+
+The 2026-06-06 session details below are dated history. For cross-agent
+handoffs, use
+`/Users/d/.codex/docs/operating-layer/machine-wide-handoff-contract.md` and
+verify live repo/runtime state before carrying forward current claims.
+
+Fresh checks on 2026-06-07 found local `main` clean and aligned with
+`origin/main` at `97f5375`. `notification-hub status --json`, `logs --json`,
+10-minute `verify-runtime --json`, and 60-minute `burn-in --json --minutes 60
+--lines 300` all reported `status: ok`; queued personal-ops handoffs `0`;
+pending promoted outcomes `0`; rejected posts `0`; validation errors `0`; and
+Slack delivery failures `0`. The 10-minute burn-in had no noise candidates; the
+60-minute window showed repeated thin noise candidates, including one active
+thin Codex `ready_to_review` proposal for
+`analyze-everything-we-re-working-on`.
+
+Quality gates also passed for this note: `uv run --frozen pytest` (`395
+passed`), `uv run --frozen pyright` (`0 errors`), and `uv run --frozen ruff
+check`.
+
+Coordination Console is healthy but no longer pure monitor mode: it reports one
+active thin proposal and First Rich Proof Gate `blocked_thin_only`. Do not queue
+that proposal as first-rich proof. Either wait for a rich-evidence proposal or
+explicitly park the thin proposal as `needs_follow_up` after operator review.
+Explicit Slack transport, LaunchAgent restart, and live write-route checks were
+not rerun for this freshness note.
+
 ## Session Update (2026-06-06)
 
 **Current verification:**
