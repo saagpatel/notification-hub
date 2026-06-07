@@ -25,6 +25,28 @@ Intent = Literal[
 ]
 EventContextValue: TypeAlias = str | int | float | bool | None
 
+BRIDGE_SYSTEM_IDS: tuple[str, ...] = (
+    "cc",
+    "codex",
+    "claude_ai",
+    "notion_os",
+    "personal_ops",
+)
+
+BRIDGE_SOURCE_ALIASES: dict[str, Source] = {
+    "cc": "cc",
+    "codex": "codex",
+    "claude_ai": "claude_ai",
+    "notion_os": "notion-os",
+    "personal_ops": "personal-ops",
+}
+
+INTERNAL_SOURCE_IDS: tuple[Source, ...] = ("bridge_watcher",)
+SOURCE_IDS: tuple[Source, ...] = (
+    *BRIDGE_SOURCE_ALIASES.values(),
+    *INTERNAL_SOURCE_IDS,
+)
+
 _CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\r\n]")
 
 

@@ -11,6 +11,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TypeGuard, cast
 
+from notification_hub.models import SOURCE_IDS
+
 logger = logging.getLogger(__name__)
 
 HOST = "127.0.0.1"
@@ -104,9 +106,7 @@ DEFAULT_RETENTION_INTERVAL_MINUTES = 60
 DEFAULT_RETENTION_MAX_EVENTS = 2000
 DEFAULT_RETENTION_KEEP_ARCHIVES = 10
 VALID_LEVELS = frozenset(("urgent", "normal", "info"))
-VALID_SOURCES = frozenset(
-    ("codex", "cc", "claude_ai", "bridge_watcher", "personal-ops", "notion-os")
-)
+VALID_SOURCES = frozenset(SOURCE_IDS)
 
 
 @dataclass(frozen=True)

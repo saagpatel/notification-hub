@@ -25,6 +25,7 @@ from notification_hub.config import (
     get_slack_webhook_url,
     load_policy_config_file,
 )
+from notification_hub.models import BRIDGE_SOURCE_ALIASES, SOURCE_IDS
 
 
 @pytest.fixture(autouse=True)
@@ -158,6 +159,12 @@ window_minutes = 10
             window_minutes=10,
         ),
     )
+
+
+def test_valid_sources_track_shared_source_ids() -> None:
+    assert config_mod.VALID_SOURCES == frozenset(SOURCE_IDS)
+    assert BRIDGE_SOURCE_ALIASES["notion_os"] == "notion-os"
+    assert BRIDGE_SOURCE_ALIASES["personal_ops"] == "personal-ops"
 
 
 class TestPolicyConfig:
