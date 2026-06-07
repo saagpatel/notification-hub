@@ -62,6 +62,24 @@ class Event(BaseModel):
     context: dict[str, EventContextValue] = Field(default_factory=dict)
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
+    @field_validator("source", mode="before")
+    @classmethod
+    def normalize_source_aliases(cls, v: object) -> object:
+        """Accept bridge-db's underscore caller ids by mapping them to the hub's
+        canonical (hyphenated) source names.
+
+        A producer that reuses its bridge-db ``caller`` string (e.g. ``personal_ops``,
+        ``notion_os``) when POSTing to the hub would otherwise hard-fail with a 422.
+        We translate only via the explicit ``BRIDGE_SOURCE_ALIASES`` map — never a
+        blanket ``_``→``-`` replace — because ``claude_ai`` and the internal
+        ``bridge_watcher`` source are valid *with* underscores and must pass through
+        unchanged. Unknown values fall through to the ``Source`` Literal check (still
+        a 422), so this only widens the accepted set by the two known aliases.
+        """
+        if isinstance(v, str):
+            return BRIDGE_SOURCE_ALIASES.get(v, v)
+        return v
+
     @field_validator("level", mode="before")
     @classmethod
     def normalize_level_aliases(cls, v: object) -> object:

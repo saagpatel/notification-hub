@@ -299,6 +299,21 @@ async def test_create_event_normalizes_warn_level(client: AsyncClient) -> None:
     assert resp.json()["level"] == "normal"
 
 
+async def test_create_event_accepts_bridge_underscore_source(client: AsyncClient) -> None:
+    # A producer that reuses its bridge-db caller id (`personal_ops`) instead of the
+    # hub's hyphenated wire form must be accepted, not 422'd (F3).
+    payload = {
+        "source": "personal_ops",
+        "level": "info",
+        "title": "Underscore source",
+        "body": "Producer reused its bridge-db caller id form",
+    }
+    with _mock_channels():
+        resp = await client.post("/events", json=payload)
+
+    assert resp.status_code == 201
+
+
 def test_run_retention_once_updates_runtime_status(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         server_mod,
