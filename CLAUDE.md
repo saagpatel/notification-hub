@@ -21,7 +21,7 @@ captures maintainer-specific context that does not belong in the general setup g
 ## Documentation Map
 
 - `README.md`: overview, setup, verification, runtime behavior
-- `docs/CURRENT-STATE.md`: resume-ready current state and verification baseline
+- `docs/CURRENT-STATE.md`: restart index plus dated repo/runtime evidence; reverify live state before treating it as current
 - `IMPLEMENTATION-ROADMAP.md`: phased delivery history
 - `ops/`: source-of-truth templates for machine-local LaunchAgent and hook wiring
 
@@ -34,7 +34,7 @@ notification-hub is the local daemon that turns AI-tool events into routed opera
 
 ## Current State
 
-This repo is in healthy monitor-mode after the latest cleanup pass. `README.md` is the primary command guide, `docs/CURRENT-STATE.md` is the best restart point, and the current lane is continued observation of real operator handoff signals rather than expansion of apply behavior.
+This repo's checked-in docs are in documentation-truth cleanup mode after the latest pass. `README.md` is the primary command guide, `docs/CURRENT-STATE.md` is the restart index plus historical runtime evidence, and live monitor-mode claims should be reverified before they drive work.
 
 ## Stack
 
@@ -61,7 +61,7 @@ uv run --frozen uvicorn notification_hub.server:app --host 127.0.0.1 --port 9199
 
 ## Next Recommended Move
 
-Use `docs/CURRENT-STATE.md` to resume quickly. Keep the system in monitor mode unless real repeated operator noise or a real promoted rich handoff gives enough evidence for the next narrow change.
+Use `docs/CURRENT-STATE.md` to resume quickly, then re-check live repo and runtime state before acting on dated monitor-mode claims. Keep apply behavior operator-mediated unless real repeated operator noise or a real promoted rich handoff gives enough evidence for the next narrow change.
 
 <!-- portfolio-context:end -->
 

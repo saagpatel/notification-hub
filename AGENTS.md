@@ -8,11 +8,6 @@
 - Repo-specific instructions below add project constraints only; do not restate global voice or status-reporting rules here.
 <!-- comm-contract:end -->
 
-## Communication Contract
-
-- Inherit global Codex communication and reporting rules from `/Users/d/.codex/AGENTS.override.md` and `/Users/d/.codex/policies/communication/BigPictureReportingV1.md`.
-- Repo-specific instructions below add project constraints only; do not restate global voice or status-reporting rules here.
-
 ## Project Goal
 
 notification-hub is a localhost-only notification daemon for Claude Code, Codex, and Claude.ai workflows. Keep it deterministic, additive, and easy to inspect.

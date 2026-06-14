@@ -1,6 +1,49 @@
 # Current State
 
-Last updated: 2026-06-06 (post-merge truth refresh; first-rich gate waiting)
+Last updated: 2026-06-14 (runtime truth refreshed; stale stderr no longer degrades current health)
+
+## Restart Index (2026-06-14)
+
+Use this file as evidence history, not as a live health claim. For a fast
+restart, read these first:
+
+1. `AGENTS.md`
+2. `README.md`
+3. `git status --short --branch`
+4. `mcp_server/server.py` when MCP tool truth matters
+
+Current source-of-truth map:
+
+- `README.md` is the main command, runtime, and verification guide.
+- `pyproject.toml` plus `src/notification_hub/cli_parser.py` define the CLI
+  script and subcommand inventory.
+- `tests/test_readme_commands.py` checks README command examples against those
+  inventories.
+- `mcp_server/server.py` defines the MCP wrapper inventory. The MCP README
+  should stay reconciled to the seven `@mcp.tool` functions there.
+
+## Runtime Truth Update (2026-06-14)
+
+`notification-hub logs` now keeps stale stderr tail evidence visible while
+excluding stale stderr from current runtime health degradation. This preserves
+old Slack-failure evidence for forensics without making current health disagree
+with `status`, `burn-in`, and `verify-runtime`.
+
+Fresh checks on 2026-06-14:
+
+- `uv run --frozen notification-hub-status --json`: `status: ok`, daemon
+  reachable, runtime wiring current, Slack configured, Slack delivery failures
+  `0`.
+- `uv run --frozen notification-hub-logs --lines 160 --json`: `status: ok`,
+  rejected posts `0`, validation errors `0`, Slack delivery failures `0`; stale
+  stderr tail remains present for evidence.
+- `uv run --frozen notification-hub-burn-in --json --minutes 60 --lines 300`:
+  `status: ok`, rejected posts `0`, validation errors `0`, Slack delivery
+  failures `0`.
+- `uv run --frozen notification-hub-doctor --json` and
+  `uv run --frozen notification-hub-verify-runtime --json`: `status: ok`.
+- Quality gates passed: `uv run --frozen pytest` (`405 passed`),
+  `uv run --frozen ruff check`, and `uv run --frozen pyright`.
 
 ## Freshness note (2026-06-07)
 
@@ -1021,11 +1064,15 @@ It is not part of normal day-to-day work.
 
 ## Safest Next Step
 
-Use the active backlog in the most recent Session Update (2026-05-31) as the starting point.
-All items listed in the 2026-05-16 entry (action-export retention, near-rollup singles visibility,
-mcp_server smoke test, aa8fd718 draft cleanup) are complete per the 2026-05-17 and 2026-05-12
-session updates above.
-Keep apply behavior operator-mediated until the compact console proves it should own a broader workflow.
+Start with the Restart Index at the top of this file, then re-check live repo
+state before treating any dated backlog below as current. The latest runtime
+evidence in this file is historical; do not assume monitor mode, queue health,
+Slack delivery, LaunchAgent freshness, or first-rich status without an
+authorized fresh runtime check.
+
+The stable product constraint still holds: keep apply behavior
+operator-mediated until live Coordination Console evidence proves a broader
+workflow should be owned here.
 
 ## Optional Follow-Up
 

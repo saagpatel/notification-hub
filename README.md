@@ -641,7 +641,7 @@ launchctl kickstart -k "gui/$(id -u)/com.saagar.notification-hub"
 ## Docs
 
 - `README.md`: project overview, setup, and verification
-- `docs/CURRENT-STATE.md`: current repo/runtime status and the safest restart point
+- `docs/CURRENT-STATE.md`: restart index plus dated repo/runtime evidence; reverify live state before treating it as current
 - `IMPLEMENTATION-ROADMAP.md`: phased implementation history
 - `CLAUDE.md`: maintainer notes and portfolio context
 - `docs/PRODUCT-BOUNDARY.md`: notification-hub, personal-ops, and bridge-db ownership split
