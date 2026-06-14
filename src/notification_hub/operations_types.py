@@ -25,6 +25,13 @@ class DeliveryCheckReport(TypedDict):
     error: str | None
 
 
+class DeliveryCheckState(TypedDict):
+    last_slack_ok_at: str | None
+    last_slack_event_id: str | None
+    last_push_ok_at: str | None
+    last_push_event_id: str | None
+
+
 class RetentionReport(TypedDict):
     status: str
     rotated: bool
@@ -684,6 +691,7 @@ class StatusReport(TypedDict):
     slack_configured: bool | None
     slack_delivery_failures: int
     visible_slack_delivery_failures: int
+    latest_delivery_check: DeliveryCheckState
     import_queue: PersonalOpsImportQueueHealthReport
     next_action: str
 

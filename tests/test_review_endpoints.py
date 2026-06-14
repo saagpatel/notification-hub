@@ -238,6 +238,13 @@ async def test_review_runtime_status_uses_cli_status_truth() -> None:
             "push_notifier_available": True,
             "slack_configured": True,
             "slack_delivery_failures": 2,
+            "visible_slack_delivery_failures": 5,
+            "latest_delivery_check": {
+                "last_slack_ok_at": "2026-06-14T09:12:00+00:00",
+                "last_slack_event_id": "delivery123",
+                "last_push_ok_at": None,
+                "last_push_event_id": None,
+            },
             "import_queue": {"status": "ok", "needs_review": False},
             "next_action": "Inspect notification-hub logs for Slack delivery failures.",
         },
@@ -246,6 +253,13 @@ async def test_review_runtime_status_uses_cli_status_truth() -> None:
 
     assert report["status"] == "degraded"
     assert report["slack_delivery_failures"] == 2
+    assert report["visible_slack_delivery_failures"] == 5
+    assert report["latest_delivery_check"] == {
+        "last_slack_ok_at": "2026-06-14T09:12:00+00:00",
+        "last_slack_event_id": "delivery123",
+        "last_push_ok_at": None,
+        "last_push_event_id": None,
+    }
     assert report["next_action"] == "Inspect notification-hub logs for Slack delivery failures."
     assert "import_queue" not in report
     mock_status.assert_called_once_with()

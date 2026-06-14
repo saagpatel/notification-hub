@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from unittest.mock import patch
 
 from _pytest.capture import CaptureFixture
@@ -125,57 +128,78 @@ def _delivery_check_report(
     }
 
 
+def _delivery_check_state(
+    *,
+    last_slack_ok_at: str | None = None,
+    last_slack_event_id: str | None = None,
+    last_push_ok_at: str | None = None,
+    last_push_event_id: str | None = None,
+) -> dict[str, str | None]:
+    return {
+        "last_slack_ok_at": last_slack_ok_at,
+        "last_slack_event_id": last_slack_event_id,
+        "last_push_ok_at": last_push_ok_at,
+        "last_push_event_id": last_push_event_id,
+    }
+
+
 def test_run_status_summarizes_healthy_runtime() -> None:
-    with patch(
-        "notification_hub.operations.run_verify_runtime",
-        return_value={
-            "status": "ok",
-            "read_only": True,
-            "include_smoke": False,
-            "health_url": "http://127.0.0.1:9199/health/details",
-            "checks": {
-                "doctor_ok": True,
-                "policy_check_ok": True,
-                "health_details_reachable": True,
-                "runtime_wiring_current": True,
-                "recent_runtime_health_ok": True,
-                "smoke_ok": True,
-                "delivery_check_ok": True,
-            },
-            "runtime_wiring": {"launch_agent_matches_template": True},
-            "doctor": {
+    with (
+        patch(
+            "notification_hub.operations._read_delivery_check_state",
+            return_value=_delivery_check_state(),
+        ),
+        patch(
+            "notification_hub.operations.run_verify_runtime",
+            return_value={
                 "status": "ok",
-                "checks": {"policy_load_ok": True, "runtime_wiring_current": True},
-                "config": {"exists": False},
-                "delivery": {
-                    "push_notifier_available": True,
-                    "slack_webhook_configured": True,
+                "read_only": True,
+                "include_smoke": False,
+                "health_url": "http://127.0.0.1:9199/health/details",
+                "checks": {
+                    "doctor_ok": True,
+                    "policy_check_ok": True,
+                    "health_details_reachable": True,
+                    "runtime_wiring_current": True,
+                    "recent_runtime_health_ok": True,
+                    "smoke_ok": True,
+                    "delivery_check_ok": True,
                 },
-                "local_api": {
-                    "payload": {
-                        "events_processed": 12,
-                        "watcher_active": True,
-                        "uptime_seconds": 123.4,
-                        "retention": {"enabled": True, "last_status": "ok"},
-                    }
+                "runtime_wiring": {"launch_agent_matches_template": True},
+                "doctor": {
+                    "status": "ok",
+                    "checks": {"policy_load_ok": True, "runtime_wiring_current": True},
+                    "config": {"exists": False},
+                    "delivery": {
+                        "push_notifier_available": True,
+                        "slack_webhook_configured": True,
+                    },
+                    "local_api": {
+                        "payload": {
+                            "events_processed": 12,
+                            "watcher_active": True,
+                            "uptime_seconds": 123.4,
+                            "retention": {"enabled": True, "last_status": "ok"},
+                        }
+                    },
                 },
+                "policy_check": {
+                    "status": "ok",
+                    "config_path": "/tmp/config.toml",
+                    "config_found": False,
+                    "example_path": "/tmp/example.toml",
+                    "load_error": None,
+                    "warning_count": 0,
+                    "suggestion_count": 0,
+                    "warnings": [],
+                    "suggestions": [],
+                },
+                "burn_in": _burn_in_report(),
+                "import_queue": _import_queue_health(),
+                "delivery_check": None,
+                "smoke": None,
             },
-            "policy_check": {
-                "status": "ok",
-                "config_path": "/tmp/config.toml",
-                "config_found": False,
-                "example_path": "/tmp/example.toml",
-                "load_error": None,
-                "warning_count": 0,
-                "suggestion_count": 0,
-                "warnings": [],
-                "suggestions": [],
-            },
-            "burn_in": _burn_in_report(),
-            "import_queue": _import_queue_health(),
-            "delivery_check": None,
-            "smoke": None,
-        },
+        ),
     ):
         report = run_status()
 
@@ -195,6 +219,7 @@ def test_run_status_summarizes_healthy_runtime() -> None:
         "slack_configured": True,
         "slack_delivery_failures": 0,
         "visible_slack_delivery_failures": 0,
+        "latest_delivery_check": _delivery_check_state(),
         "import_queue": _import_queue_health(),
         "next_action": "No action needed.",
     }
@@ -304,36 +329,134 @@ def test_run_status_suggests_slack_delivery_investigation() -> None:
 
 
 def test_run_status_surfaces_visible_stale_slack_delivery_failures() -> None:
-    with patch(
-        "notification_hub.operations.run_verify_runtime",
-        return_value={
-            "status": "ok",
-            "health_url": "http://127.0.0.1:9199/health/details",
-            "checks": {
-                "health_details_reachable": True,
-                "runtime_wiring_current": True,
-                "recent_runtime_health_ok": True,
-                "policy_check_ok": True,
-            },
-            "doctor": {
-                "checks": {"policy_load_ok": True},
-                "config": {"exists": True},
-                "delivery": {
-                    "push_notifier_available": True,
-                    "slack_webhook_configured": True,
+    with (
+        patch(
+            "notification_hub.operations._read_delivery_check_state",
+            return_value=_delivery_check_state(),
+        ),
+        patch(
+            "notification_hub.operations.run_verify_runtime",
+            return_value={
+                "status": "ok",
+                "health_url": "http://127.0.0.1:9199/health/details",
+                "checks": {
+                    "health_details_reachable": True,
+                    "runtime_wiring_current": True,
+                    "recent_runtime_health_ok": True,
+                    "policy_check_ok": True,
                 },
-                "local_api": {"payload": {}},
+                "doctor": {
+                    "checks": {"policy_load_ok": True},
+                    "config": {"exists": True},
+                    "delivery": {
+                        "push_notifier_available": True,
+                        "slack_webhook_configured": True,
+                    },
+                    "local_api": {"payload": {}},
+                },
+                "policy_check": {"warning_count": 0},
+                "burn_in": _burn_in_report(visible_slack_delivery_failure_count=4),
+                "import_queue": _import_queue_health(),
             },
-            "policy_check": {"warning_count": 0},
-            "burn_in": _burn_in_report(visible_slack_delivery_failure_count=4),
-            "import_queue": _import_queue_health(),
-        },
+        ),
     ):
         report = run_status()
 
     assert report["status"] == "ok"
     assert report["slack_delivery_failures"] == 0
     assert report["visible_slack_delivery_failures"] == 4
+    assert (
+        report["next_action"]
+        == "Review visible historical Slack delivery failures, then run a Slack "
+        "delivery check only with approval."
+    )
+
+
+def test_run_status_uses_successful_slack_delivery_check_for_historical_failures() -> None:
+    latest_delivery_check = _delivery_check_state(
+        last_slack_ok_at=datetime.now(timezone.utc).isoformat(),
+        last_slack_event_id="delivery123",
+    )
+    with (
+        patch(
+            "notification_hub.operations._read_delivery_check_state",
+            return_value=latest_delivery_check,
+        ),
+        patch(
+            "notification_hub.operations.run_verify_runtime",
+            return_value={
+                "status": "ok",
+                "health_url": "http://127.0.0.1:9199/health/details",
+                "checks": {
+                    "health_details_reachable": True,
+                    "runtime_wiring_current": True,
+                    "recent_runtime_health_ok": True,
+                    "policy_check_ok": True,
+                },
+                "doctor": {
+                    "checks": {"policy_load_ok": True},
+                    "config": {"exists": True},
+                    "delivery": {
+                        "push_notifier_available": True,
+                        "slack_webhook_configured": True,
+                    },
+                    "local_api": {"payload": {}},
+                },
+                "policy_check": {"warning_count": 0},
+                "burn_in": _burn_in_report(visible_slack_delivery_failure_count=4),
+                "import_queue": _import_queue_health(),
+            },
+        ),
+    ):
+        report = run_status()
+
+    assert report["latest_delivery_check"] == latest_delivery_check
+    assert (
+        report["next_action"]
+        == "Recent Slack delivery was verified; review historical Slack failures "
+        "only if root-cause detail is needed."
+    )
+
+
+def test_run_status_does_not_treat_stale_slack_delivery_check_as_current() -> None:
+    latest_delivery_check = _delivery_check_state(
+        last_slack_ok_at=(datetime.now(timezone.utc) - timedelta(days=3)).isoformat(),
+        last_slack_event_id="delivery123",
+    )
+    with (
+        patch(
+            "notification_hub.operations._read_delivery_check_state",
+            return_value=latest_delivery_check,
+        ),
+        patch(
+            "notification_hub.operations.run_verify_runtime",
+            return_value={
+                "status": "ok",
+                "health_url": "http://127.0.0.1:9199/health/details",
+                "checks": {
+                    "health_details_reachable": True,
+                    "runtime_wiring_current": True,
+                    "recent_runtime_health_ok": True,
+                    "policy_check_ok": True,
+                },
+                "doctor": {
+                    "checks": {"policy_load_ok": True},
+                    "config": {"exists": True},
+                    "delivery": {
+                        "push_notifier_available": True,
+                        "slack_webhook_configured": True,
+                    },
+                    "local_api": {"payload": {}},
+                },
+                "policy_check": {"warning_count": 0},
+                "burn_in": _burn_in_report(visible_slack_delivery_failure_count=4),
+                "import_queue": _import_queue_health(),
+            },
+        ),
+    ):
+        report = run_status()
+
+    assert report["latest_delivery_check"] == latest_delivery_check
     assert (
         report["next_action"]
         == "Review visible historical Slack delivery failures, then run a Slack "
@@ -410,6 +533,8 @@ def test_cli_status_json_output(capsys: CaptureFixture[str]) -> None:
             "push_notifier_available": True,
             "slack_configured": True,
             "slack_delivery_failures": 0,
+            "visible_slack_delivery_failures": 0,
+            "latest_delivery_check": _delivery_check_state(),
             "next_action": "No action needed.",
         },
     ) as mock_status:
@@ -419,6 +544,23 @@ def test_cli_status_json_output(capsys: CaptureFixture[str]) -> None:
     assert exit_code == 0
     assert '"next_action": "No action needed."' in captured.out
     mock_status.assert_called_once_with()
+
+
+def test_run_delivery_check_persists_successful_transport_state(tmp_path: Path) -> None:
+    state_path = tmp_path / "delivery-check-state.json"
+    with (
+        patch("notification_hub.operations.DELIVERY_CHECK_STATE", state_path),
+        patch("notification_hub.operations.send_slack", return_value=True),
+        patch("notification_hub.operations.send_push", return_value=False),
+    ):
+        report = run_delivery_check(verify_slack=True, verify_push=True)
+
+    payload = json.loads(state_path.read_text(encoding="utf-8"))
+    assert report["status"] == "degraded"
+    assert payload["last_slack_event_id"] == report["event_id"]
+    assert payload["last_slack_ok_at"] is not None
+    assert payload["last_push_event_id"] is None
+    assert payload["last_push_ok_at"] is None
 
 
 def test_cli_logs_json_output(capsys: CaptureFixture[str]) -> None:
@@ -742,8 +884,10 @@ def test_run_verify_runtime_delivery_check_is_opt_in() -> None:
     mock_delivery_check.assert_called_once_with(verify_slack=True, verify_push=False)
 
 
-def test_run_delivery_check_reports_transport_results() -> None:
+def test_run_delivery_check_reports_transport_results(tmp_path: Path) -> None:
+    state_path = tmp_path / "delivery-check-state.json"
     with (
+        patch("notification_hub.operations.DELIVERY_CHECK_STATE", state_path),
         patch("notification_hub.operations.send_slack", return_value=True) as mock_slack,
         patch("notification_hub.operations.send_push", return_value=False) as mock_push,
     ):

@@ -160,6 +160,13 @@ def test_status_wrapper_forwards_flags(capsys: CaptureFixture[str]) -> None:
             "push_notifier_available": True,
             "slack_configured": True,
             "slack_delivery_failures": 0,
+            "visible_slack_delivery_failures": 0,
+            "latest_delivery_check": {
+                "last_slack_ok_at": None,
+                "last_slack_event_id": None,
+                "last_push_ok_at": None,
+                "last_push_event_id": None,
+            },
             "next_action": "No action needed.",
         },
     ) as mock_status:
