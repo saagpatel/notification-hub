@@ -246,6 +246,8 @@ async def _review_runtime_status() -> dict[str, object]:
         "push_notifier_available": status["push_notifier_available"],
         "slack_configured": status["slack_configured"],
         "slack_delivery_failures": status["slack_delivery_failures"],
+        "visible_slack_delivery_failures": status["visible_slack_delivery_failures"],
+        "latest_delivery_check": status["latest_delivery_check"],
         "next_action": status["next_action"],
     }
 
@@ -1809,36 +1811,41 @@ async def review_data(hours: int = 2, limit: int = 6) -> dict[str, object]:
             "action_count": len(actions["actions"]),
         }
     )
-    return cast(dict[str, object], _review_response({
-        "status": "ok"
-        if (
-            inbox["status"] == "ok"
-            and actions["status"] == "ok"
-            and runtime["status"] == "ok"
-            and queue_health["status"] == "ok"
-            and outcome_sync_reminder["status"] == "ok"
-            and coordination_readiness["status"] == "ok"
-        )
-        else "degraded",
-        "hours": safe_hours,
-        "limit": safe_limit,
-        "runtime": runtime,
-        "inbox": inbox,
-        "actions": actions,
-        "operator_focus": operator_focus,
-        "coordination_readiness": coordination_readiness,
-        "queue_health": queue_health["health"],
-        "outcome_sync_reminder": outcome_sync_reminder,
-        "trust": {
-            "proposed": bool(actions["actions"]),
-            "saved": _latest_review_package_path is not None,
-            "validated": False,
-            "imported": False,
-            "applied": False,
-            "next_action": "Save and validate a review package before any personal-ops import step.",
-        },
-        "review_package": _review_package_state(),
-    }))
+    return cast(
+        dict[str, object],
+        _review_response(
+            {
+                "status": "ok"
+                if (
+                    inbox["status"] == "ok"
+                    and actions["status"] == "ok"
+                    and runtime["status"] == "ok"
+                    and queue_health["status"] == "ok"
+                    and outcome_sync_reminder["status"] == "ok"
+                    and coordination_readiness["status"] == "ok"
+                )
+                else "degraded",
+                "hours": safe_hours,
+                "limit": safe_limit,
+                "runtime": runtime,
+                "inbox": inbox,
+                "actions": actions,
+                "operator_focus": operator_focus,
+                "coordination_readiness": coordination_readiness,
+                "queue_health": queue_health["health"],
+                "outcome_sync_reminder": outcome_sync_reminder,
+                "trust": {
+                    "proposed": bool(actions["actions"]),
+                    "saved": _latest_review_package_path is not None,
+                    "validated": False,
+                    "imported": False,
+                    "applied": False,
+                    "next_action": "Save and validate a review package before any personal-ops import step.",
+                },
+                "review_package": _review_package_state(),
+            }
+        ),
+    )
 
 
 @app.post("/review/save-package")
@@ -1853,22 +1860,32 @@ async def review_save_package(hours: int = 2, limit: int = 6) -> dict[str, objec
     path = report["review_package"]["path"]
     _latest_review_package_path = path if isinstance(path, str) else None
     _latest_review_package_validation_status = None
-    return cast(dict[str, object], _review_response({
-        "status": report["status"],
-        "applied": False,
-        "review_package": report["review_package"],
-        "action_count": len(report["actions"]),
-    }))
+    return cast(
+        dict[str, object],
+        _review_response(
+            {
+                "status": report["status"],
+                "applied": False,
+                "review_package": report["review_package"],
+                "action_count": len(report["actions"]),
+            }
+        ),
+    )
 
 
 @app.get("/review/packages")
 async def review_packages(limit: int = 10) -> dict[str, object]:
     """List recent saved review packages without importing or applying them."""
-    return cast(dict[str, object], _review_response({
-        "status": "ok",
-        "packages": list_action_review_packages(limit=max(limit, 1)),
-        "applied": False,
-    }))
+    return cast(
+        dict[str, object],
+        _review_response(
+            {
+                "status": "ok",
+                "packages": list_action_review_packages(limit=max(limit, 1)),
+                "applied": False,
+            }
+        ),
+    )
 
 
 @app.get("/review/package/{name}")
@@ -1883,19 +1900,24 @@ async def review_queue_package(name: str) -> dict[str, object]:
     detail = load_action_review_package_detail(name=name)
     package_path = action_review_package_path_for_name(name=name)
     if package_path is None:
-        return cast(dict[str, object], _review_response({
-            "status": "degraded",
-            "path": str(detail["path"]),
-            "dry_run": True,
-            "applied": False,
-            "enqueued": False,
-            "queued_count": 0,
-            "skipped_count": 0,
-            "queue_path": None,
-            "validation": detail["validation"],
-            "next_action": "Choose a valid saved review package before queueing it.",
-            "error": "invalid review package name",
-        }))
+        return cast(
+            dict[str, object],
+            _review_response(
+                {
+                    "status": "degraded",
+                    "path": str(detail["path"]),
+                    "dry_run": True,
+                    "applied": False,
+                    "enqueued": False,
+                    "queued_count": 0,
+                    "skipped_count": 0,
+                    "queue_path": None,
+                    "validation": detail["validation"],
+                    "next_action": "Choose a valid saved review package before queueing it.",
+                    "error": "invalid review package name",
+                }
+            ),
+        )
     report = run_personal_ops_import_stub(path=package_path, enqueue=True)
     return cast(dict[str, object], _review_response(report))
 
@@ -1910,14 +1932,19 @@ async def review_import_queue(limit: int = 10, stale_after_hours: float = 4.0) -
         limit=max(limit, 1),
         stale_after_hours=stale_after_hours,
     )
-    return cast(dict[str, object], _review_response({
-        "status": "ok",
-        "items": list_personal_ops_import_queue(limit=max(limit, 1)),
-        "health": queue_health["health"],
-        "next_commands": queue_health["next_commands"],
-        "outcome_sync_reminder": outcome_sync_reminder,
-        "applied": False,
-    }))
+    return cast(
+        dict[str, object],
+        _review_response(
+            {
+                "status": "ok",
+                "items": list_personal_ops_import_queue(limit=max(limit, 1)),
+                "health": queue_health["health"],
+                "next_commands": queue_health["next_commands"],
+                "outcome_sync_reminder": outcome_sync_reminder,
+                "applied": False,
+            }
+        ),
+    )
 
 
 @app.get("/review/import-queue-review")
@@ -1937,11 +1964,16 @@ async def review_import_queue_review(
 @app.get("/review/burn-in-reports")
 async def review_burn_in_reports(limit: int = 10) -> dict[str, object]:
     """List saved queue burn-in reports without applying work."""
-    return cast(dict[str, object], _review_response({
-        "status": "ok",
-        "reports": list_personal_ops_queue_burn_in_reports(limit=max(limit, 1)),
-        "applied": False,
-    }))
+    return cast(
+        dict[str, object],
+        _review_response(
+            {
+                "status": "ok",
+                "reports": list_personal_ops_queue_burn_in_reports(limit=max(limit, 1)),
+                "applied": False,
+            }
+        ),
+    )
 
 
 @app.get("/review/burn-in-report/{name}")
@@ -2109,10 +2141,15 @@ async def review_dismiss_action_proposal(dismissal_key: str, request: Request) -
         body=matched["signal_body"] if matched is not None else None,
         evidence_event_id=matched["evidence_event_id"] if matched is not None else None,
     )
-    return cast(dict[str, object], _review_response({
-        **dict(report),
-        "next_action": "Proposal dismissed from the local console. Future matching proposals stay hidden until the dismissal file is edited.",
-    }))
+    return cast(
+        dict[str, object],
+        _review_response(
+            {
+                **dict(report),
+                "next_action": "Proposal dismissed from the local console. Future matching proposals stay hidden until the dismissal file is edited.",
+            }
+        ),
+    )
 
 
 @app.get("/review/action-proposal-dismissals")
@@ -2149,10 +2186,15 @@ async def review_undismiss_action_proposal(
         else "Review UI reactivated this proposal."
     )
     report = undismiss_action_proposal(dismissal_key=dismissal_key, reason=reason)
-    return cast(dict[str, object], _review_response({
-        **dict(report),
-        "next_action": "Proposal reactivated. Matching future proposals can appear in the local console again.",
-    }))
+    return cast(
+        dict[str, object],
+        _review_response(
+            {
+                **dict(report),
+                "next_action": "Proposal reactivated. Matching future proposals can appear in the local console again.",
+            }
+        ),
+    )
 
 
 @app.get("/review/operator-daily-state")
@@ -2218,11 +2260,16 @@ async def review_operator_review_session_report(
 @app.get("/review/operator-review-session-reports")
 async def review_operator_review_session_reports(limit: int = 10) -> dict[str, object]:
     """List saved review-session reports without applying work."""
-    return cast(dict[str, object], _review_response({
-        "status": "ok",
-        "reports": list_operator_review_session_reports(limit=max(limit, 1)),
-        "applied": False,
-    }))
+    return cast(
+        dict[str, object],
+        _review_response(
+            {
+                "status": "ok",
+                "reports": list_operator_review_session_reports(limit=max(limit, 1)),
+                "applied": False,
+            }
+        ),
+    )
 
 
 @app.get("/review/operator-review-session-retention")
@@ -2261,12 +2308,15 @@ async def review_outcome_sync_reminder(
     stale_after_hours: float = 4.0,
 ) -> dict[str, object]:
     """Report promoted handoffs that still need outcome sync without applying work."""
-    return cast(dict[str, object], _review_response(
-        run_personal_ops_outcome_sync_reminder(
-            limit=max(limit, 1),
-            stale_after_hours=stale_after_hours,
-        )
-    ))
+    return cast(
+        dict[str, object],
+        _review_response(
+            run_personal_ops_outcome_sync_reminder(
+                limit=max(limit, 1),
+                stale_after_hours=stale_after_hours,
+            )
+        ),
+    )
 
 
 @app.patch("/review/import-queue/{queue_id}")
@@ -2275,14 +2325,19 @@ async def review_update_import_queue(queue_id: str, request: Request) -> dict[st
     body = cast(dict[str, object], await request.json())
     status = body.get("status")
     if not isinstance(status, str):
-        return cast(dict[str, object], _review_response({
-            "status": "degraded",
-            "queue_id": queue_id,
-            "updated": False,
-            "item": None,
-            "next_action": "Choose a lifecycle status before updating this queue item.",
-            "error": "missing status",
-        }))
+        return cast(
+            dict[str, object],
+            _review_response(
+                {
+                    "status": "degraded",
+                    "queue_id": queue_id,
+                    "updated": False,
+                    "item": None,
+                    "next_action": "Choose a lifecycle status before updating this queue item.",
+                    "error": "missing status",
+                }
+            ),
+        )
     reason_value = body.get("reason")
     snoozed_until_value = body.get("snoozed_until")
     promotion_target_value = body.get("promotion_target")
@@ -2336,12 +2391,17 @@ async def review_validate_package() -> dict[str, object]:
             _latest_review_package_path = package_path
     if package_path is None:
         _latest_review_package_validation_status = "not_found"
-        return cast(dict[str, object], _review_response({
-            "status": "degraded",
-            "applied": False,
-            "error": "no review package has been saved in this server session",
-            "review_package": _review_package_state("not_found"),
-        }))
+        return cast(
+            dict[str, object],
+            _review_response(
+                {
+                    "status": "degraded",
+                    "applied": False,
+                    "error": "no review package has been saved in this server session",
+                    "review_package": _review_package_state("not_found"),
+                }
+            ),
+        )
     safe_package_path = (
         action_review_package_path_for_name(name=package_name)
         if isinstance(package_name, str)
@@ -2349,17 +2409,27 @@ async def review_validate_package() -> dict[str, object]:
     )
     if safe_package_path is None:
         _latest_review_package_validation_status = "invalid"
-        return cast(dict[str, object], _review_response({
-            "status": "degraded",
-            "applied": False,
-            "error": "invalid review package name",
-            "review_package": _review_package_state("invalid"),
-        }))
+        return cast(
+            dict[str, object],
+            _review_response(
+                {
+                    "status": "degraded",
+                    "applied": False,
+                    "error": "invalid review package name",
+                    "review_package": _review_package_state("invalid"),
+                }
+            ),
+        )
     validation = validate_action_package(safe_package_path)
     _latest_review_package_validation_status = validation["status"]
-    return cast(dict[str, object], _review_response({
-        "status": validation["status"],
-        "applied": False,
-        "validation": validation,
-        "review_package": _review_package_state(validation["status"]),
-    }))
+    return cast(
+        dict[str, object],
+        _review_response(
+            {
+                "status": validation["status"],
+                "applied": False,
+                "validation": validation,
+                "review_package": _review_package_state(validation["status"]),
+            }
+        ),
+    )
