@@ -180,6 +180,39 @@ def test_logs_report_counts_slack_delivery_failures_since_latest_daemon_start(
     ]
 
 
+def test_logs_report_keeps_stale_stderr_tail_without_degrading_current_health(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events_log = tmp_path / "events.jsonl"
+    events_log.write_text("", encoding="utf-8")
+    stdout_log = tmp_path / "stdout.log"
+    stderr_log = tmp_path / "stderr.log"
+    stdout_log.write_text(
+        'INFO:     127.0.0.1:1 - "POST /events HTTP/1.1" 201 Created\n',
+        encoding="utf-8",
+    )
+    stderr_log.write_text(
+        "Slack send failed for old: [Errno 2] No such file or directory\n",
+        encoding="utf-8",
+    )
+    stale_time = 946684800
+    os.utime(stderr_log, (stale_time, stale_time))
+
+    monkeypatch.setattr(ops_mod, "EVENTS_LOG", events_log)
+    monkeypatch.setattr(ops_mod, "DAEMON_STDOUT_LOG", stdout_log)
+    monkeypatch.setattr(ops_mod, "DAEMON_STDERR_LOG", stderr_log)
+
+    report = run_logs(events=0, lines=20)
+
+    assert report["status"] == "ok"
+    assert report["stderr_tail"] == [
+        "Slack send failed for old: [Errno 2] No such file or directory"
+    ]
+    assert report["daemon_summary"]["slack_delivery_failure_count"] == 0
+    assert report["visible_daemon_summary"]["slack_delivery_failure_count"] == 1
+
+
 def test_logs_report_handles_zero_limits(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -510,3 +543,4 @@ def test_burn_in_ignores_stale_daemon_log_files(
         "slack_delivery_failure_count": 0,
         "status": "ok",
     }
+    assert report["visible_daemon_summary"]["slack_delivery_failure_count"] == 1
