@@ -14,7 +14,13 @@ def _burn_in_report(
     *,
     status: str = "ok",
     slack_delivery_failure_count: int = 0,
+    visible_slack_delivery_failure_count: int | None = None,
 ) -> dict[str, object]:
+    visible_slack_delivery_failure_count = (
+        slack_delivery_failure_count
+        if visible_slack_delivery_failure_count is None
+        else visible_slack_delivery_failure_count
+    )
     return {
         "status": "ok",
         "minutes": 10,
@@ -41,6 +47,15 @@ def _burn_in_report(
             "validation_error_count": 0,
             "recent_validation_errors": [],
             "slack_delivery_failure_count": slack_delivery_failure_count,
+            "recent_slack_delivery_failures": [],
+        },
+        "visible_daemon_summary": {
+            "access_status_counts": {},
+            "accepted_event_posts": 0,
+            "rejected_event_posts": 0,
+            "validation_error_count": 0,
+            "recent_validation_errors": [],
+            "slack_delivery_failure_count": visible_slack_delivery_failure_count,
             "recent_slack_delivery_failures": [],
         },
         "error": None,
@@ -179,6 +194,7 @@ def test_run_status_summarizes_healthy_runtime() -> None:
         "push_notifier_available": True,
         "slack_configured": True,
         "slack_delivery_failures": 0,
+        "visible_slack_delivery_failures": 0,
         "import_queue": _import_queue_health(),
         "next_action": "No action needed.",
     }
@@ -284,6 +300,44 @@ def test_run_status_suggests_slack_delivery_investigation() -> None:
     assert (
         report["next_action"]
         == "Inspect notification-hub logs for Slack delivery failures, then verify Slack transport."
+    )
+
+
+def test_run_status_surfaces_visible_stale_slack_delivery_failures() -> None:
+    with patch(
+        "notification_hub.operations.run_verify_runtime",
+        return_value={
+            "status": "ok",
+            "health_url": "http://127.0.0.1:9199/health/details",
+            "checks": {
+                "health_details_reachable": True,
+                "runtime_wiring_current": True,
+                "recent_runtime_health_ok": True,
+                "policy_check_ok": True,
+            },
+            "doctor": {
+                "checks": {"policy_load_ok": True},
+                "config": {"exists": True},
+                "delivery": {
+                    "push_notifier_available": True,
+                    "slack_webhook_configured": True,
+                },
+                "local_api": {"payload": {}},
+            },
+            "policy_check": {"warning_count": 0},
+            "burn_in": _burn_in_report(visible_slack_delivery_failure_count=4),
+            "import_queue": _import_queue_health(),
+        },
+    ):
+        report = run_status()
+
+    assert report["status"] == "ok"
+    assert report["slack_delivery_failures"] == 0
+    assert report["visible_slack_delivery_failures"] == 4
+    assert (
+        report["next_action"]
+        == "Review visible historical Slack delivery failures, then run a Slack "
+        "delivery check only with approval."
     )
 
 

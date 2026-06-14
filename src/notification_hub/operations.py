@@ -3193,10 +3193,7 @@ def run_status() -> StatusReport:
     retention = _as_dict(payload.get("retention"))
     burn_in = verification["burn_in"]
     burn_in_health = burn_in["health"]
-    visible_daemon_summary = cast(
-        DaemonLogSummary,
-        burn_in.get("visible_daemon_summary") or burn_in["daemon_summary"],
-    )
+    visible_daemon_summary = burn_in["visible_daemon_summary"]
     import_queue = cast(
         PersonalOpsImportQueueHealthReport,
         cast(dict[str, object], verification).get("import_queue")
@@ -3211,6 +3208,14 @@ def run_status() -> StatusReport:
 
     if import_queue["needs_review"] or import_queue["needs_outcome_sync"]:
         next_action = import_queue["next_action"]
+    elif (
+        verification["status"] == "ok"
+        and visible_slack_delivery_failures > slack_delivery_failures
+    ):
+        next_action = (
+            "Review visible historical Slack delivery failures, then run a Slack "
+            "delivery check only with approval."
+        )
     elif verification["status"] == "ok":
         next_action = "No action needed."
     elif not daemon_reachable:

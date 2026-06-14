@@ -20,7 +20,7 @@ Current source-of-truth map:
 - `tests/test_readme_commands.py` checks README command examples against those
   inventories.
 - `mcp_server/server.py` defines the MCP wrapper inventory. The MCP README
-  should stay reconciled to the seven `@mcp.tool` functions there.
+  should stay reconciled to the `@mcp.tool` functions there.
 
 ## Runtime Truth Update (2026-06-14)
 
