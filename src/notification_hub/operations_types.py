@@ -562,6 +562,7 @@ class LogsReport(TypedDict):
     stderr_log: str
     recent_events: list[RecentEventReport]
     daemon_summary: DaemonLogSummary
+    visible_daemon_summary: DaemonLogSummary
     stdout_tail: list[str]
     stderr_tail: list[str]
     missing_paths: list[str]
@@ -615,6 +616,7 @@ class BurnInReport(TypedDict):
     slack_eligible_events: int
     slack_volume: list[SlackVolumeReport]
     daemon_summary: DaemonLogSummary
+    visible_daemon_summary: DaemonLogSummary
     error: str | None
 
 
@@ -681,6 +683,7 @@ class StatusReport(TypedDict):
     push_notifier_available: bool | None
     slack_configured: bool | None
     slack_delivery_failures: int
+    visible_slack_delivery_failures: int
     import_queue: PersonalOpsImportQueueHealthReport
     next_action: str
 

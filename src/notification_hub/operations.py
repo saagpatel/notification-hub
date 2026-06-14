@@ -1874,7 +1874,13 @@ def run_logs(*, events: int = 5, lines: int = 20) -> LogsReport:
         recent_events = [event_report(event) for event in recent_stored_events]
         stdout_tail = tail_text_file(DAEMON_STDOUT_LOG, lines=lines)
         stderr_tail = tail_text_file(DAEMON_STDERR_LOG, lines=lines)
-        daemon_summary = summarize_daemon_logs(stdout_tail, stderr_tail)
+        stderr_health_tail = _tail_text_file_if_recent(
+            DAEMON_STDERR_LOG,
+            lines=lines,
+            cutoff=datetime.now(timezone.utc) - timedelta(hours=1),
+        )
+        daemon_summary = summarize_daemon_logs(stdout_tail, stderr_health_tail)
+        visible_daemon_summary = summarize_daemon_logs(stdout_tail, stderr_tail)
     except (OSError, ValueError):
         return {
             "status": "degraded",
@@ -1883,6 +1889,7 @@ def run_logs(*, events: int = 5, lines: int = 20) -> LogsReport:
             "stderr_log": str(DAEMON_STDERR_LOG),
             "recent_events": [],
             "daemon_summary": summarize_daemon_logs([], []),
+            "visible_daemon_summary": summarize_daemon_logs([], []),
             "stdout_tail": [],
             "stderr_tail": [],
             "missing_paths": missing_paths,
@@ -1906,6 +1913,7 @@ def run_logs(*, events: int = 5, lines: int = 20) -> LogsReport:
         "stderr_log": str(DAEMON_STDERR_LOG),
         "recent_events": recent_events,
         "daemon_summary": daemon_summary,
+        "visible_daemon_summary": visible_daemon_summary,
         "stdout_tail": stdout_tail,
         "stderr_tail": stderr_tail,
         "missing_paths": missing_paths,
@@ -2032,6 +2040,10 @@ def run_burn_in(*, minutes: int = 10, lines: int = 200) -> BurnInReport:
             cutoff=cutoff,
         )
         daemon_summary = summarize_daemon_logs(stdout_tail, stderr_tail)
+        visible_daemon_summary = summarize_daemon_logs(
+            tail_text_file(DAEMON_STDOUT_LOG, lines=tail_lines),
+            tail_text_file(DAEMON_STDERR_LOG, lines=tail_lines),
+        )
     except (OSError, ValueError):
         return {
             "status": "degraded",
@@ -2053,6 +2065,7 @@ def run_burn_in(*, minutes: int = 10, lines: int = 200) -> BurnInReport:
             "slack_eligible_events": 0,
             "slack_volume": [],
             "daemon_summary": summarize_daemon_logs([], []),
+            "visible_daemon_summary": summarize_daemon_logs([], []),
             "error": _GENERIC_OPERATION_ERROR,
         }
 
@@ -2085,6 +2098,7 @@ def run_burn_in(*, minutes: int = 10, lines: int = 200) -> BurnInReport:
         "slack_eligible_events": sum(item["count"] for item in slack_volume),
         "slack_volume": slack_volume[:10],
         "daemon_summary": daemon_summary,
+        "visible_daemon_summary": visible_daemon_summary,
         "error": None,
     }
 
@@ -3179,6 +3193,7 @@ def run_status() -> StatusReport:
     retention = _as_dict(payload.get("retention"))
     burn_in = verification["burn_in"]
     burn_in_health = burn_in["health"]
+    visible_daemon_summary = burn_in["visible_daemon_summary"]
     import_queue = cast(
         PersonalOpsImportQueueHealthReport,
         cast(dict[str, object], verification).get("import_queue")
@@ -3189,9 +3204,18 @@ def run_status() -> StatusReport:
     runtime_wiring_current = checks["runtime_wiring_current"]
     policy_load_ok = doctor_checks.get("policy_load_ok") is True
     slack_delivery_failures = burn_in_health["slack_delivery_failure_count"]
+    visible_slack_delivery_failures = visible_daemon_summary["slack_delivery_failure_count"]
 
     if import_queue["needs_review"] or import_queue["needs_outcome_sync"]:
         next_action = import_queue["next_action"]
+    elif (
+        verification["status"] == "ok"
+        and visible_slack_delivery_failures > slack_delivery_failures
+    ):
+        next_action = (
+            "Review visible historical Slack delivery failures, then run a Slack "
+            "delivery check only with approval."
+        )
     elif verification["status"] == "ok":
         next_action = "No action needed."
     elif not daemon_reachable:
@@ -3220,6 +3244,7 @@ def run_status() -> StatusReport:
         "push_notifier_available": _as_bool(delivery.get("push_notifier_available")),
         "slack_configured": _as_bool(delivery.get("slack_webhook_configured")),
         "slack_delivery_failures": slack_delivery_failures,
+        "visible_slack_delivery_failures": visible_slack_delivery_failures,
         "import_queue": import_queue,
         "next_action": next_action,
     }

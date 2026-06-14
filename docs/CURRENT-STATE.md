@@ -20,7 +20,7 @@ Current source-of-truth map:
 - `tests/test_readme_commands.py` checks README command examples against those
   inventories.
 - `mcp_server/server.py` defines the MCP wrapper inventory. The MCP README
-  should stay reconciled to the seven `@mcp.tool` functions there.
+  should stay reconciled to the `@mcp.tool` functions there.
 
 ## Runtime Truth Update (2026-06-14)
 
@@ -42,7 +42,7 @@ Fresh checks on 2026-06-14:
   failures `0`.
 - `uv run --frozen notification-hub-doctor --json` and
   `uv run --frozen notification-hub-verify-runtime --json`: `status: ok`.
-- Quality gates passed: `uv run --frozen pytest` (`405 passed`),
+- Quality gates passed: `uv run --frozen pytest`,
   `uv run --frozen ruff check`, and `uv run --frozen pyright`.
 
 ## Freshness note (2026-06-07)
@@ -895,11 +895,11 @@ uv run --frozen notification-hub smoke
 uv run --frozen notification-hub retention --max-events 2000
 ```
 
-Expected current outcome:
+Expected outcome after rerunning the verifier:
 
-- `pytest`: ≥376 passed (376 confirmed as of 2026-05-12 session; current suite may be higher)
+- `pytest`: passes
 - `ruff`: clean
-- `pyright`: 0 errors
+- `pyright`: clean
 - `/health/details`: `status: ok`, watcher active, push available, Slack configured
 - `notification-hub-doctor`: `status: ok`
 - `notification-hub status`: compact read-only runtime summary; degrades when recent Slack delivery
