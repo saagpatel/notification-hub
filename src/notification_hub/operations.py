@@ -77,6 +77,7 @@ from notification_hub.operations_proposals import (
 from notification_hub.operations_types import (
     SmokeReport as SmokeReport,
     DeliveryCheckReport as DeliveryCheckReport,
+    DeliveryCheckState as DeliveryCheckState,
     RetentionReport as RetentionReport,
     RecentEventReport as RecentEventReport,
     InboxItemReport as InboxItemReport,
@@ -152,6 +153,8 @@ BRIDGE_SNAPSHOT_RETENTION_PER_SYSTEM = 10
 BURN_IN_REPORT_DIR = EVENTS_DIR / "burn-in-reports"
 OPERATOR_STATE_REPORT_DIR = EVENTS_DIR / "operator-state-reports"
 OPERATOR_REVIEW_SESSION_REPORT_DIR = EVENTS_DIR / "operator-review-session-reports"
+DELIVERY_CHECK_STATE = EVENTS_DIR / "delivery-check-state.json"
+DELIVERY_CHECK_FRESHNESS_HOURS = 24
 PERSONAL_OPS_IMPORT_QUEUE = EVENTS_DIR / "personal-ops-import-queue.jsonl"
 PERSONAL_OPS_IMPORT_QUEUE_SCHEMA_VERSION = "notification-hub.personal_ops_import_queue.v1"
 ACTION_PROPOSAL_REVIEW_WINDOW_HOURS = 24
@@ -212,6 +215,46 @@ def _as_str(value: object) -> str | None:
     if isinstance(value, str):
         return value
     return None
+
+
+def _empty_delivery_check_state() -> DeliveryCheckState:
+    return {
+        "last_slack_ok_at": None,
+        "last_slack_event_id": None,
+        "last_push_ok_at": None,
+        "last_push_event_id": None,
+    }
+
+
+def _read_delivery_check_state(path: Path | None = None) -> DeliveryCheckState:
+    target_path = path or DELIVERY_CHECK_STATE
+    try:
+        payload = json.loads(target_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return _empty_delivery_check_state()
+    if not isinstance(payload, dict):
+        return _empty_delivery_check_state()
+    state_payload = cast(dict[str, object], payload)
+
+    return {
+        "last_slack_ok_at": _as_str(state_payload.get("last_slack_ok_at")),
+        "last_slack_event_id": _as_str(state_payload.get("last_slack_event_id")),
+        "last_push_ok_at": _as_str(state_payload.get("last_push_ok_at")),
+        "last_push_event_id": _as_str(state_payload.get("last_push_event_id")),
+    }
+
+
+def _write_delivery_check_state(state: DeliveryCheckState, path: Path | None = None) -> bool:
+    target_path = path or DELIVERY_CHECK_STATE
+    try:
+        target_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        fd = os.open(str(target_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(state, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+    except OSError:
+        return False
+    return True
 
 
 def _save_bridge_snapshot(
@@ -433,6 +476,13 @@ def _parse_iso_datetime(value: str | None) -> datetime | None:
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=timezone.utc)
     return parsed
+
+
+def _delivery_check_is_fresh(value: str | None) -> bool:
+    checked_at = _parse_iso_datetime(value)
+    if checked_at is None:
+        return False
+    return datetime.now(timezone.utc) - checked_at <= timedelta(hours=DELIVERY_CHECK_FRESHNESS_HOURS)
 
 
 def _queue_item_activity_datetime(item: PersonalOpsImportQueueItemReport) -> datetime | None:
@@ -3117,6 +3167,16 @@ def run_delivery_check(
         failures.append("Slack delivery check failed")
     if push_ok is False:
         failures.append("Push delivery check failed")
+    if slack_ok is True or push_ok is True:
+        state = _read_delivery_check_state()
+        checked_at = datetime.now(timezone.utc).isoformat()
+        if slack_ok is True:
+            state["last_slack_ok_at"] = checked_at
+            state["last_slack_event_id"] = event.event_id
+        if push_ok is True:
+            state["last_push_ok_at"] = checked_at
+            state["last_push_event_id"] = event.event_id
+        _write_delivery_check_state(state)
 
     return {
         "status": "ok" if not failures else "degraded",
@@ -3205,12 +3265,23 @@ def run_status() -> StatusReport:
     policy_load_ok = doctor_checks.get("policy_load_ok") is True
     slack_delivery_failures = burn_in_health["slack_delivery_failure_count"]
     visible_slack_delivery_failures = visible_daemon_summary["slack_delivery_failure_count"]
+    latest_delivery_check = _read_delivery_check_state()
+    latest_slack_ok_at = latest_delivery_check["last_slack_ok_at"]
+    latest_slack_check_is_fresh = _delivery_check_is_fresh(latest_slack_ok_at)
 
     if import_queue["needs_review"] or import_queue["needs_outcome_sync"]:
         next_action = import_queue["next_action"]
     elif (
         verification["status"] == "ok"
         and visible_slack_delivery_failures > slack_delivery_failures
+        and latest_slack_check_is_fresh
+    ):
+        next_action = (
+            "Recent Slack delivery was verified; review historical Slack failures "
+            "only if root-cause detail is needed."
+        )
+    elif (
+        verification["status"] == "ok" and visible_slack_delivery_failures > slack_delivery_failures
     ):
         next_action = (
             "Review visible historical Slack delivery failures, then run a Slack "
@@ -3245,6 +3316,7 @@ def run_status() -> StatusReport:
         "slack_configured": _as_bool(delivery.get("slack_webhook_configured")),
         "slack_delivery_failures": slack_delivery_failures,
         "visible_slack_delivery_failures": visible_slack_delivery_failures,
+        "latest_delivery_check": latest_delivery_check,
         "import_queue": import_queue,
         "next_action": next_action,
     }

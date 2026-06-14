@@ -152,6 +152,11 @@ def print_status_report(report: StatusReport) -> None:
     print(f"- events processed: {report['events_processed']}")
     print(f"- Slack configured: {report['slack_configured']}")
     print(f"- Slack delivery failures: {report['slack_delivery_failures']}")
+    if report["visible_slack_delivery_failures"] != report["slack_delivery_failures"]:
+        print(f"- visible Slack delivery failures: {report['visible_slack_delivery_failures']}")
+    latest_delivery_check = report["latest_delivery_check"]
+    if latest_delivery_check["last_slack_ok_at"] is not None:
+        print(f"- latest Slack delivery check OK: {latest_delivery_check['last_slack_ok_at']}")
     print(f"- import queue queued: {report['import_queue']['queued_count']}")
     print(f"- push notifier available: {report['push_notifier_available']}")
     print(f"- next action: {report['next_action']}")
