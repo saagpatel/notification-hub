@@ -1,8 +1,8 @@
 # Current State
 
-Last updated: 2026-06-14 (runtime truth refreshed; stale stderr no longer degrades current health)
+Last updated: 2026-06-19 (runtime truth refreshed; historical Slack stderr no longer rehydrates current health)
 
-## Restart Index (2026-06-14)
+## Restart Index (2026-06-19)
 
 Use this file as evidence history, not as a live health claim. For a fast
 restart, read these first:
@@ -21,6 +21,111 @@ Current source-of-truth map:
   inventories.
 - `mcp_server/server.py` defines the MCP wrapper inventory. The MCP README
   should stay reconciled to the `@mcp.tool` functions there.
+
+## Runtime Truth Update (2026-06-19)
+
+Live audit found a narrower stale-stderr failure mode: a fresh unrelated
+stderr line, such as `MallocStackLogging`, could refresh the daemon stderr
+mtime and cause old Slack failure tail lines to degrade current health again.
+An operator-approved Slack delivery check passed with event id `477a48b9e079`,
+so the current transport was healthy while old failure evidence remained
+visible.
+
+`notification-hub logs` and `burn-in` now keep visible historical Slack failure
+evidence in `visible_daemon_summary` while using event timestamps plus fresh
+Slack delivery-check state to decide whether Slack failures are current health
+failures. This keeps forensic evidence visible without letting an unrelated
+stderr write rehydrate old transport failures.
+
+Fresh checks on 2026-06-19 before queueing:
+
+- `uv lock --check`: OK.
+- `uv run --frozen --no-sync ruff check`: OK.
+- `uv run --frozen --no-sync pyright`: 0 errors.
+- `uv run --frozen --no-sync pytest`: `408 passed`.
+- `uv run --directory mcp_server --frozen --no-sync pytest`: `9 passed`.
+- `uv run --frozen --no-sync notification-hub-status --json`: `status: ok`,
+  Slack delivery failures `0`, visible historical Slack delivery failures `99`.
+- `uv run --frozen --no-sync notification-hub-logs --lines 160 --json`:
+  `status: ok`, rejected posts `0`, validation errors `0`, current Slack
+  delivery failures `0`; historical Slack failures remain visible.
+- `uv run --frozen --no-sync notification-hub-burn-in --json --minutes 10
+  --lines 200`: `status: ok`, rejected posts `0`, validation errors `0`,
+  current Slack delivery failures `0`; one repeated Codex waiting signature was
+  a noise/action candidate, not a runtime-health failure.
+- `uv run --frozen --no-sync notification-hub-verify-runtime --json`:
+  `status: ok`.
+- `curl -fsS http://127.0.0.1:9199/health/details`: `status: ok`.
+- `curl -fsS http://127.0.0.1:9199/review/coordination-console`: `status:
+  ok`, readiness `ready_to_expand`.
+
+LaunchAgent adoption on 2026-06-19:
+
+- The LaunchAgent was restarted with the documented `bootout`, `bootstrap`, and
+  `kickstart` sequence after operator approval.
+- `launchctl print "gui/$(id -u)/com.saagar.notification-hub"` showed a fresh
+  running process at PID `38198`, still using working directory
+  `/Users/d/Projects/notification-hub` and `uv run --frozen uvicorn
+  notification_hub.server:app --host 127.0.0.1 --port 9199`.
+- Post-restart `/health/details`, `notification-hub-status`, `logs`,
+  `burn-in`, and `verify-runtime` reported current runtime health OK with Slack
+  delivery failures `0`.
+
+First Rich Proof Gate state before queueing on 2026-06-19:
+
+- `status: proof_required`.
+- Active proposals: `5`.
+- Active rich proposals: `2`, both personal-ops mail proposals.
+- Active thin proposals: `3`, all Codex waiting proposals.
+- Queued handoffs: `0`.
+- Pending promoted outcomes: `0`.
+- Rich resolved outcomes: `0`.
+
+First Rich Proof Gate update on 2026-06-19:
+
+- A broad save-only package for `personal-ops:mail:needs_attention:high:open`
+  captured `7` actions and was not queued.
+- A save-only `promote` route package captured `3` rich actions and was not
+  queued.
+- A narrow supported `promote` route package with `limit=2` captured exactly one
+  rich action and validated cleanly:
+  `/Users/d/.local/share/notification-hub/action-exports/personal-ops-actions-20260619-054639-991605.json`.
+- That exact package was queued with `personal-ops-import --enqueue`, creating
+  local queue item `f218f17b926fef24` for action
+  `notification-hub:personal-ops:mail:needs_attention:approval-requested:7640ae5a6567`.
+- Coordination Console now reports First Rich Proof Gate `finish_lifecycle` with
+  queued handoffs `1`, pending promoted outcomes `0`, and rich resolved outcomes
+  `0`.
+- Post-queue `notification-hub-status` and `notification-hub-verify-runtime`
+  report `degraded` because import queue status is `warn` with queued handoffs
+  `1`. That is expected lifecycle state, not a daemon-health failure.
+- Post-queue live `/health/details` is `ok`, and the 10-minute
+  `notification-hub-burn-in --json --minutes 10 --lines 200` health block is
+  `ok` with rejected posts `0`, validation errors `0`, and Slack delivery
+  failures `0`.
+- The same burn-in now shows repeated personal-ops mail noise candidates in the
+  active window (`Draft Ready`, `Approval Requested`, and `Send Succeeded`
+  repeats). Treat those as review/noise evidence, not runtime-health failures;
+  do not add broad mail suppression based solely on this proof-lane evidence.
+- The queued handoff was promoted through Personal Ops:
+  - queue item: `f218f17b926fef24`
+  - Personal Ops task suggestion: `81bf7cef-8ef2-4465-9149-453cd7d6ff4e`
+  - accepted Personal Ops task: `b7bcb30b-d717-4daa-8242-f178d7e7183b`
+  - synced notification-hub outcome: `accepted`
+- Post-resolution queue health is `ok`: queued handoffs `0`, pending promoted
+  outcomes `0`, stale promoted outcomes `0`, promoted accepted count `6`.
+- Post-resolution Coordination Console is `status: ok`, readiness
+  `ready_to_expand`, First Rich Proof Gate `satisfied`, and
+  `rich_resolved_count: 1`.
+- Post-resolution `notification-hub-status --json` is `status: ok` with
+  runtime wiring current, import queue `ok`, Slack delivery failures `0`, and
+  `next_action: No action needed.`
+
+No push check, smoke event, report save, bridge-db save, Slack/push
+notification send, mail send, or approval-send mutation was performed during
+this update. The next operator lane is conservative observation: keep comparing
+rich and thin outcomes before widening automation, and do not queue extra proof
+work just to increase counts.
 
 ## Runtime Truth Update (2026-06-14)
 

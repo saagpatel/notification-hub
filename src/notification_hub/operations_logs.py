@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 
 from notification_hub.coordination import infer_intent
@@ -20,6 +21,17 @@ _SLACK_DELIVERY_FAILURE_PREFIXES = (
     "Slack digest failed",
     "Slack webhook returned",
     "Slack digest webhook returned",
+)
+_SLACK_FAILURE_CONTEXT_PREFIXES = (
+    *_SLACK_DELIVERY_FAILURE_PREFIXES,
+    "Slack delivery failed",
+    "Failed to flush overflow digest",
+)
+_SLACK_SEND_FAILURE_EVENT_RE = re.compile(
+    r"^Slack send failed for (?P<event_id>[0-9a-f]{12}):"
+)
+_SLACK_WEBHOOK_FAILURE_EVENT_RE = re.compile(
+    r"^Slack webhook returned \d+ for (?P<event_id>[0-9a-f]{12})"
 )
 
 
@@ -41,7 +53,82 @@ def _lines_since_latest_daemon_start(lines: list[str]) -> list[str]:
     return lines[latest_start_index + 1 :]
 
 
-def summarize_daemon_logs(stdout_tail: list[str], stderr_tail: list[str]) -> DaemonLogSummary:
+def _is_slack_failure_line(line: str) -> bool:
+    return any(line.startswith(prefix) for prefix in _SLACK_DELIVERY_FAILURE_PREFIXES)
+
+
+def _is_slack_failure_context_line(line: str) -> bool:
+    return any(line.startswith(prefix) for prefix in _SLACK_FAILURE_CONTEXT_PREFIXES)
+
+
+def _slack_failure_event_id(line: str) -> str | None:
+    for pattern in (_SLACK_SEND_FAILURE_EVENT_RE, _SLACK_WEBHOOK_FAILURE_EVENT_RE):
+        match = pattern.match(line)
+        if match is not None:
+            return match.group("event_id")
+    return None
+
+
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _current_slack_delivery_failures(
+    stderr_tail: list[str],
+    *,
+    event_timestamps: dict[str, datetime] | None,
+    slack_success_at: datetime | None,
+) -> list[str]:
+    failures = [
+        (index, line, _slack_failure_event_id(line))
+        for index, line in enumerate(stderr_tail)
+        if _is_slack_failure_line(line)
+    ]
+    if slack_success_at is None:
+        return [line for _, line, _ in failures]
+
+    success_at = _as_utc(slack_success_at)
+    latest_unrelated_index = max(
+        (
+            index
+            for index, line in enumerate(stderr_tail)
+            if not _is_slack_failure_context_line(line)
+        ),
+        default=-1,
+    )
+    current_event_failure_indexes: set[int] = set()
+    for index, _, event_id in failures:
+        if event_id is None or event_timestamps is None:
+            continue
+        event_at = event_timestamps.get(event_id)
+        if event_at is not None and _as_utc(event_at) >= success_at:
+            current_event_failure_indexes.add(index)
+
+    current_failures: list[str] = []
+    for index, line, event_id in failures:
+        if index in current_event_failure_indexes:
+            current_failures.append(line)
+            continue
+        if event_id is None:
+            if current_event_failure_indexes or index > latest_unrelated_index:
+                current_failures.append(line)
+            continue
+        if event_timestamps is None or event_id not in event_timestamps:
+            if index > latest_unrelated_index:
+                current_failures.append(line)
+
+    return current_failures
+
+
+def summarize_daemon_logs(
+    stdout_tail: list[str],
+    stderr_tail: list[str],
+    *,
+    event_timestamps: dict[str, datetime] | None = None,
+    slack_success_at: datetime | None = None,
+) -> DaemonLogSummary:
     status_counts: dict[str, int] = {}
     for line in stdout_tail:
         match = _EVENT_ACCESS_RE.search(line)
@@ -54,11 +141,11 @@ def summarize_daemon_logs(stdout_tail: list[str], stderr_tail: list[str]) -> Dae
     validation_errors = [
         line for line in current_stderr_tail if line.startswith("Rejected event payload")
     ]
-    slack_delivery_failures = [
-        line
-        for line in current_stderr_tail
-        if any(line.startswith(prefix) for prefix in _SLACK_DELIVERY_FAILURE_PREFIXES)
-    ]
+    slack_delivery_failures = _current_slack_delivery_failures(
+        current_stderr_tail,
+        event_timestamps=event_timestamps,
+        slack_success_at=slack_success_at,
+    )
     return {
         "access_status_counts": status_counts,
         "accepted_event_posts": sum(
