@@ -364,6 +364,123 @@ def test_coordination_console_default_hours_matches_action_export() -> None:
     mock_actions.assert_called_once_with(hours=24, limit=5)
 
 
+def test_coordination_console_satisfied_gate_keeps_active_proposals_conservative() -> None:
+    rich_action = {
+        "action_id": "action-rich",
+        "dismissal_key": "proposal:personal-ops:mail:waiting-on-user:rich",
+        "source": "personal-ops",
+        "project": "mail",
+        "intent": "waiting_on_user",
+        "priority": "high",
+        "state": "waiting",
+        "title": "Approval Requested",
+        "summary": "Repeated mail approval.",
+        "signal_level": "urgent",
+        "signal_body": "Approval draft",
+        "suggested_next_action": "Review the waiting item.",
+        "evidence_event_id": "event-rich",
+        "evidence_timestamp": "2026-05-10T04:40:00+00:00",
+        "evidence_context": {
+            "thread_id": "thread-rich",
+            "draft_id": "draft-rich",
+            "approval_id": "approval-rich",
+        },
+        "evidence_quality": "rich",
+        "count": 3,
+    }
+    accepted_rich_queue_item = {
+        "queue_id": "queue-rich",
+        "status": "promoted",
+        "action": {
+            **rich_action,
+            "action_id": "resolved-rich-action",
+            "evidence_event_id": "resolved-rich-event",
+        },
+        "action_id": "resolved-rich-action",
+        "evidence_event_id": "resolved-rich-event",
+        "promotion_outcome": "accepted",
+        "promoted_at": "2026-05-10T04:45:00+00:00",
+        "promotion_outcome_at": "2026-05-10T04:50:00+00:00",
+    }
+    with (
+        patch(
+            "notification_hub.operations.run_coordination_readiness",
+            return_value={
+                "status": "ok",
+                "decision": "ready_to_expand",
+                "summary": "ready",
+                "queue_status": "ok",
+                "queued_count": 0,
+                "pending_count": 0,
+                "stale_count": 0,
+                "saved_burn_in_reports": 1,
+                "latest_burn_in_ready": True,
+                "latest_burn_in_noise_candidates": 0,
+                "runtime_status": "ok",
+                "policy_warning_count": 0,
+                "next_action": "Plan the next compact coordination console slice.",
+                "evidence": [],
+                "applied": False,
+            },
+        ),
+        patch(
+            "notification_hub.operations.run_personal_ops_action_export",
+            return_value={
+                "status": "ok",
+                "schema_version": "notification-hub.personal_ops_action_export.v1",
+                "generated_at": "2026-05-10T04:40:00+00:00",
+                "hours": 2,
+                "actions": [rich_action],
+                "review_package": {"status": "not_requested"},
+                "inbox": {},
+                "error": None,
+            },
+        ),
+        patch(
+            "notification_hub.operations.run_personal_ops_import_queue_health_check",
+            return_value={
+                "status": "ok",
+                "health": coordination_status()["import_queue"],
+                "queued_items": [],
+                "pending_promotion_items": [],
+                "next_commands": ["uv run notification-hub personal-ops-queue-health"],
+                "applied": False,
+            },
+        ),
+        patch(
+            "notification_hub.operations.run_personal_ops_outcome_sync_reminder",
+            return_value={
+                "status": "ok",
+                "should_remind": False,
+                "pending_count": 0,
+                "stale_count": 0,
+                "reminders": [],
+                "next_commands": ["uv run notification-hub personal-ops-queue-health"],
+                "next_action": "No pending promoted personal-ops handoff outcomes.",
+                "applied": False,
+            },
+        ),
+        patch(
+            "notification_hub.operations.list_personal_ops_queue_burn_in_reports",
+            return_value=[coordination_burn_in_report()],
+        ),
+        patch(
+            "notification_hub.operations._read_import_queue_items",
+            return_value=[accepted_rich_queue_item],
+        ),
+    ):
+        report = run_coordination_console(hours=2, limit=3)
+
+    assert report["first_rich_handoff_gate"]["status"] == "satisfied"
+    assert report["first_rich_handoff_gate"]["rich_resolved_count"] == 1
+    assert report["next_signal"]["title"] == "Active proposal visible after rich proof"
+    assert report["next_signal"]["watch_posture"] == "notify_review"
+    assert report["next_action"] == (
+        "Keep comparing rich and thin outcomes before widening automation."
+    )
+    assert "queue one handoff" not in report["next_action"]
+
+
 def test_next_signal_aligns_with_thin_only_first_rich_gate() -> None:
     build_gate = getattr(ops_mod, "_build_first_rich_handoff_gate")
     build_quality = getattr(ops_mod, "_build_handoff_outcome_quality")

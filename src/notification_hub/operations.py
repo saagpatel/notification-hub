@@ -3495,6 +3495,16 @@ def _build_next_signal_report(
         watch_posture = "notify_review"
         quiet_reason = None
         next_action = first_rich_handoff_gate["next_action"]
+    elif active_actions and first_rich_handoff_gate["status"] == "satisfied":
+        title = "Active proposal visible after rich proof"
+        summary = (
+            "The next real signal is visible, and the first rich handoff proof is already "
+            "recorded. Review it conservatively instead of queueing more proof work."
+        )
+        status = "review"
+        watch_posture = "notify_review"
+        quiet_reason = None
+        next_action = first_rich_handoff_gate["next_action"]
     elif active_actions:
         title = "Active proposal waiting"
         summary = "The next real signal is already visible as an action proposal."
@@ -4836,6 +4846,8 @@ def run_coordination_console(
     elif readiness["decision"] != "ready_to_expand":
         next_action = readiness["next_action"]
     elif first_rich_handoff_gate["status"] == "blocked_thin_only":
+        next_action = first_rich_handoff_gate["next_action"]
+    elif first_rich_handoff_gate["status"] == "satisfied":
         next_action = first_rich_handoff_gate["next_action"]
     elif any(action["lineage_status"] == "new" for action in active_actions):
         next_action = (
