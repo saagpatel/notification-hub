@@ -14,30 +14,39 @@ fresh unrelated stderr write rehydrate old Slack failures into current health.
 Current source-tree verification passed: `uv lock --check`, `uv run --frozen
 --no-sync ruff check`, `uv run --frozen --no-sync pyright`, `uv run --frozen
 --no-sync pytest` (`408 passed`), and `uv run --directory mcp_server --frozen
---no-sync pytest` (`9 passed`). Read-only runtime checks now report `status:
-ok` for `notification-hub-status`, `notification-hub-logs`, 10-minute
-`notification-hub-burn-in`, `notification-hub-verify-runtime`, live
-`/health/details`, and live `/review/coordination-console`.
+--no-sync pytest` (`9 passed`). Before queueing, read-only runtime checks
+reported `status: ok` for `notification-hub-status`,
+`notification-hub-logs`, 10-minute `notification-hub-burn-in`,
+`notification-hub-verify-runtime`, live `/health/details`, and live
+`/review/coordination-console`.
 
 Current nuance: historical Slack failure tail evidence is still visible in
 `visible_daemon_summary`, but current Slack failure count is `0` after the fresh
-Slack delivery proof. Coordination Console reports First Rich Proof Gate
-`proof_required`: `5` active proposals, `2` rich personal-ops mail proposals,
-`3` thin Codex waiting proposals, queued handoffs `0`, pending promoted
-outcomes `0`, and rich resolved outcomes `0`. Do not use the thin Codex waiting
-proposals as first-rich proof.
+Slack delivery proof. After queueing, `notification-hub-status` and
+`notification-hub-verify-runtime` report `degraded` only because the import
+queue has one active queued handoff. Live `/health/details` and 10-minute
+`burn-in` health are still `ok`, with rejected posts `0`, validation errors
+`0`, and Slack delivery failures `0`. The current burn-in does show repeated
+personal-ops mail noise candidates; do not add broad `Approval Requested` or
+`Draft Ready` suppression while the first-rich lifecycle is active.
 
-No LaunchAgent restart, push check, smoke event, report save, package save,
-queue mutation, outcome mutation, bridge-db save, or personal-ops mutation was
-performed during this update. Those remain approval-gated.
+After operator approval, the LaunchAgent was restarted and is running from this
+repo at PID `38198`. A narrow rich `promote` package was saved, validated, and
+queued:
+`/Users/d/.local/share/notification-hub/action-exports/personal-ops-actions-20260619-054639-991605.json`.
+It created queue item `f218f17b926fef24` for action
+`notification-hub:personal-ops:mail:needs_attention:approval-requested:7640ae5a6567`.
+No push check, smoke event, report save, bridge-db save, personal-ops mutation,
+or promoted outcome mutation was performed during this update.
 
-**Status:** Runtime truth hardening implemented locally; First Rich Proof Gate is `proof_required`
-**Branch:** `main` with intentional local source/test/doc edits
+**Status:** Runtime truth hardening implemented locally; First Rich Proof Gate is `finish_lifecycle`
+**Branch:** `fix/runtime-historical-slack-failures`
 **Last verified remote commit before this pass:** main matched origin/main at `6b6e38e`
 **Tests:** `uv lock --check`, `uv run --frozen --no-sync ruff check`, `uv run --frozen --no-sync
 pyright`, `uv run --frozen --no-sync pytest`, `uv run --directory mcp_server --frozen --no-sync
 pytest`, read-only status/logs/burn-in/verify-runtime, live `/health/details`, and live
-`/review/coordination-console`
+`/review/coordination-console`; package validation and queue-health checks passed with the expected
+queue warning after one rich handoff was queued
 
 ## Completed This Session
 
@@ -143,10 +152,11 @@ pytest`, read-only status/logs/burn-in/verify-runtime, live `/health/details`, a
 
 ## In Progress
 
-- Source-tree verification and live runtime checks report notification-hub healthy.
-- Current live 10-minute burn-in and `/review/noise-candidates` are clean. Older personal-ops mail
-  workflow repeats are visible only in wider windows and remain an observation item, not active work.
-- First-rich proof collection remains operator-mediated until one rich promoted handoff resolves.
+- Source-tree verification and live daemon health report notification-hub healthy.
+- Current live 10-minute burn-in health is OK but shows repeated personal-ops mail candidates in
+  the active window; treat them as review/noise evidence, not runtime-health failures.
+- First-rich proof collection is in lifecycle mode: one rich handoff is queued, and the next
+  operator-mediated step is review/promotion/outcome recording for queue item `f218f17b926fef24`.
 
 ## Blocked
 
@@ -154,8 +164,8 @@ pytest`, read-only status/logs/burn-in/verify-runtime, live `/health/details`, a
 
 ## Next Steps
 
-1. **Use the First Rich Proof Gate on the next real rich proposal** — save and validate the package,
-   queue exactly one rich handoff, and record the promoted outcome before widening authority.
+1. **Finish the queued first-rich lifecycle** — review queue item `f218f17b926fef24`, promote it
+   through personal-ops only if approved, then record the promoted outcome back in notification-hub.
 2. **Revisit mail workflow policy only if live noise returns** — tune only if the same repeats
    become current 10-minute candidates or active operator work; avoid broad `Approval Requested`
    suppression.

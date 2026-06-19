@@ -37,7 +37,7 @@ Slack delivery-check state to decide whether Slack failures are current health
 failures. This keeps forensic evidence visible without letting an unrelated
 stderr write rehydrate old transport failures.
 
-Fresh checks on 2026-06-19:
+Fresh checks on 2026-06-19 before queueing:
 
 - `uv lock --check`: OK.
 - `uv run --frozen --no-sync ruff check`: OK.
@@ -59,7 +59,19 @@ Fresh checks on 2026-06-19:
 - `curl -fsS http://127.0.0.1:9199/review/coordination-console`: `status:
   ok`, readiness `ready_to_expand`.
 
-Current First Rich Proof Gate state on 2026-06-19:
+LaunchAgent adoption on 2026-06-19:
+
+- The LaunchAgent was restarted with the documented `bootout`, `bootstrap`, and
+  `kickstart` sequence after operator approval.
+- `launchctl print "gui/$(id -u)/com.saagar.notification-hub"` showed a fresh
+  running process at PID `38198`, still using working directory
+  `/Users/d/Projects/notification-hub` and `uv run --frozen uvicorn
+  notification_hub.server:app --host 127.0.0.1 --port 9199`.
+- Post-restart `/health/details`, `notification-hub-status`, `logs`,
+  `burn-in`, and `verify-runtime` reported current runtime health OK with Slack
+  delivery failures `0`.
+
+First Rich Proof Gate state before queueing on 2026-06-19:
 
 - `status: proof_required`.
 - Active proposals: `5`.
@@ -69,12 +81,39 @@ Current First Rich Proof Gate state on 2026-06-19:
 - Pending promoted outcomes: `0`.
 - Rich resolved outcomes: `0`.
 
-No LaunchAgent restart, push check, smoke event, report save, package save,
-queue mutation, outcome mutation, bridge-db save, or personal-ops mutation was
-performed during this update. Those remain approval-gated. The next safe
-operator lane is to use exactly one rich personal-ops mail proposal for the
-First Rich Proof Gate after explicit approval to save/validate a review package
-and queue one handoff.
+First Rich Proof Gate update on 2026-06-19:
+
+- A broad save-only package for `personal-ops:mail:needs_attention:high:open`
+  captured `7` actions and was not queued.
+- A save-only `promote` route package captured `3` rich actions and was not
+  queued.
+- A narrow supported `promote` route package with `limit=2` captured exactly one
+  rich action and validated cleanly:
+  `/Users/d/.local/share/notification-hub/action-exports/personal-ops-actions-20260619-054639-991605.json`.
+- That exact package was queued with `personal-ops-import --enqueue`, creating
+  local queue item `f218f17b926fef24` for action
+  `notification-hub:personal-ops:mail:needs_attention:approval-requested:7640ae5a6567`.
+- Coordination Console now reports First Rich Proof Gate `finish_lifecycle` with
+  queued handoffs `1`, pending promoted outcomes `0`, and rich resolved outcomes
+  `0`.
+- Post-queue `notification-hub-status` and `notification-hub-verify-runtime`
+  report `degraded` because import queue status is `warn` with queued handoffs
+  `1`. That is expected lifecycle state, not a daemon-health failure.
+- Post-queue live `/health/details` is `ok`, and the 10-minute
+  `notification-hub-burn-in --json --minutes 10 --lines 200` health block is
+  `ok` with rejected posts `0`, validation errors `0`, and Slack delivery
+  failures `0`.
+- The same burn-in now shows repeated personal-ops mail noise candidates in the
+  active window (`Draft Ready`, `Approval Requested`, and `Send Succeeded`
+  repeats). Treat those as review/noise evidence, not runtime-health failures;
+  do not add broad mail suppression while the queued first-rich lifecycle is
+  still open.
+
+No push check, smoke event, report save, bridge-db save, personal-ops mutation,
+or promoted outcome mutation was performed during this update. The next
+operator-mediated step is to review queue item `f218f17b926fef24`, promote it
+through personal-ops only if the downstream operator action is approved, then
+record the promoted outcome back in notification-hub.
 
 ## Runtime Truth Update (2026-06-14)
 
