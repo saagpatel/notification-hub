@@ -485,6 +485,20 @@ def _delivery_check_is_fresh(value: str | None) -> bool:
     return datetime.now(timezone.utc) - checked_at <= timedelta(hours=DELIVERY_CHECK_FRESHNESS_HOURS)
 
 
+def _fresh_slack_delivery_success_at() -> datetime | None:
+    latest_delivery_check = _read_delivery_check_state()
+    checked_at = _parse_iso_datetime(latest_delivery_check["last_slack_ok_at"])
+    if checked_at is None:
+        return None
+    if datetime.now(timezone.utc) - checked_at > timedelta(hours=DELIVERY_CHECK_FRESHNESS_HOURS):
+        return None
+    return checked_at
+
+
+def _event_timestamps_by_id(events: list[StoredEvent]) -> dict[str, datetime]:
+    return {event.event_id: event.timestamp for event in events}
+
+
 def _queue_item_activity_datetime(item: PersonalOpsImportQueueItemReport) -> datetime | None:
     return _parse_iso_datetime(
         item["promotion_outcome_at"]
@@ -1919,6 +1933,8 @@ def run_logs(*, events: int = 5, lines: int = 20) -> LogsReport:
 
     try:
         stored_events = read_jsonl(path=EVENTS_LOG)
+        event_timestamps = _event_timestamps_by_id(stored_events)
+        slack_success_at = _fresh_slack_delivery_success_at()
         event_limit = max(events, 0)
         recent_stored_events = stored_events[-event_limit:] if event_limit else []
         recent_events = [event_report(event) for event in recent_stored_events]
@@ -1929,7 +1945,12 @@ def run_logs(*, events: int = 5, lines: int = 20) -> LogsReport:
             lines=lines,
             cutoff=datetime.now(timezone.utc) - timedelta(hours=1),
         )
-        daemon_summary = summarize_daemon_logs(stdout_tail, stderr_health_tail)
+        daemon_summary = summarize_daemon_logs(
+            stdout_tail,
+            stderr_health_tail,
+            event_timestamps=event_timestamps,
+            slack_success_at=slack_success_at,
+        )
         visible_daemon_summary = summarize_daemon_logs(stdout_tail, stderr_tail)
     except (OSError, ValueError):
         return {
@@ -2041,6 +2062,8 @@ def run_burn_in(*, minutes: int = 10, lines: int = 200) -> BurnInReport:
     cutoff = datetime.now(timezone.utc) - timedelta(minutes=window_minutes)
     try:
         stored_events = read_jsonl(path=EVENTS_LOG)
+        event_timestamps = _event_timestamps_by_id(stored_events)
+        slack_success_at = _fresh_slack_delivery_success_at()
         recent_events = [
             event for event in stored_events if event.timestamp.astimezone(timezone.utc) >= cutoff
         ]
@@ -2089,7 +2112,12 @@ def run_burn_in(*, minutes: int = 10, lines: int = 200) -> BurnInReport:
             lines=tail_lines,
             cutoff=cutoff,
         )
-        daemon_summary = summarize_daemon_logs(stdout_tail, stderr_tail)
+        daemon_summary = summarize_daemon_logs(
+            stdout_tail,
+            stderr_tail,
+            event_timestamps=event_timestamps,
+            slack_success_at=slack_success_at,
+        )
         visible_daemon_summary = summarize_daemon_logs(
             tail_text_file(DAEMON_STDOUT_LOG, lines=tail_lines),
             tail_text_file(DAEMON_STDERR_LOG, lines=tail_lines),

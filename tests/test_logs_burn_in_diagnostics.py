@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import os
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -544,3 +546,116 @@ def test_burn_in_ignores_stale_daemon_log_files(
         "status": "ok",
     }
     assert report["visible_daemon_summary"]["slack_delivery_failure_count"] == 1
+
+
+def test_burn_in_ignores_historical_slack_failures_after_fresh_delivery_check(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    checked_at = datetime.now(timezone.utc)
+    old_event_id = "abc123abc123"
+    old_event = StoredEvent(
+        event_id=old_event_id,
+        source="personal-ops",
+        level="urgent",
+        title="System needs attention",
+        body="Run personal-ops doctor",
+        project="personal-ops",
+        timestamp=checked_at - timedelta(hours=4),
+    )
+    events_log = tmp_path / "events.jsonl"
+    events_log.write_text(old_event.model_dump_json() + "\n", encoding="utf-8")
+    stdout_log = tmp_path / "stdout.log"
+    stderr_log = tmp_path / "stderr.log"
+    delivery_state = tmp_path / "delivery-check-state.json"
+    stdout_log.write_text(
+        'INFO:     127.0.0.1:1 - "POST /events HTTP/1.1" 201 Created\n',
+        encoding="utf-8",
+    )
+    stderr_log.write_text(
+        "\n".join(
+            [
+                "Slack digest failed: [Errno 2] No such file or directory",
+                "Failed to flush overflow digest; returning 2 events to buffer",
+                f"Slack send failed for {old_event_id}: [Errno 2] No such file or directory",
+                f"Slack delivery failed for {old_event_id}",
+                "python(98852) MallocStackLogging: can't turn off malloc stack logging because it was not enabled.",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    delivery_state.write_text(
+        json.dumps(
+            {
+                "last_slack_ok_at": checked_at.isoformat(),
+                "last_slack_event_id": "delivery123",
+                "last_push_ok_at": None,
+                "last_push_event_id": None,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(ops_mod, "EVENTS_LOG", events_log)
+    monkeypatch.setattr(ops_mod, "DAEMON_STDOUT_LOG", stdout_log)
+    monkeypatch.setattr(ops_mod, "DAEMON_STDERR_LOG", stderr_log)
+    monkeypatch.setattr(ops_mod, "DELIVERY_CHECK_STATE", delivery_state)
+
+    report = run_burn_in(minutes=10, lines=20)
+
+    assert report["status"] == "ok"
+    assert report["health"]["slack_delivery_failure_count"] == 0
+    assert report["daemon_summary"]["recent_slack_delivery_failures"] == []
+    assert report["visible_daemon_summary"]["slack_delivery_failure_count"] == 2
+
+
+def test_burn_in_keeps_slack_failures_after_fresh_delivery_check(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    checked_at = datetime.now(timezone.utc) - timedelta(minutes=5)
+    current_event_id = "def456def456"
+    current_event = StoredEvent(
+        event_id=current_event_id,
+        source="codex",
+        level="normal",
+        title="Codex finished a turn",
+        body="A Codex turn completed.",
+        project="notification-hub",
+        timestamp=checked_at + timedelta(minutes=1),
+    )
+    events_log = tmp_path / "events.jsonl"
+    events_log.write_text(current_event.model_dump_json() + "\n", encoding="utf-8")
+    stdout_log = tmp_path / "stdout.log"
+    stderr_log = tmp_path / "stderr.log"
+    delivery_state = tmp_path / "delivery-check-state.json"
+    stdout_log.write_text("", encoding="utf-8")
+    stderr_log.write_text(
+        f"Slack send failed for {current_event_id}: The read operation timed out\n",
+        encoding="utf-8",
+    )
+    delivery_state.write_text(
+        json.dumps(
+            {
+                "last_slack_ok_at": checked_at.isoformat(),
+                "last_slack_event_id": "delivery123",
+                "last_push_ok_at": None,
+                "last_push_event_id": None,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(ops_mod, "EVENTS_LOG", events_log)
+    monkeypatch.setattr(ops_mod, "DAEMON_STDOUT_LOG", stdout_log)
+    monkeypatch.setattr(ops_mod, "DAEMON_STDERR_LOG", stderr_log)
+    monkeypatch.setattr(ops_mod, "DELIVERY_CHECK_STATE", delivery_state)
+
+    report = run_burn_in(minutes=10, lines=20)
+
+    assert report["status"] == "degraded"
+    assert report["health"]["slack_delivery_failure_count"] == 1
+    assert report["daemon_summary"]["recent_slack_delivery_failures"] == [
+        f"Slack send failed for {current_event_id}: The read operation timed out"
+    ]

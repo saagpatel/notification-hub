@@ -1,8 +1,8 @@
 # Current State
 
-Last updated: 2026-06-14 (runtime truth refreshed; stale stderr no longer degrades current health)
+Last updated: 2026-06-19 (runtime truth refreshed; historical Slack stderr no longer rehydrates current health)
 
-## Restart Index (2026-06-14)
+## Restart Index (2026-06-19)
 
 Use this file as evidence history, not as a live health claim. For a fast
 restart, read these first:
@@ -21,6 +21,60 @@ Current source-of-truth map:
   inventories.
 - `mcp_server/server.py` defines the MCP wrapper inventory. The MCP README
   should stay reconciled to the `@mcp.tool` functions there.
+
+## Runtime Truth Update (2026-06-19)
+
+Live audit found a narrower stale-stderr failure mode: a fresh unrelated
+stderr line, such as `MallocStackLogging`, could refresh the daemon stderr
+mtime and cause old Slack failure tail lines to degrade current health again.
+An operator-approved Slack delivery check passed with event id `477a48b9e079`,
+so the current transport was healthy while old failure evidence remained
+visible.
+
+`notification-hub logs` and `burn-in` now keep visible historical Slack failure
+evidence in `visible_daemon_summary` while using event timestamps plus fresh
+Slack delivery-check state to decide whether Slack failures are current health
+failures. This keeps forensic evidence visible without letting an unrelated
+stderr write rehydrate old transport failures.
+
+Fresh checks on 2026-06-19:
+
+- `uv lock --check`: OK.
+- `uv run --frozen --no-sync ruff check`: OK.
+- `uv run --frozen --no-sync pyright`: 0 errors.
+- `uv run --frozen --no-sync pytest`: `408 passed`.
+- `uv run --directory mcp_server --frozen --no-sync pytest`: `9 passed`.
+- `uv run --frozen --no-sync notification-hub-status --json`: `status: ok`,
+  Slack delivery failures `0`, visible historical Slack delivery failures `99`.
+- `uv run --frozen --no-sync notification-hub-logs --lines 160 --json`:
+  `status: ok`, rejected posts `0`, validation errors `0`, current Slack
+  delivery failures `0`; historical Slack failures remain visible.
+- `uv run --frozen --no-sync notification-hub-burn-in --json --minutes 10
+  --lines 200`: `status: ok`, rejected posts `0`, validation errors `0`,
+  current Slack delivery failures `0`; one repeated Codex waiting signature was
+  a noise/action candidate, not a runtime-health failure.
+- `uv run --frozen --no-sync notification-hub-verify-runtime --json`:
+  `status: ok`.
+- `curl -fsS http://127.0.0.1:9199/health/details`: `status: ok`.
+- `curl -fsS http://127.0.0.1:9199/review/coordination-console`: `status:
+  ok`, readiness `ready_to_expand`.
+
+Current First Rich Proof Gate state on 2026-06-19:
+
+- `status: proof_required`.
+- Active proposals: `5`.
+- Active rich proposals: `2`, both personal-ops mail proposals.
+- Active thin proposals: `3`, all Codex waiting proposals.
+- Queued handoffs: `0`.
+- Pending promoted outcomes: `0`.
+- Rich resolved outcomes: `0`.
+
+No LaunchAgent restart, push check, smoke event, report save, package save,
+queue mutation, outcome mutation, bridge-db save, or personal-ops mutation was
+performed during this update. Those remain approval-gated. The next safe
+operator lane is to use exactly one rich personal-ops mail proposal for the
+First Rich Proof Gate after explicit approval to save/validate a review package
+and queue one handoff.
 
 ## Runtime Truth Update (2026-06-14)
 

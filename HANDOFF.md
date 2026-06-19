@@ -1,33 +1,43 @@
 # Handoff — notification-hub
 
-## Current freshness note — 2026-06-07
+## Current freshness note — 2026-06-19
 
 Machine-wide handoffs now follow
 `/Users/d/.codex/docs/operating-layer/machine-wide-handoff-contract.md`.
 
-Fresh checks on 2026-06-07 found local `main` clean and aligned with
-`origin/main` at `97f5375`. Runtime status, logs, 10-minute burn-in,
-60-minute burn-in, and read-only runtime verification all reported `status:
-ok`; queued personal-ops handoffs `0`; pending promoted outcomes `0`;
-rejected posts `0`; validation errors `0`; and Slack delivery failures `0`.
+Fresh checks on 2026-06-19 found local `main` aligned with `origin/main` at
+`6b6e38e` before the current source-tree edits. An operator-approved Slack
+delivery check passed with event id `477a48b9e079`. The follow-up fix teaches
+`logs` and `burn-in` to keep historical Slack stderr visible without letting a
+fresh unrelated stderr write rehydrate old Slack failures into current health.
 
-Quality gates also passed for this note: `uv run --frozen pytest`, `uv run
---frozen pyright`, and `uv run --frozen ruff check`.
+Current source-tree verification passed: `uv lock --check`, `uv run --frozen
+--no-sync ruff check`, `uv run --frozen --no-sync pyright`, `uv run --frozen
+--no-sync pytest` (`408 passed`), and `uv run --directory mcp_server --frozen
+--no-sync pytest` (`9 passed`). Read-only runtime checks now report `status:
+ok` for `notification-hub-status`, `notification-hub-logs`, 10-minute
+`notification-hub-burn-in`, `notification-hub-verify-runtime`, live
+`/health/details`, and live `/review/coordination-console`.
 
-Current nuance: Coordination Console now has one active thin Codex proposal for
-`analyze-everything-we-re-working-on`, so First Rich Proof Gate is
-`blocked_thin_only`. Do not queue it as first-rich proof. Either wait for a
-rich-evidence proposal or explicitly park this thin proposal as
-`needs_follow_up` after operator review. Explicit Slack transport, LaunchAgent
-restart, and live write-route checks were not rerun in this freshness note; use
-the repo verifier before claiming a new green closeout.
+Current nuance: historical Slack failure tail evidence is still visible in
+`visible_daemon_summary`, but current Slack failure count is `0` after the fresh
+Slack delivery proof. Coordination Console reports First Rich Proof Gate
+`proof_required`: `5` active proposals, `2` rich personal-ops mail proposals,
+`3` thin Codex waiting proposals, queued handoffs `0`, pending promoted
+outcomes `0`, and rich resolved outcomes `0`. Do not use the thin Codex waiting
+proposals as first-rich proof.
 
-**Status:** Runtime truth hardening merged; first-rich gate waiting for candidate
-**Branch:** main
-**Last verified remote commit before this pass:** main matches origin/main at `255574e`
-**Tests:** `uv run --frozen pytest`, `uv run --frozen pyright`, `uv run --frozen ruff check`, Slack
-transport check, runtime doctor/status/burn-in/verify-runtime, live `/review/data`, and live POST
-report-save routes passed
+No LaunchAgent restart, push check, smoke event, report save, package save,
+queue mutation, outcome mutation, bridge-db save, or personal-ops mutation was
+performed during this update. Those remain approval-gated.
+
+**Status:** Runtime truth hardening implemented locally; First Rich Proof Gate is `proof_required`
+**Branch:** `main` with intentional local source/test/doc edits
+**Last verified remote commit before this pass:** main matched origin/main at `6b6e38e`
+**Tests:** `uv lock --check`, `uv run --frozen --no-sync ruff check`, `uv run --frozen --no-sync
+pyright`, `uv run --frozen --no-sync pytest`, `uv run --directory mcp_server --frozen --no-sync
+pytest`, read-only status/logs/burn-in/verify-runtime, live `/health/details`, and live
+`/review/coordination-console`
 
 ## Completed This Session
 
