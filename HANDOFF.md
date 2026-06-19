@@ -21,14 +21,10 @@ reported `status: ok` for `notification-hub-status`,
 `/review/coordination-console`.
 
 Current nuance: historical Slack failure tail evidence is still visible in
-`visible_daemon_summary`, but current Slack failure count is `0` after the fresh
-Slack delivery proof. After queueing, `notification-hub-status` and
-`notification-hub-verify-runtime` report `degraded` only because the import
-queue has one active queued handoff. Live `/health/details` and 10-minute
-`burn-in` health are still `ok`, with rejected posts `0`, validation errors
-`0`, and Slack delivery failures `0`. The current burn-in does show repeated
-personal-ops mail noise candidates; do not add broad `Approval Requested` or
-`Draft Ready` suppression while the first-rich lifecycle is active.
+older evidence, but current Slack failure count is `0` after the fresh Slack
+delivery proof. After the first-rich lifecycle was resolved,
+`notification-hub-status`, queue health, live `/health/details`, and
+Coordination Console all report `status: ok`.
 
 After operator approval, the LaunchAgent was restarted and is running from this
 repo at PID `38198`. A narrow rich `promote` package was saved, validated, and
@@ -36,17 +32,22 @@ queued:
 `/Users/d/.local/share/notification-hub/action-exports/personal-ops-actions-20260619-054639-991605.json`.
 It created queue item `f218f17b926fef24` for action
 `notification-hub:personal-ops:mail:needs_attention:approval-requested:7640ae5a6567`.
-No push check, smoke event, report save, bridge-db save, personal-ops mutation,
-or promoted outcome mutation was performed during this update.
+That handoff was promoted to Personal Ops task suggestion
+`81bf7cef-8ef2-4465-9149-453cd7d6ff4e`, accepted into Personal Ops task
+`b7bcb30b-d717-4daa-8242-f178d7e7183b`, and synced back to notification-hub
+as an accepted rich outcome. No push check, smoke event, report save,
+bridge-db save, Slack/push notification send, mail send, or approval-send
+mutation was performed during this update.
 
-**Status:** Runtime truth hardening implemented locally; First Rich Proof Gate is `finish_lifecycle`
+**Status:** Runtime truth hardening implemented locally; First Rich Proof Gate is `satisfied`
 **Branch:** `fix/runtime-historical-slack-failures`
 **Last verified remote commit before this pass:** main matched origin/main at `6b6e38e`
 **Tests:** `uv lock --check`, `uv run --frozen --no-sync ruff check`, `uv run --frozen --no-sync
 pyright`, `uv run --frozen --no-sync pytest`, `uv run --directory mcp_server --frozen --no-sync
 pytest`, read-only status/logs/burn-in/verify-runtime, live `/health/details`, and live
 `/review/coordination-console`; package validation and queue-health checks passed with the expected
-queue warning after one rich handoff was queued
+queue warning after one rich handoff was queued; post-resolution queue health, status,
+`/health/details`, and Coordination Console report `status: ok`
 
 ## Completed This Session
 
@@ -153,10 +154,10 @@ queue warning after one rich handoff was queued
 ## In Progress
 
 - Source-tree verification and live daemon health report notification-hub healthy.
-- Current live 10-minute burn-in health is OK but shows repeated personal-ops mail candidates in
-  the active window; treat them as review/noise evidence, not runtime-health failures.
-- First-rich proof collection is in lifecycle mode: one rich handoff is queued, and the next
-  operator-mediated step is review/promotion/outcome recording for queue item `f218f17b926fef24`.
+- First Rich Proof Gate is satisfied: one rich handoff was promoted, accepted downstream, and synced
+  back as an accepted outcome.
+- Personal Ops task `b7bcb30b-d717-4daa-8242-f178d7e7183b` remains the downstream operator task
+  created from suggestion `81bf7cef-8ef2-4465-9149-453cd7d6ff4e`.
 
 ## Blocked
 
@@ -164,13 +165,13 @@ queue warning after one rich handoff was queued
 
 ## Next Steps
 
-1. **Finish the queued first-rich lifecycle** — review queue item `f218f17b926fef24`, promote it
-   through personal-ops only if approved, then record the promoted outcome back in notification-hub.
+1. **Use the satisfied gate conservatively** — keep comparing rich and thin outcomes before widening
+   automation; do not queue additional handoffs just to make proof numbers larger.
 2. **Revisit mail workflow policy only if live noise returns** — tune only if the same repeats
    become current 10-minute candidates or active operator work; avoid broad `Approval Requested`
    suppression.
-3. **Resolve ADR 0001 later** — lineage rich-vs-thin supersession is still deferred until a real
-   promoted/resolved rich handoff appears under a prior `needs_follow_up` stable key.
+3. **Re-check ADR 0001 with the new rich outcome** — the repo now has one accepted rich outcome;
+   decide in a later targeted pass whether lineage rich-vs-thin supersession needs an update.
 4. **Observe `near_rollup_singles` in real use** — tune only if one-off resolved echoes or
    informational first occurrences become repeated operator noise.
 

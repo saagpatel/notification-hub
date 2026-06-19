@@ -106,14 +106,26 @@ First Rich Proof Gate update on 2026-06-19:
 - The same burn-in now shows repeated personal-ops mail noise candidates in the
   active window (`Draft Ready`, `Approval Requested`, and `Send Succeeded`
   repeats). Treat those as review/noise evidence, not runtime-health failures;
-  do not add broad mail suppression while the queued first-rich lifecycle is
-  still open.
+  do not add broad mail suppression based solely on this proof-lane evidence.
+- The queued handoff was promoted through Personal Ops:
+  - queue item: `f218f17b926fef24`
+  - Personal Ops task suggestion: `81bf7cef-8ef2-4465-9149-453cd7d6ff4e`
+  - accepted Personal Ops task: `b7bcb30b-d717-4daa-8242-f178d7e7183b`
+  - synced notification-hub outcome: `accepted`
+- Post-resolution queue health is `ok`: queued handoffs `0`, pending promoted
+  outcomes `0`, stale promoted outcomes `0`, promoted accepted count `6`.
+- Post-resolution Coordination Console is `status: ok`, readiness
+  `ready_to_expand`, First Rich Proof Gate `satisfied`, and
+  `rich_resolved_count: 1`.
+- Post-resolution `notification-hub-status --json` is `status: ok` with
+  runtime wiring current, import queue `ok`, Slack delivery failures `0`, and
+  `next_action: No action needed.`
 
-No push check, smoke event, report save, bridge-db save, personal-ops mutation,
-or promoted outcome mutation was performed during this update. The next
-operator-mediated step is to review queue item `f218f17b926fef24`, promote it
-through personal-ops only if the downstream operator action is approved, then
-record the promoted outcome back in notification-hub.
+No push check, smoke event, report save, bridge-db save, Slack/push
+notification send, mail send, or approval-send mutation was performed during
+this update. The next operator lane is conservative observation: keep comparing
+rich and thin outcomes before widening automation, and do not queue extra proof
+work just to increase counts.
 
 ## Runtime Truth Update (2026-06-14)
 
