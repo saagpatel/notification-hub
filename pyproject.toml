@@ -2,6 +2,7 @@
 name = "notification-hub"
 version = "0.1.0"
 description = "Unified notification daemon for Claude Code, Codex, and Claude.ai"
+license = "MIT"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.136.3",
@@ -73,4 +74,4 @@ exclude = ["ops/hooks"]
 
 [tool.ruff]
 target-version = "py312"
-line-length = 100
+extend = "../ruff.toml"
