@@ -5,7 +5,7 @@ description = "Unified notification daemon for Claude Code, Codex, and Claude.ai
 license = "MIT"
 requires-python = ">=3.12"
 dependencies = [
-    "fastapi>=0.136.3",
+    "fastapi>=0.137.2",
     "uvicorn[standard]>=0.49.0",
     "watchdog>=6.0.0",
     "httpx>=0.28.0",
