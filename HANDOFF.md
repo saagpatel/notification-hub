@@ -1,33 +1,53 @@
 # Handoff — notification-hub
 
-## Current freshness note — 2026-06-07
+## Current freshness note — 2026-06-19
 
 Machine-wide handoffs now follow
 `/Users/d/.codex/docs/operating-layer/machine-wide-handoff-contract.md`.
 
-Fresh checks on 2026-06-07 found local `main` clean and aligned with
-`origin/main` at `97f5375`. Runtime status, logs, 10-minute burn-in,
-60-minute burn-in, and read-only runtime verification all reported `status:
-ok`; queued personal-ops handoffs `0`; pending promoted outcomes `0`;
-rejected posts `0`; validation errors `0`; and Slack delivery failures `0`.
+Fresh checks on 2026-06-19 found local `main` aligned with `origin/main` at
+`6b6e38e` before the current source-tree edits. An operator-approved Slack
+delivery check passed with event id `477a48b9e079`. The follow-up fix teaches
+`logs` and `burn-in` to keep historical Slack stderr visible without letting a
+fresh unrelated stderr write rehydrate old Slack failures into current health.
 
-Quality gates also passed for this note: `uv run --frozen pytest`, `uv run
---frozen pyright`, and `uv run --frozen ruff check`.
+Current source-tree verification passed: `uv lock --check`, `uv run --frozen
+--no-sync ruff check`, `uv run --frozen --no-sync pyright`, `uv run --frozen
+--no-sync pytest` (`408 passed`), and `uv run --directory mcp_server --frozen
+--no-sync pytest` (`9 passed`). Before queueing, read-only runtime checks
+reported `status: ok` for `notification-hub-status`,
+`notification-hub-logs`, 10-minute `notification-hub-burn-in`,
+`notification-hub-verify-runtime`, live `/health/details`, and live
+`/review/coordination-console`.
 
-Current nuance: Coordination Console now has one active thin Codex proposal for
-`analyze-everything-we-re-working-on`, so First Rich Proof Gate is
-`blocked_thin_only`. Do not queue it as first-rich proof. Either wait for a
-rich-evidence proposal or explicitly park this thin proposal as
-`needs_follow_up` after operator review. Explicit Slack transport, LaunchAgent
-restart, and live write-route checks were not rerun in this freshness note; use
-the repo verifier before claiming a new green closeout.
+Current nuance: historical Slack failure tail evidence is still visible in
+older evidence, but current Slack failure count is `0` after the fresh Slack
+delivery proof. After the first-rich lifecycle was resolved,
+`notification-hub-status`, queue health, live `/health/details`, and
+Coordination Console all report `status: ok`.
 
-**Status:** Runtime truth hardening merged; first-rich gate waiting for candidate
-**Branch:** main
-**Last verified remote commit before this pass:** main matches origin/main at `255574e`
-**Tests:** `uv run --frozen pytest`, `uv run --frozen pyright`, `uv run --frozen ruff check`, Slack
-transport check, runtime doctor/status/burn-in/verify-runtime, live `/review/data`, and live POST
-report-save routes passed
+After operator approval, the LaunchAgent was restarted and is running from this
+repo at PID `38198`. A narrow rich `promote` package was saved, validated, and
+queued:
+`/Users/d/.local/share/notification-hub/action-exports/personal-ops-actions-20260619-054639-991605.json`.
+It created queue item `f218f17b926fef24` for action
+`notification-hub:personal-ops:mail:needs_attention:approval-requested:7640ae5a6567`.
+That handoff was promoted to Personal Ops task suggestion
+`81bf7cef-8ef2-4465-9149-453cd7d6ff4e`, accepted into Personal Ops task
+`b7bcb30b-d717-4daa-8242-f178d7e7183b`, and synced back to notification-hub
+as an accepted rich outcome. No push check, smoke event, report save,
+bridge-db save, Slack/push notification send, mail send, or approval-send
+mutation was performed during this update.
+
+**Status:** Runtime truth hardening implemented locally; First Rich Proof Gate is `satisfied`
+**Branch:** `fix/runtime-historical-slack-failures`
+**Last verified remote commit before this pass:** main matched origin/main at `6b6e38e`
+**Tests:** `uv lock --check`, `uv run --frozen --no-sync ruff check`, `uv run --frozen --no-sync
+pyright`, `uv run --frozen --no-sync pytest`, `uv run --directory mcp_server --frozen --no-sync
+pytest`, read-only status/logs/burn-in/verify-runtime, live `/health/details`, and live
+`/review/coordination-console`; package validation and queue-health checks passed with the expected
+queue warning after one rich handoff was queued; post-resolution queue health, status,
+`/health/details`, and Coordination Console report `status: ok`
 
 ## Completed This Session
 
@@ -133,10 +153,11 @@ report-save routes passed
 
 ## In Progress
 
-- Source-tree verification and live runtime checks report notification-hub healthy.
-- Current live 10-minute burn-in and `/review/noise-candidates` are clean. Older personal-ops mail
-  workflow repeats are visible only in wider windows and remain an observation item, not active work.
-- First-rich proof collection remains operator-mediated until one rich promoted handoff resolves.
+- Source-tree verification and live daemon health report notification-hub healthy.
+- First Rich Proof Gate is satisfied: one rich handoff was promoted, accepted downstream, and synced
+  back as an accepted outcome.
+- Personal Ops task `b7bcb30b-d717-4daa-8242-f178d7e7183b` remains the downstream operator task
+  created from suggestion `81bf7cef-8ef2-4465-9149-453cd7d6ff4e`.
 
 ## Blocked
 
@@ -144,13 +165,13 @@ report-save routes passed
 
 ## Next Steps
 
-1. **Use the First Rich Proof Gate on the next real rich proposal** — save and validate the package,
-   queue exactly one rich handoff, and record the promoted outcome before widening authority.
+1. **Use the satisfied gate conservatively** — keep comparing rich and thin outcomes before widening
+   automation; do not queue additional handoffs just to make proof numbers larger.
 2. **Revisit mail workflow policy only if live noise returns** — tune only if the same repeats
    become current 10-minute candidates or active operator work; avoid broad `Approval Requested`
    suppression.
-3. **Resolve ADR 0001 later** — lineage rich-vs-thin supersession is still deferred until a real
-   promoted/resolved rich handoff appears under a prior `needs_follow_up` stable key.
+3. **Re-check ADR 0001 with the new rich outcome** — the repo now has one accepted rich outcome;
+   decide in a later targeted pass whether lineage rich-vs-thin supersession needs an update.
 4. **Observe `near_rollup_singles` in real use** — tune only if one-off resolved echoes or
    informational first occurrences become repeated operator noise.
 
