@@ -200,7 +200,11 @@ def _persist_event_for_processing(event: Event) -> StoredEvent:
 
 
 def _process_durable_record(record: DurableEventRecord) -> None:
-    result = process_stored_event_with_result(record.event, raise_on_delivery_failure=True)
+    result = process_stored_event_with_result(
+        record.event,
+        raise_on_delivery_failure=True,
+        skip_duplicate_suppression=record.attempt_count > 1,
+    )
     mark_delivered(
         record.event_id,
         outcome=result.outcome,
