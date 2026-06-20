@@ -14,6 +14,12 @@ from notification_hub.diagnostics import (
     collect_runtime_readiness,
     collect_runtime_wiring,
 )
+from notification_hub.durable_inbox import (
+    claim_next_due_event,
+    enqueue_event,
+    record_processing_failure,
+)
+from notification_hub.models import StoredEvent
 
 
 def test_collect_runtime_readiness_reports_config_and_paths() -> None:
@@ -90,6 +96,41 @@ def test_collect_runtime_readiness_reports_config_and_paths() -> None:
         "hook_timeout_configured": True,
         "codex_hook_executable": True,
     }
+    durable_inbox = data["durable_inbox"]
+    assert isinstance(durable_inbox, dict)
+    assert durable_inbox["status"] == "ok"
+
+
+def test_collect_doctor_report_degrades_on_dead_lettered_events() -> None:
+    enqueue_event(
+        StoredEvent(
+            event_id="dead1",
+            source="codex",
+            level="info",
+            title="Dead letter",
+            body="This event exhausted retries.",
+            project="notification-hub",
+            classified_level="info",
+        ),
+        max_attempts=1,
+    )
+    claimed = claim_next_due_event()
+    assert claimed is not None
+    record_processing_failure(claimed, RuntimeError("boom"))
+
+    with patch(
+        "notification_hub.diagnostics.httpx.get",
+        side_effect=httpx.ConnectError("offline"),
+    ):
+        report = collect_doctor_report()
+
+    checks = report["checks"]
+    durable_inbox = report["durable_inbox"]
+    assert isinstance(checks, dict)
+    assert isinstance(durable_inbox, dict)
+    assert report["status"] == "degraded"
+    assert checks["durable_inbox_ok"] is False
+    assert durable_inbox["dead_letter_count"] == 1
 
 
 def test_collect_runtime_wiring_compares_installed_files_to_templates(

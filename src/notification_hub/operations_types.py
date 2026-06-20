@@ -168,7 +168,7 @@ class ActionProposalGroupDismissReport(TypedDict):
     group_key: str
     dismissed_count: int
     dismissals: list[ActionProposalDismissalReport]
-    group_history: "ActionProposalGroupHistoryReport | None"
+    group_history: ActionProposalGroupHistoryReport | None
     next_action: str
     applied: bool
     error: str | None
@@ -178,7 +178,7 @@ class ActionProposalGroupOutcomeReport(TypedDict):
     status: str
     group_key: str
     outcome: str | None
-    group_history: "ActionProposalGroupHistoryReport | None"
+    group_history: ActionProposalGroupHistoryReport | None
     next_action: str
     applied: bool
     error: str | None
@@ -567,6 +567,7 @@ class LogsReport(TypedDict):
     events_log: str
     stdout_log: str
     stderr_log: str
+    durable_inbox: dict[str, object]
     recent_events: list[RecentEventReport]
     daemon_summary: DaemonLogSummary
     visible_daemon_summary: DaemonLogSummary
@@ -613,6 +614,7 @@ class BurnInReport(TypedDict):
     status: str
     minutes: int
     events_seen: int
+    durable_inbox: dict[str, object]
     accepted_event_posts: int
     rejected_event_posts: int
     validation_error_count: int
@@ -645,7 +647,7 @@ class PolicyCheckReport(TypedDict):
     suggestion_count: int
     warnings: list[str]
     suggestions: list[str]
-    policy_drift: "PolicyDriftReport"
+    policy_drift: PolicyDriftReport
 
 
 class PolicyDriftReport(TypedDict):
@@ -666,6 +668,7 @@ class VerifyRuntimeReport(TypedDict):
     include_smoke: bool
     health_url: str | None
     checks: dict[str, bool]
+    durable_inbox: dict[str, object]
     import_queue: PersonalOpsImportQueueHealthReport
     runtime_wiring: dict[str, bool]
     doctor: dict[str, object]
@@ -686,6 +689,7 @@ class StatusReport(TypedDict):
     policy_warning_count: int
     retention_enabled: bool | None
     retention_last_status: str | None
+    durable_inbox: dict[str, object]
     runtime_wiring_current: bool
     push_notifier_available: bool | None
     slack_configured: bool | None

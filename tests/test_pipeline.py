@@ -12,10 +12,13 @@ import notification_hub.channels as channels_mod
 from notification_hub.config import PolicyConfig, RoutingPolicy, RoutingRule
 from notification_hub.models import Event, Level, Source
 from notification_hub.pipeline import (
+    DeliveryError,
     build_event_explanation_report,
+    build_stored_event,
     explain_event,
     get_suppression_engine,
     process_event,
+    process_stored_event_with_result,
     reset_suppression_engine,
 )
 
@@ -649,3 +652,16 @@ class TestPushFailureResilience:
             stored = process_event(_event(body="Approval needed for draft"))
         assert stored.classified_level == "urgent"
         assert tmp_log.exists()
+
+    def test_durable_worker_mode_raises_on_delivery_failure(self, tmp_log: Path) -> None:
+        event = build_stored_event(_event(body="Approval needed for draft"))
+        with (
+            patch("notification_hub.pipeline.send_push", return_value=False),
+            patch("notification_hub.pipeline.send_slack", return_value=True),
+            patch("notification_hub.pipeline.send_slack_digest", return_value=True),
+            _patch_daytime(),
+            pytest.raises(DeliveryError),
+        ):
+            process_stored_event_with_result(event, raise_on_delivery_failure=True)
+
+        assert not tmp_log.exists()

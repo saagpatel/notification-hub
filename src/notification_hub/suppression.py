@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from notification_hub.config import NoiseRule, get_policy_config
@@ -66,7 +66,7 @@ class SuppressionEngine:
         if not matching_rules:
             return False
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         max_window = max(rule.window_minutes for _index, rule in matching_rules)
         cutoff = now - timedelta(minutes=max_window)
         self._burst_dedup_log = {
@@ -91,7 +91,7 @@ class SuppressionEngine:
         policy = get_policy_config().suppression
         effective_level = event.classified_level or event.level
         key = (event.project, effective_level)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         last_seen = self._dedup_log.get(key)
         if last_seen and (now - last_seen) < timedelta(minutes=policy.dedup_window_minutes):
             logger.debug("Dedup suppressed: %s/%s", event.project, effective_level)
@@ -102,7 +102,7 @@ class SuppressionEngine:
     def is_quiet_hours(self, at: datetime | None = None) -> bool:
         """Check if current time is in configured quiet hours."""
         policy = get_policy_config().suppression
-        now_pacific = (at or datetime.now(timezone.utc)).astimezone(PACIFIC)
+        now_pacific = (at or datetime.now(UTC)).astimezone(PACIFIC)
         hour = now_pacific.hour
         if policy.quiet_start_hour == policy.quiet_end_hour:
             return False
@@ -131,7 +131,7 @@ class SuppressionEngine:
 
     def _prune_old(self, timestamps: list[datetime], window: timedelta) -> list[datetime]:
         """Remove timestamps older than window."""
-        cutoff = datetime.now(timezone.utc) - window
+        cutoff = datetime.now(UTC) - window
         return [t for t in timestamps if t > cutoff]
 
     def check_push_rate(self) -> bool:
@@ -145,7 +145,7 @@ class SuppressionEngine:
 
     def record_push(self) -> None:
         """Record a push notification send."""
-        self.record_push_at(datetime.now(timezone.utc))
+        self.record_push_at(datetime.now(UTC))
 
     def record_push_at(self, at: datetime) -> None:
         """Record a push notification at a specific time."""
@@ -162,7 +162,7 @@ class SuppressionEngine:
 
     def record_slack(self) -> None:
         """Record a Slack message send."""
-        self.record_slack_at(datetime.now(timezone.utc))
+        self.record_slack_at(datetime.now(UTC))
 
     def record_slack_at(self, at: datetime) -> None:
         """Record a Slack message at a specific time."""

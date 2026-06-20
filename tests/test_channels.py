@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 
+import notification_hub.channels as channels_mod
 from notification_hub.channels import (
     format_slack_digest,
     format_slack_message,
@@ -18,7 +19,6 @@ from notification_hub.channels import (
     send_slack_digest,
     write_jsonl,
 )
-import notification_hub.channels as channels_mod
 from notification_hub.models import Level, Source, StoredEvent
 
 

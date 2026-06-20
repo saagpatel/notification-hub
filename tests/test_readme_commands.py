@@ -8,7 +8,6 @@ import tomllib
 from pathlib import Path
 from typing import Any, NamedTuple, cast
 
-
 ROOT = Path(__file__).resolve().parents[1]
 
 

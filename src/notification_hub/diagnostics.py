@@ -8,6 +8,7 @@ import httpx
 
 import notification_hub.channels as channels_mod
 import notification_hub.config as config_mod
+from notification_hub.durable_inbox import collect_health as collect_durable_inbox_health
 
 _GENERIC_DIAGNOSTIC_ERROR = "diagnostic check failed; inspect local logs for details"
 
@@ -135,6 +136,7 @@ def collect_runtime_readiness() -> dict[str, object]:
         "config": config,
         "retention": retention,
         "runtime_wiring": collect_runtime_wiring(),
+        "durable_inbox": collect_durable_inbox_health(),
     }
 
 
@@ -167,6 +169,7 @@ def collect_doctor_report() -> dict[str, object]:
     delivery = cast(DeliveryStatus, readiness["delivery"])
     config = cast(ConfigStatus, readiness["config"])
     wiring = cast(RuntimeWiringStatus, readiness["runtime_wiring"])
+    durable_inbox = cast(dict[str, object], readiness.get("durable_inbox", {}))
 
     checks = {
         "local_api_healthy": bool(local_api["reachable"]),
@@ -176,6 +179,7 @@ def collect_doctor_report() -> dict[str, object]:
         "slack_configured": bool(delivery["slack_webhook_configured"]),
         "policy_load_ok": config["load_error"] is None,
         "runtime_wiring_current": all(wiring.values()),
+        "durable_inbox_ok": durable_inbox.get("status") == "ok",
     }
     overall_status = "ok" if all(checks.values()) else "degraded"
 

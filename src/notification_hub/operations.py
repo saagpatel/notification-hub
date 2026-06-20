@@ -9,7 +9,8 @@ import re
 import shutil
 import sqlite3
 import tempfile
-from datetime import datetime, timedelta, timezone
+import time
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
 
@@ -23,27 +24,42 @@ from notification_hub.config import (
     EVENTS_LOG,
     EXAMPLE_POLICY_CONFIG,
     HOST,
-    NoiseRule,
     POLICY_CONFIG,
     PORT,
+    NoiseRule,
     PolicyConfig,
     analyze_policy_config,
     get_policy_config,
     load_policy_config_file,
 )
 from notification_hub.diagnostics import collect_doctor_report
+from notification_hub.durable_inbox import collect_health as collect_durable_inbox_health
 from notification_hub.models import Event, StoredEvent
 from notification_hub.operations_actions import (
     action_evidence_quality as _action_evidence_quality,
+)
+from notification_hub.operations_actions import (
     action_from_rollup as _action_from_rollup,
+)
+from notification_hub.operations_actions import (
     action_proposal_candidate_limit as _action_proposal_candidate_limit,
+)
+from notification_hub.operations_actions import (
     evidence_quality as _evidence_quality,
+)
+from notification_hub.operations_actions import (
     raw_queue_item_evidence_quality as _raw_queue_item_evidence_quality,
 )
 from notification_hub.operations_inbox import (
     build_inbox_rollups as _build_inbox_rollups,
+)
+from notification_hub.operations_inbox import (
     build_near_rollup_singles as _build_near_rollup_singles,
+)
+from notification_hub.operations_inbox import (
     inbox_item as _inbox_item,
+)
+from notification_hub.operations_inbox import (
     intent_bucket as _intent_bucket,
 )
 from notification_hub.operations_logs import (
@@ -54,95 +70,257 @@ from notification_hub.operations_logs import (
 from notification_hub.operations_packages import (
     ACTION_EXPORT_DIR,
     ACTION_EXPORT_SCHEMA_VERSION,
-    action_dicts_from_payload as _action_dicts_from_payload,
     action_review_package_path_for_name,
+)
+from notification_hub.operations_packages import (
+    action_dicts_from_payload as _action_dicts_from_payload,
+)
+from notification_hub.operations_packages import (
     delete_action_review_package as delete_action_review_package,
+)
+from notification_hub.operations_packages import (
     empty_package_validation as _empty_package_validation,
+)
+from notification_hub.operations_packages import (
     list_action_review_packages as list_action_review_packages,
+)
+from notification_hub.operations_packages import (
     load_action_package_payload as _load_action_package_payload,
+)
+from notification_hub.operations_packages import (
     prune_action_export_files as prune_action_export_files,
+)
+from notification_hub.operations_packages import (
     validate_action_package as validate_action_package,
+)
+from notification_hub.operations_packages import (
     write_action_review_package as _write_action_review_package,
 )
 from notification_hub.operations_proposals import (
     active_action_proposal_dismissals as _active_action_proposal_dismissals,
+)
+from notification_hub.operations_proposals import (
     dismiss_action_proposal,
-    list_action_proposal_dismissals as list_action_proposal_dismissals,
     list_action_proposal_group_history,
+)
+from notification_hub.operations_proposals import (
+    list_action_proposal_dismissals as list_action_proposal_dismissals,
+)
+from notification_hub.operations_proposals import (
     recent_group_history as _recent_group_history,
+)
+from notification_hub.operations_proposals import (
     record_action_proposal_group_history as _record_action_proposal_group_history,
+)
+from notification_hub.operations_proposals import (
     run_action_proposal_dismissal_list as run_action_proposal_dismissal_list,
+)
+from notification_hub.operations_proposals import (
     undismiss_action_proposal as undismiss_action_proposal,
 )
 from notification_hub.operations_types import (
-    SmokeReport as SmokeReport,
-    DeliveryCheckReport as DeliveryCheckReport,
-    DeliveryCheckState as DeliveryCheckState,
-    RetentionReport as RetentionReport,
-    RecentEventReport as RecentEventReport,
-    InboxItemReport as InboxItemReport,
-    InboxRollupReport as InboxRollupReport,
-    InboxReport as InboxReport,
-    PersonalOpsActionReport as PersonalOpsActionReport,
-    ActionProposalDismissalReport as ActionProposalDismissalReport,
-    ActionProposalDismissReport as ActionProposalDismissReport,
-    ActionProposalDismissalListReport as ActionProposalDismissalListReport,
-    ActionProposalUndismissReport as ActionProposalUndismissReport,
-    ActionProposalGroupPackageReport as ActionProposalGroupPackageReport,
-    ActionProposalGroupDismissReport as ActionProposalGroupDismissReport,
-    ActionProposalGroupOutcomeReport as ActionProposalGroupOutcomeReport,
-    ActionProposalGroupHistoryReport as ActionProposalGroupHistoryReport,
-    OperatorReviewSessionGroupSummary as OperatorReviewSessionGroupSummary,
-    OperatorReviewSessionReport as OperatorReviewSessionReport,
-    OperatorReviewSessionReportSummary as OperatorReviewSessionReportSummary,
-    OperatorReviewSessionReportDetail as OperatorReviewSessionReportDetail,
-    OperatorReviewSessionRetentionReport as OperatorReviewSessionRetentionReport,
     ActionExportRetentionReport as ActionExportRetentionReport,
-    PersonalOpsActionExportReport as PersonalOpsActionExportReport,
+)
+from notification_hub.operations_types import (
     ActionPackageValidationReport as ActionPackageValidationReport,
-    ActionReviewPackageReport as ActionReviewPackageReport,
-    ActionReviewPackageDetailReport as ActionReviewPackageDetailReport,
+)
+from notification_hub.operations_types import (
+    ActionProposalDismissalListReport as ActionProposalDismissalListReport,
+)
+from notification_hub.operations_types import (
+    ActionProposalDismissalReport as ActionProposalDismissalReport,
+)
+from notification_hub.operations_types import (
+    ActionProposalDismissReport as ActionProposalDismissReport,
+)
+from notification_hub.operations_types import (
+    ActionProposalGroupDismissReport as ActionProposalGroupDismissReport,
+)
+from notification_hub.operations_types import (
+    ActionProposalGroupHistoryReport as ActionProposalGroupHistoryReport,
+)
+from notification_hub.operations_types import (
+    ActionProposalGroupOutcomeReport as ActionProposalGroupOutcomeReport,
+)
+from notification_hub.operations_types import (
+    ActionProposalGroupPackageReport as ActionProposalGroupPackageReport,
+)
+from notification_hub.operations_types import (
+    ActionProposalUndismissReport as ActionProposalUndismissReport,
+)
+from notification_hub.operations_types import (
     ActionReviewPackageDeleteReport as ActionReviewPackageDeleteReport,
-    PersonalOpsImportReport as PersonalOpsImportReport,
-    PersonalOpsImportQueueItemReport as PersonalOpsImportQueueItemReport,
-    PersonalOpsImportQueueUpdateReport as PersonalOpsImportQueueUpdateReport,
-    PersonalOpsImportQueueHealthReport as PersonalOpsImportQueueHealthReport,
-    PersonalOpsImportQueueHealthCheckReport as PersonalOpsImportQueueHealthCheckReport,
-    PersonalOpsQueueReviewBatchReport as PersonalOpsQueueReviewBatchReport,
-    PersonalOpsQueueReviewReport as PersonalOpsQueueReviewReport,
-    PersonalOpsOutcomeSyncReminderReport as PersonalOpsOutcomeSyncReminderReport,
-    PersonalOpsQueueScenarioReport as PersonalOpsQueueScenarioReport,
-    PersonalOpsQueueBurnInReport as PersonalOpsQueueBurnInReport,
-    PersonalOpsQueueBurnInReportSummary as PersonalOpsQueueBurnInReportSummary,
-    PersonalOpsQueueBurnInReportDetail as PersonalOpsQueueBurnInReportDetail,
-    BridgeSaveReport as BridgeSaveReport,
-    CoordinationSnapshotReport as CoordinationSnapshotReport,
-    LogsReport as LogsReport,
-    DaemonLogSummary as DaemonLogSummary,
-    RepeatedSignatureReport as RepeatedSignatureReport,
-    BurnInHealthReport as BurnInHealthReport,
-    SlackVolumeReport as SlackVolumeReport,
-    BurnInReport as BurnInReport,
+)
+from notification_hub.operations_types import (
+    ActionReviewPackageDetailReport as ActionReviewPackageDetailReport,
+)
+from notification_hub.operations_types import (
+    ActionReviewPackageReport as ActionReviewPackageReport,
+)
+from notification_hub.operations_types import (
     BootstrapConfigReport as BootstrapConfigReport,
-    PolicyCheckReport as PolicyCheckReport,
-    PolicyDriftReport as PolicyDriftReport,
-    VerifyRuntimeReport as VerifyRuntimeReport,
-    StatusReport as StatusReport,
-    CoordinationReadinessReport as CoordinationReadinessReport,
+)
+from notification_hub.operations_types import (
+    BridgeSaveReport as BridgeSaveReport,
+)
+from notification_hub.operations_types import (
+    BurnInHealthReport as BurnInHealthReport,
+)
+from notification_hub.operations_types import (
+    BurnInReport as BurnInReport,
+)
+from notification_hub.operations_types import (
     CoordinationConsoleActionReport as CoordinationConsoleActionReport,
-    CoordinationProposalRouteRecommendation as CoordinationProposalRouteRecommendation,
-    CoordinationProposalReviewGroup as CoordinationProposalReviewGroup,
-    CoordinationProposalReviewReport as CoordinationProposalReviewReport,
+)
+from notification_hub.operations_types import (
     CoordinationConsoleGuideStep as CoordinationConsoleGuideStep,
-    CoordinationNextSignalReport as CoordinationNextSignalReport,
-    HandoffOutcomeQualityBucket as HandoffOutcomeQualityBucket,
-    HandoffOutcomeQualityReport as HandoffOutcomeQualityReport,
-    FirstRichHandoffGateReport as FirstRichHandoffGateReport,
+)
+from notification_hub.operations_types import (
     CoordinationConsoleReport as CoordinationConsoleReport,
+)
+from notification_hub.operations_types import (
+    CoordinationNextSignalReport as CoordinationNextSignalReport,
+)
+from notification_hub.operations_types import (
+    CoordinationProposalReviewGroup as CoordinationProposalReviewGroup,
+)
+from notification_hub.operations_types import (
+    CoordinationProposalReviewReport as CoordinationProposalReviewReport,
+)
+from notification_hub.operations_types import (
+    CoordinationProposalRouteRecommendation as CoordinationProposalRouteRecommendation,
+)
+from notification_hub.operations_types import (
+    CoordinationReadinessReport as CoordinationReadinessReport,
+)
+from notification_hub.operations_types import (
+    CoordinationSnapshotReport as CoordinationSnapshotReport,
+)
+from notification_hub.operations_types import (
+    DaemonLogSummary as DaemonLogSummary,
+)
+from notification_hub.operations_types import (
+    DeliveryCheckReport as DeliveryCheckReport,
+)
+from notification_hub.operations_types import (
+    DeliveryCheckState as DeliveryCheckState,
+)
+from notification_hub.operations_types import (
+    FirstRichHandoffGateReport as FirstRichHandoffGateReport,
+)
+from notification_hub.operations_types import (
+    HandoffOutcomeQualityBucket as HandoffOutcomeQualityBucket,
+)
+from notification_hub.operations_types import (
+    HandoffOutcomeQualityReport as HandoffOutcomeQualityReport,
+)
+from notification_hub.operations_types import (
+    InboxItemReport as InboxItemReport,
+)
+from notification_hub.operations_types import (
+    InboxReport as InboxReport,
+)
+from notification_hub.operations_types import (
+    InboxRollupReport as InboxRollupReport,
+)
+from notification_hub.operations_types import (
+    LogsReport as LogsReport,
+)
+from notification_hub.operations_types import (
     NoiseCandidateReviewItem as NoiseCandidateReviewItem,
+)
+from notification_hub.operations_types import (
     NoiseCandidateReviewReport as NoiseCandidateReviewReport,
+)
+from notification_hub.operations_types import (
     OperatorDailyStateReport as OperatorDailyStateReport,
+)
+from notification_hub.operations_types import (
     OperatorHandoffDrillReport as OperatorHandoffDrillReport,
+)
+from notification_hub.operations_types import (
+    OperatorReviewSessionGroupSummary as OperatorReviewSessionGroupSummary,
+)
+from notification_hub.operations_types import (
+    OperatorReviewSessionReport as OperatorReviewSessionReport,
+)
+from notification_hub.operations_types import (
+    OperatorReviewSessionReportDetail as OperatorReviewSessionReportDetail,
+)
+from notification_hub.operations_types import (
+    OperatorReviewSessionReportSummary as OperatorReviewSessionReportSummary,
+)
+from notification_hub.operations_types import (
+    OperatorReviewSessionRetentionReport as OperatorReviewSessionRetentionReport,
+)
+from notification_hub.operations_types import (
+    PersonalOpsActionExportReport as PersonalOpsActionExportReport,
+)
+from notification_hub.operations_types import (
+    PersonalOpsActionReport as PersonalOpsActionReport,
+)
+from notification_hub.operations_types import (
+    PersonalOpsImportQueueHealthCheckReport as PersonalOpsImportQueueHealthCheckReport,
+)
+from notification_hub.operations_types import (
+    PersonalOpsImportQueueHealthReport as PersonalOpsImportQueueHealthReport,
+)
+from notification_hub.operations_types import (
+    PersonalOpsImportQueueItemReport as PersonalOpsImportQueueItemReport,
+)
+from notification_hub.operations_types import (
+    PersonalOpsImportQueueUpdateReport as PersonalOpsImportQueueUpdateReport,
+)
+from notification_hub.operations_types import (
+    PersonalOpsImportReport as PersonalOpsImportReport,
+)
+from notification_hub.operations_types import (
+    PersonalOpsOutcomeSyncReminderReport as PersonalOpsOutcomeSyncReminderReport,
+)
+from notification_hub.operations_types import (
+    PersonalOpsQueueBurnInReport as PersonalOpsQueueBurnInReport,
+)
+from notification_hub.operations_types import (
+    PersonalOpsQueueBurnInReportDetail as PersonalOpsQueueBurnInReportDetail,
+)
+from notification_hub.operations_types import (
+    PersonalOpsQueueBurnInReportSummary as PersonalOpsQueueBurnInReportSummary,
+)
+from notification_hub.operations_types import (
+    PersonalOpsQueueReviewBatchReport as PersonalOpsQueueReviewBatchReport,
+)
+from notification_hub.operations_types import (
+    PersonalOpsQueueReviewReport as PersonalOpsQueueReviewReport,
+)
+from notification_hub.operations_types import (
+    PersonalOpsQueueScenarioReport as PersonalOpsQueueScenarioReport,
+)
+from notification_hub.operations_types import (
+    PolicyCheckReport as PolicyCheckReport,
+)
+from notification_hub.operations_types import (
+    PolicyDriftReport as PolicyDriftReport,
+)
+from notification_hub.operations_types import (
+    RecentEventReport as RecentEventReport,
+)
+from notification_hub.operations_types import (
+    RepeatedSignatureReport as RepeatedSignatureReport,
+)
+from notification_hub.operations_types import (
+    RetentionReport as RetentionReport,
+)
+from notification_hub.operations_types import (
+    SlackVolumeReport as SlackVolumeReport,
+)
+from notification_hub.operations_types import (
+    SmokeReport as SmokeReport,
+)
+from notification_hub.operations_types import (
+    StatusReport as StatusReport,
+)
+from notification_hub.operations_types import (
+    VerifyRuntimeReport as VerifyRuntimeReport,
 )
 
 _GENERIC_OPERATION_ERROR = "operation failed; inspect local logs for details"
@@ -474,7 +652,7 @@ def _parse_iso_datetime(value: str | None) -> datetime | None:
     except ValueError:
         return None
     if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=timezone.utc)
+        return parsed.replace(tzinfo=UTC)
     return parsed
 
 
@@ -482,7 +660,7 @@ def _delivery_check_is_fresh(value: str | None) -> bool:
     checked_at = _parse_iso_datetime(value)
     if checked_at is None:
         return False
-    return datetime.now(timezone.utc) - checked_at <= timedelta(hours=DELIVERY_CHECK_FRESHNESS_HOURS)
+    return datetime.now(UTC) - checked_at <= timedelta(hours=DELIVERY_CHECK_FRESHNESS_HOURS)
 
 
 def _fresh_slack_delivery_success_at() -> datetime | None:
@@ -490,7 +668,7 @@ def _fresh_slack_delivery_success_at() -> datetime | None:
     checked_at = _parse_iso_datetime(latest_delivery_check["last_slack_ok_at"])
     if checked_at is None:
         return None
-    if datetime.now(timezone.utc) - checked_at > timedelta(hours=DELIVERY_CHECK_FRESHNESS_HOURS):
+    if datetime.now(UTC) - checked_at > timedelta(hours=DELIVERY_CHECK_FRESHNESS_HOURS):
         return None
     return checked_at
 
@@ -526,9 +704,7 @@ def _recent_queue_item_reports(
             recent.append(item)
     return sorted(
         recent,
-        key=lambda item: (
-            _queue_item_activity_datetime(item) or datetime.min.replace(tzinfo=timezone.utc)
-        ),
+        key=lambda item: _queue_item_activity_datetime(item) or datetime.min.replace(tzinfo=UTC),
         reverse=True,
     )[: max(limit, 1)]
 
@@ -550,7 +726,7 @@ def run_operator_review_session(
     group_history_path: Path | None = None,
 ) -> OperatorReviewSessionReport:
     """Summarize recent local review activity without applying work."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     bounded_hours = max(hours, 1)
     bounded_limit = max(limit, 1)
     since = now - timedelta(hours=bounded_hours)
@@ -668,7 +844,7 @@ def write_operator_review_session_report(
     output_dir: Path | None = None,
 ) -> dict[str, object]:
     target_dir = output_dir or OPERATOR_REVIEW_SESSION_REPORT_DIR
-    generated_at = datetime.now(timezone.utc)
+    generated_at = datetime.now(UTC)
     target_path = target_dir / (
         f"operator-review-session-{generated_at.strftime('%Y%m%d-%H%M%S')}.json"
     )
@@ -715,7 +891,7 @@ def _operator_review_session_report_summary(
     return {
         "path": str(path),
         "name": path.name,
-        "modified_at": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
+        "modified_at": datetime.fromtimestamp(stat.st_mtime, UTC).isoformat(),
         "size_bytes": stat.st_size,
         "status": _as_str(report.get("status")) or "unknown",
         "generated_at": _as_str(payload.get("generated_at")),
@@ -964,7 +1140,7 @@ def summarize_personal_ops_import_queue(
     except OSError:
         raw_items = []
     counts, promotion_outcomes = _queue_status_counts(raw_items)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     queued_items = [item for item in raw_items if item.get("status") == "queued"]
     oldest = _oldest_queue_timestamp(queued_items, "enqueued_at")
     age = (now - oldest).total_seconds() if oldest is not None else None
@@ -1270,7 +1446,7 @@ def _write_personal_ops_queue_burn_in_report(
     output_dir: Path | None = None,
 ) -> dict[str, object]:
     target_dir = output_dir or BURN_IN_REPORT_DIR
-    generated_at = datetime.now(timezone.utc)
+    generated_at = datetime.now(UTC)
     target_path = target_dir / (
         f"personal-ops-queue-burn-in-{generated_at.strftime('%Y%m%d-%H%M%S')}.json"
     )
@@ -1306,7 +1482,7 @@ def write_operator_daily_state_report(
     output_dir: Path | None = None,
 ) -> dict[str, object]:
     target_dir = output_dir or OPERATOR_STATE_REPORT_DIR
-    generated_at = datetime.now(timezone.utc)
+    generated_at = datetime.now(UTC)
     target_path = target_dir / (
         f"operator-daily-state-{generated_at.strftime('%Y%m%d-%H%M%S')}.json"
     )
@@ -1363,7 +1539,7 @@ def _burn_in_report_summary(
     return {
         "path": str(path),
         "name": path.name,
-        "modified_at": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
+        "modified_at": datetime.fromtimestamp(stat.st_mtime, UTC).isoformat(),
         "size_bytes": stat.st_size,
         "status": _as_str(report.get("status")) or "unknown",
         "generated_at": _as_str(payload.get("generated_at")),
@@ -1574,7 +1750,7 @@ def _enqueue_personal_ops_import_actions(
         for item in existing_items
         if item.get("status") == "queued" and isinstance((action_id := item.get("action_id")), str)
     }
-    enqueued_at = datetime.now(timezone.utc).isoformat()
+    enqueued_at = datetime.now(UTC).isoformat()
     queued_count = 0
     skipped_count = 0
     target_queue_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -1585,7 +1761,7 @@ def _enqueue_personal_ops_import_actions(
             if not isinstance(action_id, str) or action_id in existing_action_ids:
                 skipped_count += 1
                 continue
-            queue_seed = f"{action_id}:{package_path}".encode("utf-8")
+            queue_seed = f"{action_id}:{package_path}".encode()
             queue_item = {
                 "schema_version": PERSONAL_OPS_IMPORT_QUEUE_SCHEMA_VERSION,
                 "queue_id": hashlib.sha256(queue_seed).hexdigest()[:16],
@@ -1779,7 +1955,7 @@ def update_personal_ops_import_queue_item(
         )
 
     matched: dict[str, object] | None = None
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     for item in raw_items:
         if item.get("queue_id") != queue_id:
             continue
@@ -1880,7 +2056,7 @@ def run_smoke_check() -> SmokeReport:
         source="codex",
         level="info",
         title="Notification Hub smoke check",
-        body=f"Smoke check at {datetime.now(timezone.utc).isoformat()}",
+        body=f"Smoke check at {datetime.now(UTC).isoformat()}",
         project="notification-hub",
     )
 
@@ -1900,7 +2076,12 @@ def run_smoke_check() -> SmokeReport:
         event_id = response.json().get("event_id")
         log_verified = False
         if isinstance(event_id, str):
-            log_verified = any(event.event_id == event_id for event in read_jsonl())
+            deadline = time.monotonic() + 5.0
+            while time.monotonic() < deadline:
+                log_verified = any(event.event_id == event_id for event in read_jsonl())
+                if log_verified:
+                    break
+                time.sleep(0.1)
 
         return {
             "status": "ok" if log_verified else "degraded",
@@ -1930,6 +2111,7 @@ def run_logs(*, events: int = 5, lines: int = 20) -> LogsReport:
         for path in (EVENTS_LOG, DAEMON_STDOUT_LOG, DAEMON_STDERR_LOG)
         if not path.exists()
     ]
+    durable_inbox = dict(collect_durable_inbox_health())
 
     try:
         stored_events = read_jsonl(path=EVENTS_LOG)
@@ -1943,7 +2125,7 @@ def run_logs(*, events: int = 5, lines: int = 20) -> LogsReport:
         stderr_health_tail = _tail_text_file_if_recent(
             DAEMON_STDERR_LOG,
             lines=lines,
-            cutoff=datetime.now(timezone.utc) - timedelta(hours=1),
+            cutoff=datetime.now(UTC) - timedelta(hours=1),
         )
         daemon_summary = summarize_daemon_logs(
             stdout_tail,
@@ -1958,6 +2140,7 @@ def run_logs(*, events: int = 5, lines: int = 20) -> LogsReport:
             "events_log": str(EVENTS_LOG),
             "stdout_log": str(DAEMON_STDOUT_LOG),
             "stderr_log": str(DAEMON_STDERR_LOG),
+            "durable_inbox": durable_inbox,
             "recent_events": [],
             "daemon_summary": summarize_daemon_logs([], []),
             "visible_daemon_summary": summarize_daemon_logs([], []),
@@ -1975,6 +2158,7 @@ def run_logs(*, events: int = 5, lines: int = 20) -> LogsReport:
         and daemon_summary["rejected_event_posts"] == 0
         and daemon_summary["validation_error_count"] == 0
         and daemon_summary["slack_delivery_failure_count"] == 0
+        and durable_inbox["status"] == "ok"
         else "degraded"
     )
     return {
@@ -1982,6 +2166,7 @@ def run_logs(*, events: int = 5, lines: int = 20) -> LogsReport:
         "events_log": str(EVENTS_LOG),
         "stdout_log": str(DAEMON_STDOUT_LOG),
         "stderr_log": str(DAEMON_STDERR_LOG),
+        "durable_inbox": durable_inbox,
         "recent_events": recent_events,
         "daemon_summary": daemon_summary,
         "visible_daemon_summary": visible_daemon_summary,
@@ -2047,7 +2232,7 @@ def _tail_text_file_if_recent(path: Path, *, lines: int, cutoff: datetime) -> li
     if lines <= 0 or not path.exists():
         return []
     try:
-        modified_at = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
+        modified_at = datetime.fromtimestamp(path.stat().st_mtime, tz=UTC)
     except OSError:
         return []
     if modified_at < cutoff:
@@ -2059,13 +2244,14 @@ def run_burn_in(*, minutes: int = 10, lines: int = 200) -> BurnInReport:
     """Summarize recent health failures and repeated/noisy event signatures."""
     window_minutes = max(minutes, 1)
     tail_lines = max(lines, 0)
-    cutoff = datetime.now(timezone.utc) - timedelta(minutes=window_minutes)
+    cutoff = datetime.now(UTC) - timedelta(minutes=window_minutes)
+    durable_inbox = dict(collect_durable_inbox_health())
     try:
         stored_events = read_jsonl(path=EVENTS_LOG)
         event_timestamps = _event_timestamps_by_id(stored_events)
         slack_success_at = _fresh_slack_delivery_success_at()
         recent_events = [
-            event for event in stored_events if event.timestamp.astimezone(timezone.utc) >= cutoff
+            event for event in stored_events if event.timestamp.astimezone(UTC) >= cutoff
         ]
         signatures: dict[tuple[str, str | None, str, str, str], int] = {}
         for event in recent_events:
@@ -2127,6 +2313,7 @@ def run_burn_in(*, minutes: int = 10, lines: int = 200) -> BurnInReport:
             "status": "degraded",
             "minutes": window_minutes,
             "events_seen": 0,
+            "durable_inbox": durable_inbox,
             "accepted_event_posts": 0,
             "rejected_event_posts": 0,
             "validation_error_count": 0,
@@ -2152,6 +2339,7 @@ def run_burn_in(*, minutes: int = 10, lines: int = 200) -> BurnInReport:
         if daemon_summary["rejected_event_posts"] == 0
         and daemon_summary["validation_error_count"] == 0
         and daemon_summary["slack_delivery_failure_count"] == 0
+        and durable_inbox["status"] == "ok"
         else "degraded"
     )
     noise_candidates = _filter_known_noise_candidates(repeated)[:10]
@@ -2160,6 +2348,7 @@ def run_burn_in(*, minutes: int = 10, lines: int = 200) -> BurnInReport:
         "status": health_status,
         "minutes": window_minutes,
         "events_seen": len(recent_events),
+        "durable_inbox": durable_inbox,
         "accepted_event_posts": daemon_summary["accepted_event_posts"],
         "rejected_event_posts": daemon_summary["rejected_event_posts"],
         "validation_error_count": daemon_summary["validation_error_count"],
@@ -2185,12 +2374,12 @@ def run_inbox(*, hours: int = 24, limit: int = 10) -> InboxReport:
     """Summarize recent events by coordination intent for operator review."""
     window_hours = max(hours, 1)
     item_limit = max(limit, 1)
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=window_hours)
+    cutoff = datetime.now(UTC) - timedelta(hours=window_hours)
     try:
         stored_events = [
             event
             for event in read_jsonl(path=EVENTS_LOG)
-            if event.timestamp.astimezone(timezone.utc) >= cutoff
+            if event.timestamp.astimezone(UTC) >= cutoff
         ]
     except (OSError, ValueError):
         return {
@@ -2243,7 +2432,7 @@ def run_coordination_snapshot(
     bridge_db_path: Path | None = None,
 ) -> CoordinationSnapshotReport:
     """Build a bridge-ready coordination snapshot, optionally saving it to bridge-db."""
-    generated_at = datetime.now(timezone.utc)
+    generated_at = datetime.now(UTC)
     inbox = run_inbox(hours=hours, limit=limit)
     runtime_status = run_status()
     follow_up: list[str] = []
@@ -2336,7 +2525,7 @@ def run_personal_ops_action_export(
     """Prepare personal-ops action proposals without mutating personal-ops."""
     window_hours = max(hours, 1)
     item_limit = max(limit, 1)
-    generated_at = datetime.now(timezone.utc).isoformat()
+    generated_at = datetime.now(UTC).isoformat()
     inbox = run_inbox(
         hours=window_hours,
         limit=_action_proposal_candidate_limit(item_limit),
@@ -2841,7 +3030,7 @@ def run_personal_ops_queue_scenario() -> PersonalOpsQueueScenarioReport:
             json.dumps(
                 {
                     "schema_version": ACTION_EXPORT_SCHEMA_VERSION,
-                    "generated_at": datetime.now(timezone.utc).isoformat(),
+                    "generated_at": datetime.now(UTC).isoformat(),
                     "hours": 2,
                     "actions": [
                         {
@@ -2856,7 +3045,7 @@ def run_personal_ops_queue_scenario() -> PersonalOpsQueueScenarioReport:
                             "intent": "test",
                             "count": 1,
                             "evidence_event_id": "scenario-event-1",
-                            "evidence_timestamp": datetime.now(timezone.utc).isoformat(),
+                            "evidence_timestamp": datetime.now(UTC).isoformat(),
                             "evidence_context": {
                                 "thread_id": "scenario-thread-1",
                                 "draft_id": "scenario-draft-1",
@@ -2981,7 +3170,7 @@ def run_retention(*, max_events: int, keep_archives: int) -> RetentionReport:
 
     archive_dir = EVENTS_DIR / "archive"
     archive_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-    archive_path = archive_dir / f"events-{datetime.now(timezone.utc):%Y%m%d-%H%M%S-%f}.jsonl"
+    archive_path = archive_dir / f"events-{datetime.now(UTC):%Y%m%d-%H%M%S-%f}.jsonl"
 
     archived_lines = lines[:-max_events]
     remaining_lines = lines[-max_events:]
@@ -3197,7 +3386,7 @@ def run_delivery_check(
         failures.append("Push delivery check failed")
     if slack_ok is True or push_ok is True:
         state = _read_delivery_check_state()
-        checked_at = datetime.now(timezone.utc).isoformat()
+        checked_at = datetime.now(UTC).isoformat()
         if slack_ok is True:
             state["last_slack_ok_at"] = checked_at
             state["last_slack_event_id"] = event.event_id
@@ -3237,13 +3426,19 @@ def run_verify_runtime(
 
     doctor_checks = _as_dict(doctor.get("checks"))
     local_api = _as_dict(doctor.get("local_api"))
+    payload = _as_dict(local_api.get("payload"))
     runtime_wiring = _as_dict(doctor.get("runtime_wiring"))
+    local_api_durable_inbox = _as_dict(payload.get("durable_inbox"))
+    durable_inbox = local_api_durable_inbox or _as_dict(doctor.get("durable_inbox"))
+    if not durable_inbox:
+        durable_inbox = dict(collect_durable_inbox_health())
 
     checks = {
         "doctor_ok": doctor.get("status") == "ok",
         "policy_check_ok": policy_check["status"] != "degraded",
         "health_details_reachable": local_api.get("reachable") is True,
         "runtime_wiring_current": doctor_checks.get("runtime_wiring_current") is True,
+        "durable_inbox_ok": durable_inbox.get("status") == "ok",
         "recent_runtime_health_ok": burn_in["health"]["status"] == "ok",
         "import_queue_ok": import_queue["status"] == "ok",
         "smoke_ok": smoke is None or smoke["status"] == "ok",
@@ -3258,6 +3453,7 @@ def run_verify_runtime(
         "include_smoke": include_smoke,
         "health_url": health_url if isinstance(health_url, str) else None,
         "checks": checks,
+        "durable_inbox": durable_inbox,
         "import_queue": import_queue,
         "runtime_wiring": {key: bool(value) for key, value in runtime_wiring.items()},
         "doctor": doctor,
@@ -3279,6 +3475,7 @@ def run_status() -> StatusReport:
     config = _as_dict(doctor.get("config"))
     delivery = _as_dict(doctor.get("delivery"))
     retention = _as_dict(payload.get("retention"))
+    durable_inbox = _as_dict(verification.get("durable_inbox"))
     burn_in = verification["burn_in"]
     burn_in_health = burn_in["health"]
     visible_daemon_summary = burn_in["visible_daemon_summary"]
@@ -3296,9 +3493,14 @@ def run_status() -> StatusReport:
     latest_delivery_check = _read_delivery_check_state()
     latest_slack_ok_at = latest_delivery_check["last_slack_ok_at"]
     latest_slack_check_is_fresh = _delivery_check_is_fresh(latest_slack_ok_at)
+    durable_inbox_status = _as_str(durable_inbox.get("status"))
 
     if import_queue["needs_review"] or import_queue["needs_outcome_sync"]:
         next_action = import_queue["next_action"]
+    elif durable_inbox_status not in (None, "ok"):
+        next_action = _as_str(durable_inbox.get("next_action")) or (
+            "Inspect durable inbox state, then rerun notification-hub status."
+        )
     elif (
         verification["status"] == "ok"
         and visible_slack_delivery_failures > slack_delivery_failures
@@ -3339,6 +3541,7 @@ def run_status() -> StatusReport:
         "policy_warning_count": verification["policy_check"]["warning_count"],
         "retention_enabled": _as_bool(retention.get("enabled")),
         "retention_last_status": _as_str(retention.get("last_status")),
+        "durable_inbox": durable_inbox,
         "runtime_wiring_current": runtime_wiring_current,
         "push_notifier_available": _as_bool(delivery.get("push_notifier_available")),
         "slack_configured": _as_bool(delivery.get("slack_webhook_configured")),
@@ -4910,7 +5113,7 @@ def run_operator_daily_state(
     """Build a resume-ready operator state snapshot without applying work."""
     safe_hours = max(hours, 1)
     safe_limit = max(limit, 1)
-    generated_at = datetime.now(timezone.utc).isoformat()
+    generated_at = datetime.now(UTC).isoformat()
     runtime = run_status()
     queue_health = run_personal_ops_import_queue_health_check(limit=safe_limit)
     coordination_console = run_coordination_console(hours=safe_hours, limit=safe_limit)
@@ -4962,7 +5165,7 @@ def run_operator_handoff_drill(
     report_dir: Path | None = None,
 ) -> OperatorHandoffDrillReport:
     """Run a temporary handoff lifecycle drill without touching the live import queue."""
-    generated_at = datetime.now(timezone.utc).isoformat()
+    generated_at = datetime.now(UTC).isoformat()
     scenario = run_personal_ops_queue_scenario()
     queue_burn_in = run_personal_ops_queue_burn_in(
         save_report=save_burn_in_report,

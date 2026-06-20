@@ -73,8 +73,7 @@ def proposal_dismissal_key(rollup: InboxRollupReport) -> str:
     ]
     source_part = re.sub(r"[^a-z0-9]+", "-", rollup["source"].lower()).strip("-") or "source"
     project_part = (
-        re.sub(r"[^a-z0-9]+", "-", (rollup["project"] or "general").lower()).strip("-")
-        or "general"
+        re.sub(r"[^a-z0-9]+", "-", (rollup["project"] or "general").lower()).strip("-") or "general"
     )
     intent_part = re.sub(r"[^a-z0-9]+", "-", rollup["intent"].lower()).strip("-") or "intent"
     return f"proposal:{source_part}:{project_part}:{intent_part}:{digest}"

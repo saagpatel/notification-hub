@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from notification_hub.config import ClassificationPolicy, PolicyConfig
 from notification_hub.classifier import classify, explain_classification
+from notification_hub.config import ClassificationPolicy, PolicyConfig
 from notification_hub.models import Event, Level
 
 
