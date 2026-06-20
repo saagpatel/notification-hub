@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from notification_hub.operations import (
@@ -18,7 +18,7 @@ from notification_hub.operations import (
 def test_operator_review_session_summarizes_recent_group_and_queue_activity(
     tmp_path: Path,
 ) -> None:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     group_history_path = tmp_path / "group-history.jsonl"
     group_history_records = [
         {

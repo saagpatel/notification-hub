@@ -10,6 +10,7 @@ from httpx import ASGITransport, AsyncClient
 
 import notification_hub.channels as channels_mod
 import notification_hub.config as config_mod
+import notification_hub.durable_inbox as durable_inbox_mod
 import notification_hub.operations as operations_mod
 import notification_hub.server as server_mod
 import notification_hub.watcher as watcher_mod
@@ -29,6 +30,7 @@ def isolate_runtime_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> It
     """Keep tests away from the real machine event log, bridge file, and server globals."""
     events_dir = tmp_path / "notification-hub"
     events_log = events_dir / "events.jsonl"
+    durable_inbox_db = events_dir / "inbox.sqlite3"
     daemon_log_dir = tmp_path / "logs" / "notification-hub"
     bridge_dir = tmp_path / "bridge"
     bridge_dir.mkdir()
@@ -37,6 +39,8 @@ def isolate_runtime_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> It
 
     monkeypatch.setattr(config_mod, "EVENTS_DIR", events_dir)
     monkeypatch.setattr(config_mod, "EVENTS_LOG", events_log)
+    monkeypatch.setattr(config_mod, "DURABLE_INBOX_DB", durable_inbox_db)
+    monkeypatch.setattr(durable_inbox_mod, "DEFAULT_DB_PATH", durable_inbox_db)
     monkeypatch.setattr(config_mod, "DAEMON_LOG_DIR", daemon_log_dir)
     monkeypatch.setattr(config_mod, "DAEMON_STDOUT_LOG", daemon_log_dir / "stdout.log")
     monkeypatch.setattr(config_mod, "DAEMON_STDERR_LOG", daemon_log_dir / "stderr.log")
@@ -61,6 +65,7 @@ def isolate_runtime_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> It
     monkeypatch.setattr(server_mod, "_observer", None)
     monkeypatch.setattr(server_mod, "_start_time", 0.0)
     monkeypatch.setattr(server_mod, "_retention_task", None)
+    monkeypatch.setattr(server_mod, "_durable_inbox_task", None)
     server_mod.reset_retention_runtime_state()
 
     clear_webhook_cache()

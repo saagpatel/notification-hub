@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator
 from contextlib import contextmanager
-import logging
 from unittest.mock import patch
 
 import pytest
@@ -12,6 +12,7 @@ from httpx import ASGITransport, AsyncClient
 
 import notification_hub.server as server_mod
 from notification_hub.config import PolicyConfig, RetentionPolicy
+from notification_hub.durable_inbox import get_event
 from notification_hub.pipeline import reset_suppression_engine
 from notification_hub.server import app
 
@@ -138,6 +139,7 @@ async def test_health_details_endpoint(client: AsyncClient) -> None:
         "pushes_last_hour": 0,
         "slacks_last_hour": 0,
     }
+    assert data["durable_inbox"]["status"] == "ok"
 
 
 async def test_create_event_valid(client: AsyncClient) -> None:
@@ -155,6 +157,26 @@ async def test_create_event_valid(client: AsyncClient) -> None:
     assert data["accepted"] is True
     assert data["level"] == "info"
     assert "event_id" in data
+
+
+async def test_create_event_persists_before_ack_with_stable_event_id(client: AsyncClient) -> None:
+    payload = {
+        "source": "codex",
+        "level": "info",
+        "title": "Durable ack",
+        "body": "Ack only after SQLite commit.",
+        "project": "notification-hub",
+    }
+
+    resp = await client.post("/events", json=payload)
+
+    assert resp.status_code == 201
+    event_id = resp.json()["event_id"]
+    record = get_event(event_id)
+    assert record is not None
+    assert record.event.event_id == event_id
+    assert record.status == "queued"
+    assert record.event.title == "Durable ack"
 
 
 async def test_create_event_classified_level_in_response(client: AsyncClient) -> None:

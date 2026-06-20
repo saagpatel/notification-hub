@@ -58,10 +58,14 @@ def print_doctor_report(report: dict[str, object]) -> None:
     config = report["config"]
     local_api = report["local_api"]
     retention = report["retention"]
+    raw_durable_inbox = report.get("durable_inbox", {})
     assert isinstance(checks, dict)
     assert isinstance(config, dict)
     assert isinstance(local_api, dict)
     assert isinstance(retention, dict)
+    durable_inbox: dict[str, object] = (
+        cast(dict[str, object], raw_durable_inbox) if isinstance(raw_durable_inbox, dict) else {}
+    )
 
     print(f"notification-hub doctor: {report['status']}")
     print(f"- local API healthy: {checks['local_api_healthy']}")
@@ -72,6 +76,11 @@ def print_doctor_report(report: dict[str, object]) -> None:
     print(f"- policy load OK: {checks['policy_load_ok']}")
     if "runtime_wiring_current" in checks:
         print(f"- runtime wiring current: {checks['runtime_wiring_current']}")
+    if "durable_inbox_ok" in checks:
+        print(f"- durable inbox OK: {checks['durable_inbox_ok']}")
+    if durable_inbox:
+        print(f"- durable inbox status: {durable_inbox.get('status')}")
+        print(f"- durable dead letters: {durable_inbox.get('dead_letter_count')}")
     print(f"- policy path: {config['path']}")
     print(f"- retention enabled: {retention['enabled']}")
     print(f"- retention interval minutes: {retention['interval_minutes']}")
@@ -150,6 +159,14 @@ def print_status_report(report: StatusReport) -> None:
     print(f"- retention enabled: {report['retention_enabled']}")
     print(f"- retention last status: {report['retention_last_status']}")
     print(f"- events processed: {report['events_processed']}")
+    durable_inbox = report["durable_inbox"]
+    print(f"- durable inbox: {durable_inbox.get('status')}")
+    print(
+        "- durable queued/retry/dead: "
+        f"{durable_inbox.get('queued_count')}/"
+        f"{durable_inbox.get('retry_scheduled_count')}/"
+        f"{durable_inbox.get('dead_letter_count')}"
+    )
     print(f"- Slack configured: {report['slack_configured']}")
     print(f"- Slack delivery failures: {report['slack_delivery_failures']}")
     if report["visible_slack_delivery_failures"] != report["slack_delivery_failures"]:
@@ -645,10 +662,13 @@ def print_personal_ops_queue_scenario_report(report: PersonalOpsQueueScenarioRep
 
 
 def print_logs_report(report: LogsReport) -> None:
+    durable_inbox = report["durable_inbox"] if "durable_inbox" in report else {}
     print(f"notification-hub logs: {report['status']}")
     print(f"- events log: {report['events_log']}")
     print(f"- stdout log: {report['stdout_log']}")
     print(f"- stderr log: {report['stderr_log']}")
+    print(f"- durable inbox: {durable_inbox.get('status')}")
+    print(f"- durable dead letters: {durable_inbox.get('dead_letter_count')}")
     if report["missing_paths"]:
         print(f"- missing paths: {len(report['missing_paths'])}")
     if report["error"] is not None:
@@ -683,6 +703,7 @@ def print_logs_report(report: LogsReport) -> None:
 
 
 def print_burn_in_report(report: BurnInReport) -> None:
+    durable_inbox = report["durable_inbox"] if "durable_inbox" in report else {}
     print(f"notification-hub burn-in: {report['status']}")
     print(f"- window: {report['minutes']} minutes")
     print(f"- events seen: {report['events_seen']}")
@@ -691,6 +712,8 @@ def print_burn_in_report(report: BurnInReport) -> None:
     print(f"- validation errors: {report['validation_error_count']}")
     print(f"- Slack delivery failures: {report['health']['slack_delivery_failure_count']}")
     print(f"- health: {report['health']['status']}")
+    print(f"- durable inbox: {durable_inbox.get('status')}")
+    print(f"- durable dead letters: {durable_inbox.get('dead_letter_count')}")
     print(f"- Slack-eligible events: {report['slack_eligible_events']}")
     if report["error"] is not None:
         print(f"- error: {report['error']}")
@@ -723,6 +746,7 @@ def print_verify_runtime_report(report: VerifyRuntimeReport) -> None:
     print(f"- policy check OK: {checks['policy_check_ok']}")
     print(f"- health details reachable: {checks['health_details_reachable']}")
     print(f"- runtime wiring current: {checks['runtime_wiring_current']}")
+    print(f"- durable inbox OK: {checks['durable_inbox_ok']}")
     print(f"- recent runtime health OK: {checks['recent_runtime_health_ok']}")
     print(f"- delivery check OK: {checks['delivery_check_ok']}")
     print(f"- import queue queued: {report['import_queue']['queued_count']}")

@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Protocol, cast
 
@@ -83,7 +83,7 @@ def parse_activity_line(line: str) -> Event | None:
         title=title,
         body=" ".join(body_parts),
         project=project.strip(),
-        timestamp=datetime.fromisoformat(date_str).replace(tzinfo=timezone.utc),
+        timestamp=datetime.fromisoformat(date_str).replace(tzinfo=UTC),
     )
 
 

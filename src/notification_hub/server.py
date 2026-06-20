@@ -10,13 +10,28 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, TypedDict, cast
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from notification_hub.config import BRIDGE_FILE, get_policy_config
 from notification_hub.diagnostics import collect_runtime_readiness
-from notification_hub.models import Event, EventResponse
+from notification_hub.durable_inbox import (
+    DurableEventRecord,
+    claim_next_due_event,
+    enqueue_event,
+    mark_delivered,
+    prune_retained_events,
+    reclaim_stale_processing,
+    record_processing_failure,
+)
+from notification_hub.durable_inbox import (
+    collect_health as collect_durable_inbox_health,
+)
+from notification_hub.durable_inbox import (
+    init_schema as init_durable_inbox_schema,
+)
+from notification_hub.models import Event, EventResponse, StoredEvent
 from notification_hub.operations import (
     ACTION_PROPOSAL_REVIEW_WINDOW_HOURS,
     action_review_package_path_for_name,
@@ -31,6 +46,7 @@ from notification_hub.operations import (
     load_operator_review_session_report_detail,
     load_personal_ops_queue_burn_in_report_detail,
     prune_operator_review_session_reports,
+    record_action_proposal_group_outcome,
     review_latest_noise_candidates,
     run_action_proposal_dismissal_list,
     run_coordination_console,
@@ -39,21 +55,24 @@ from notification_hub.operations import (
     run_operator_daily_state,
     run_operator_handoff_drill,
     run_operator_review_session,
-    run_policy_check,
     run_personal_ops_action_export,
     run_personal_ops_import_queue_health_check,
     run_personal_ops_import_stub,
     run_personal_ops_outcome_sync_reminder,
     run_personal_ops_queue_review,
+    run_policy_check,
     run_retention,
     run_status,
     save_action_proposal_group_package,
-    record_action_proposal_group_outcome,
     undismiss_action_proposal,
     update_personal_ops_import_queue_item,
     validate_action_package,
 )
-from notification_hub.pipeline import get_suppression_engine, process_event
+from notification_hub.pipeline import (
+    build_stored_event,
+    get_suppression_engine,
+    process_stored_event_with_result,
+)
 from notification_hub.watcher import ObserverHandle, start_watcher
 
 logger = logging.getLogger(__name__)
@@ -72,6 +91,7 @@ _start_time: float = 0.0
 _event_count: int = 0
 _observer: ObserverHandle | None = None
 _retention_task: asyncio.Task[None] | None = None
+_durable_inbox_task: asyncio.Task[None] | None = None
 _latest_review_package_path: str | None = None
 _latest_review_package_validation_status: str | None = None
 
@@ -173,11 +193,58 @@ async def _retention_loop() -> None:
         await asyncio.sleep(policy.interval_minutes * 60)
 
 
+def _persist_event_for_processing(event: Event) -> StoredEvent:
+    """Persist an event before any delivery attempt or producer acknowledgement."""
+    stored = build_stored_event(event)
+    return enqueue_event(stored)
+
+
+def _process_durable_record(record: DurableEventRecord) -> None:
+    result = process_stored_event_with_result(
+        record.event,
+        raise_on_delivery_failure=True,
+        skip_duplicate_suppression=record.attempt_count > 1,
+    )
+    mark_delivered(
+        record.event_id,
+        outcome=result.outcome,
+        classified_level=result.event.classified_level,
+    )
+
+
+async def _durable_inbox_loop() -> None:
+    last_pruned_at = 0.0
+    while True:
+        record = await asyncio.to_thread(claim_next_due_event)
+        if record is None:
+            now = time.monotonic()
+            if now - last_pruned_at > 3600:
+                await asyncio.to_thread(prune_retained_events)
+                last_pruned_at = now
+            await asyncio.sleep(0.5)
+            continue
+
+        try:
+            await asyncio.to_thread(_process_durable_record, record)
+        except Exception as exc:  # noqa: BLE001 - failures become retry/DLQ state
+            status = await asyncio.to_thread(record_processing_failure, record, exc)
+            logger.warning(
+                "Durable event %s delivery failed; status=%s attempt=%s/%s",
+                record.event_id,
+                status,
+                record.attempt_count,
+                record.max_attempts,
+            )
+
+
 def _handle_bridge_event(event: Event) -> None:
-    """Callback for bridge file watcher — processes events through the full pipeline."""
+    """Callback for bridge file watcher — persist first, worker delivers later."""
     global _event_count
-    process_event(event)
-    _event_count += 1
+    try:
+        _persist_event_for_processing(event)
+        _event_count += 1
+    except Exception:
+        logger.exception("Failed to persist bridge watcher event")
 
 
 def _review_package_state(validation_status: str | None = None) -> dict[str, object]:
@@ -248,6 +315,7 @@ async def _review_runtime_status() -> dict[str, object]:
         "slack_delivery_failures": status["slack_delivery_failures"],
         "visible_slack_delivery_failures": status["visible_slack_delivery_failures"],
         "latest_delivery_check": status["latest_delivery_check"],
+        "durable_inbox": status.get("durable_inbox", {}),
         "next_action": status["next_action"],
     }
 
@@ -255,9 +323,14 @@ async def _review_runtime_status() -> dict[str, object]:
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     """Start bridge watcher on startup, stop on shutdown."""
-    global _start_time, _observer, _retention_task
+    global _start_time, _observer, _retention_task, _durable_inbox_task
     _start_time = time.monotonic()
     _configure_retention_status()
+    await asyncio.to_thread(init_durable_inbox_schema)
+    reclaimed = await asyncio.to_thread(reclaim_stale_processing)
+    if reclaimed:
+        logger.warning("Reclaimed %d stale durable inbox processing lease(s)", reclaimed)
+    await asyncio.to_thread(prune_retained_events)
 
     if BRIDGE_FILE.parent.exists():
         _observer = start_watcher(_handle_bridge_event)
@@ -266,8 +339,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         logger.warning("Bridge file directory not found, watcher disabled")
 
     _retention_task = asyncio.create_task(_retention_loop())
+    _durable_inbox_task = asyncio.create_task(_durable_inbox_loop())
 
     yield
+
+    durable_inbox_task = _durable_inbox_task
+    assert durable_inbox_task is not None
+    durable_inbox_task.cancel()
+    try:
+        await durable_inbox_task
+    except asyncio.CancelledError:
+        pass
+    logger.info("Durable inbox worker stopped")
+    _durable_inbox_task = None
 
     retention_task = _retention_task
     assert retention_task is not None
@@ -330,7 +414,7 @@ REVIEW_HTML = """<!doctype html>
     }
     button:hover { border-color: #98a4b3; }
     .button-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
-    .summary { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; margin-bottom: 18px; }
+    .summary { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; margin-bottom: 18px; }
     .metric, section {
       background: #ffffff;
       border: 1px solid #dfe4ea;
@@ -763,6 +847,7 @@ REVIEW_HTML = """<!doctype html>
       const data = await res.json();
       summary.replaceChildren(
         metric("Runtime", data.runtime.status),
+        metric("Inbox", (data.runtime.durable_inbox || {}).status || "unknown"),
         metric("Uptime", durationLabel(data.runtime.uptime_seconds)),
         metric("Events", data.inbox.events_seen),
         metric("Actions", data.actions.actions.length),
@@ -1725,9 +1810,13 @@ async def request_validation_exception_handler(
 
 @app.post("/events", response_model=EventResponse, status_code=201)
 async def create_event(event: Event) -> EventResponse:
-    """Accept a notification event, classify it, route to channels, and confirm."""
+    """Accept a notification event after durable persistence."""
     global _event_count
-    stored = process_event(event)
+    try:
+        stored = await asyncio.to_thread(_persist_event_for_processing, event)
+    except Exception as exc:
+        logger.exception("Failed to persist accepted event")
+        raise HTTPException(status_code=503, detail="event could not be persisted") from exc
     _event_count += 1
     return EventResponse(
         event_id=stored.event_id,
@@ -1763,6 +1852,11 @@ async def _collect_health_details() -> dict[str, object]:
         "last_rotated": runtime_retention["last_rotated"],
         "last_archive_path": runtime_retention["last_archive_path"],
     }
+    durable_inbox: dict[str, object] = dict(collect_durable_inbox_health(create=True))
+    durable_inbox["worker_running"] = (
+        _durable_inbox_task is not None and not _durable_inbox_task.done()
+    )
+    base["durable_inbox"] = durable_inbox
     return base
 
 

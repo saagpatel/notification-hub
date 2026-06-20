@@ -1,6 +1,6 @@
 # Current State
 
-Last updated: 2026-06-19 (runtime truth refreshed; historical Slack stderr no longer rehydrates current health)
+Last updated: 2026-06-20 (source-tree durable inbox implemented; live daemon not restarted)
 
 ## Restart Index (2026-06-19)
 
@@ -15,12 +15,46 @@ restart, read these first:
 Current source-of-truth map:
 
 - `README.md` is the main command, runtime, and verification guide.
+- `docs/adr/0002-durable-inbox-dead-letter-box.md` records the accepted durable inbox and
+  dead-letter design.
 - `pyproject.toml` plus `src/notification_hub/cli_parser.py` define the CLI
   script and subcommand inventory.
 - `tests/test_readme_commands.py` checks README command examples against those
   inventories.
 - `mcp_server/server.py` defines the MCP wrapper inventory. The MCP README
   should stay reconciled to the `@mcp.tool` functions there.
+
+## Durable Inbox Implementation Update (2026-06-20)
+
+Catalog #11 is implemented in the source tree. `POST /events` now validates and commits the event
+to SQLite before returning 201; delivery is handled by a background worker and is at-least-once.
+The durability layer is `~/.local/share/notification-hub/inbox.sqlite3`. JSONL remains
+processed-event audit history, not the acceptance boundary.
+
+Implemented source-tree behavior:
+
+- New `durable_inbox.py` manages schema creation, idempotent insert by `event_id`, queued and
+  processing status, retry scheduling, dead-letter state, stale lease reclaim, retention pruning,
+  and health aggregates.
+- Server intake and bridge watcher callbacks enqueue durable `StoredEvent` rows instead of running
+  the delivery pipeline inline.
+- The lifespan worker claims due rows, runs the existing pipeline, marks `processed` or
+  `suppressed`, retries transient failures with capped backoff, and moves exhausted rows to
+  `dead_lettered`.
+- Startup reclaims expired `processing` leases to `retry_scheduled`.
+- `/health/details`, `doctor`, `status`, `logs`, `burn-in`, `verify-runtime`, and `/review` expose
+  durable inbox status. Dead letters, stale processing leases, and old queued backlog degrade health.
+- `notification-hub smoke` now waits briefly for the async worker to write the JSONL audit row.
+
+Live runtime was not mutated during this implementation pass: no LaunchAgent restart, launchd kick,
+smoke POST, Slack/push delivery check, or live runtime state mutation was performed.
+
+Source-tree verification for this implementation pass:
+
+- `uv lock --check`: OK.
+- `uv run --frozen pytest`: `420 passed`.
+- `uv run --frozen ruff check`: OK.
+- `uv run --frozen pyright`: `0 errors`.
 
 ## Runtime Truth Update (2026-06-19)
 

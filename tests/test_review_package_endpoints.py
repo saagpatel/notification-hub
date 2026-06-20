@@ -62,15 +62,15 @@ async def test_review_validate_package_endpoint_validates_latest_package(
 ) -> None:
     server_mod.reset_review_package_state()
     with (
-            patch(
-                "notification_hub.server.get_latest_review_package_path",
-                return_value="/tmp/personal-ops-actions-20260509-100000.json",
-            ),
-            patch(
-                "notification_hub.server.validate_action_package",
-                return_value={
-                    "status": "ok",
-                    "path": "/tmp/personal-ops-actions-20260509-100000.json",
+        patch(
+            "notification_hub.server.get_latest_review_package_path",
+            return_value="/tmp/personal-ops-actions-20260509-100000.json",
+        ),
+        patch(
+            "notification_hub.server.validate_action_package",
+            return_value={
+                "status": "ok",
+                "path": "/tmp/personal-ops-actions-20260509-100000.json",
                 "schema_version": "notification-hub.personal_ops_action_export.v1",
                 "action_count": 1,
                 "valid_action_count": 1,
@@ -545,5 +545,3 @@ async def test_review_burn_in_report_detail_endpoint_inspects_saved_report(
     assert data["applied"] is False
     assert data["summary"]["ready_for_live_promotion"] is True
     mock_detail.assert_called_once_with(name="personal-ops-queue-burn-in-20260510-040904.json")
-
-

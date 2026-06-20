@@ -1,6 +1,34 @@
 # Handoff — notification-hub
 
-## Current freshness note — 2026-06-19
+## Current source-tree note — 2026-06-20
+
+Catalog #11, NotificationHub Dead-Letter Box, is implemented in the source tree. The accepted
+contract is now: `POST /events` returns 201 only after the validated event is durably committed to
+SQLite at `~/.local/share/notification-hub/inbox.sqlite3`; delivery is at-least-once and handled by
+a background worker. JSONL remains processed-event audit history, not the durability boundary.
+
+Key implementation files:
+
+- `docs/adr/0002-durable-inbox-dead-letter-box.md`
+- `src/notification_hub/durable_inbox.py`
+- `src/notification_hub/server.py`
+- `src/notification_hub/pipeline.py`
+- `src/notification_hub/diagnostics.py`
+- `src/notification_hub/operations.py`
+
+Health/reporting now surfaces durable inbox state in `/health/details`, `doctor`, `status`,
+`logs`, `burn-in`, `verify-runtime`, and `/review`. Dead letters, stale processing leases, and old
+queued backlog degrade health. Startup reclaims expired `processing` leases to retry.
+
+No live runtime mutation was performed during this implementation pass: no LaunchAgent restart,
+launchd kick, smoke POST, Slack/push delivery check, or live runtime state mutation.
+
+**Status:** Source-tree implementation complete; live daemon not restarted
+**Branch:** `codex/chore/ruff-base-config`
+**Verification:** `uv lock --check` passed; `uv run --frozen pytest` passed with `420 passed`;
+`uv run --frozen ruff check` passed; `uv run --frozen pyright` passed with `0 errors`.
+
+## Previous freshness note — 2026-06-19
 
 Machine-wide handoffs now follow
 `/Users/d/.codex/docs/operating-layer/machine-wide-handoff-contract.md`.

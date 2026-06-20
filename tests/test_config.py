@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -13,11 +13,11 @@ from notification_hub.config import (
     ClassificationPolicy,
     NoisePolicy,
     NoiseRule,
-    RoutingRule,
-    RoutingPolicy,
-    RetentionPolicy,
-    SuppressionPolicy,
     PolicyConfig,
+    RetentionPolicy,
+    RoutingPolicy,
+    RoutingRule,
+    SuppressionPolicy,
     analyze_policy_config,
     clear_policy_cache,
     clear_webhook_cache,

@@ -9,7 +9,6 @@ from pathlib import Path
 
 from common import parse_notification_payload
 
-
 SOUNDS = {
     "waiting": "/System/Library/Sounds/Funk.aiff",
 }
