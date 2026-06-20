@@ -116,7 +116,7 @@ LaunchAgent adoption on 2026-06-19:
   `kickstart` sequence after operator approval.
 - `launchctl print "gui/$(id -u)/com.saagar.notification-hub"` showed a fresh
   running process at PID `38198`, still using working directory
-  `/Users/d/Projects/notification-hub` and `uv run --frozen uvicorn
+  `~/Projects/notification-hub` and `uv run --frozen uvicorn
   notification_hub.server:app --host 127.0.0.1 --port 9199`.
 - Post-restart `/health/details`, `notification-hub-status`, `logs`,
   `burn-in`, and `verify-runtime` reported current runtime health OK with Slack
@@ -140,7 +140,7 @@ First Rich Proof Gate update on 2026-06-19:
   queued.
 - A narrow supported `promote` route package with `limit=2` captured exactly one
   rich action and validated cleanly:
-  `/Users/d/.local/share/notification-hub/action-exports/personal-ops-actions-20260619-054639-991605.json`.
+  `~/.local/share/notification-hub/action-exports/personal-ops-actions-20260619-054639-991605.json`.
 - That exact package was queued with `personal-ops-import --enqueue`, creating
   local queue item `f218f17b926fef24` for action
   `notification-hub:personal-ops:mail:needs_attention:approval-requested:7640ae5a6567`.
@@ -205,7 +205,7 @@ Fresh checks on 2026-06-14:
 
 The 2026-06-06 session details below are dated history. For cross-agent
 handoffs, use
-`/Users/d/.codex/docs/operating-layer/machine-wide-handoff-contract.md` and
+`~/.codex/docs/operating-layer/machine-wide-handoff-contract.md` and
 verify live repo/runtime state before carrying forward current claims.
 
 Fresh checks on 2026-06-07 found local `main` clean and aligned with
@@ -258,9 +258,9 @@ not rerun for this freshness note.
   delivery failures `0`, and `next_action: No action needed.`
 - Live GET report endpoints stay read-only even when `save_report=true` is present. Live POST
   report routes wrote local reports successfully:
-  `/Users/d/.local/share/notification-hub/operator-state-reports/operator-daily-state-20260606-081623.json`
+  `~/.local/share/notification-hub/operator-state-reports/operator-daily-state-20260606-081623.json`
   and
-  `/Users/d/.local/share/notification-hub/operator-review-session-reports/operator-review-session-20260606-081623.json`.
+  `~/.local/share/notification-hub/operator-review-session-reports/operator-review-session-20260606-081623.json`.
 - Follow-up observation at `2026-06-06T08:20:01Z` found the current 10-minute burn-in and
   `/review/noise-candidates` clean: runtime health `ok`, no rejected posts, no validation errors, no
   Slack delivery failures, and no live noise candidates. The wider 30-minute and 2-hour inspection
@@ -358,9 +358,9 @@ not rerun for this freshness note.
   `rich_follow_up_review_count: 0`; the synthetic mail approval repeats are hidden by local
   dismissal keys rather than queued or promoted.
 - Fresh saved burn-in proofs were created:
-  `/Users/d/.local/share/notification-hub/burn-in-reports/personal-ops-queue-burn-in-20260530-110041.json`
+  `~/.local/share/notification-hub/burn-in-reports/personal-ops-queue-burn-in-20260530-110041.json`
   and
-  `/Users/d/.local/share/notification-hub/burn-in-reports/personal-ops-queue-burn-in-20260530-123125.json`.
+  `~/.local/share/notification-hub/burn-in-reports/personal-ops-queue-burn-in-20260530-123125.json`.
 - `/review` now separates live runtime status from saved burn-in proof in the Real Signal
   Readiness panel. Saved proof older than seven days is called out with a warning age badge and no
   longer lets that panel show the compact `ready` state by itself.
@@ -560,7 +560,7 @@ not rerun for this freshness note.
   `coordination-readiness --json`, and a 60-minute `burn-in --json` all report notification-hub
   health OK. The local handoff queue is clean (`queued_count: 0`, `promoted_pending_count: 0`).
 - The saved review packages from the live personal-ops sync-degraded pass are intentionally kept
-  under `/Users/d/.local/share/notification-hub/action-exports/`:
+  under `~/.local/share/notification-hub/action-exports/`:
   `personal-ops-actions-20260516-091230-479634.json`,
   `personal-ops-actions-20260516-091259-180792.json`, and
   `personal-ops-actions-20260516-091315-947184.json`.
@@ -633,7 +633,7 @@ The original "rich 0/0 resolved" outcome-quality gap was investigated and split 
   default is now 24 hours across CLI, function, and review endpoint.
 - **Real producer signal (validated 2026-05-11)**: two operator-mediated approval requests on
   pre-existing assistant-generated reply drafts produced the first ever
-  `mailbox: jayday1104@gmail.com` events in notification-hub, each carrying a real
+  `mailbox: <contact>@example.com` events in notification-hub, each carrying a real
   `thread_id` (`19d2305f402a9cb3`, `19d0e84571202070`) plus `draft_id`, `provider_draft_id`,
   `approval_id`, `group_id`. They formed a `count=2` "Approval Requested / Security alert"
   rollup that produced the first real `evidence_quality: rich` proposal
