@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import re
 import uuid
-from datetime import datetime, timezone
-from typing import Literal, TypeAlias
+from datetime import UTC, datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
-
 
 Source = Literal["codex", "cc", "claude_ai", "bridge_watcher", "personal-ops", "notion-os"]
 Level = Literal["urgent", "normal", "info"]
@@ -23,7 +22,7 @@ Intent = Literal[
     "completed",
     "informational",
 ]
-EventContextValue: TypeAlias = str | int | float | bool | None
+type EventContextValue = str | int | float | bool | None
 
 BRIDGE_SYSTEM_IDS: tuple[str, ...] = (
     "cc",
@@ -60,7 +59,7 @@ class Event(BaseModel):
     project: str | None = Field(default=None, max_length=100)
     intent: Intent | None = None
     context: dict[str, EventContextValue] = Field(default_factory=dict)
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     @field_validator("source", mode="before")
     @classmethod
@@ -120,7 +119,7 @@ class StoredEvent(Event):
     """Event with server-assigned metadata, written to JSONL."""
 
     event_id: str = Field(default_factory=lambda: uuid.uuid4().hex[:12])
-    received_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    received_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     classified_level: Level | None = None
 
 

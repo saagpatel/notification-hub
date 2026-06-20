@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from notification_hub.coordination import infer_intent
 from notification_hub.models import StoredEvent
 from notification_hub.operations_types import DaemonLogSummary, RecentEventReport
-
 
 _EVENT_ACCESS_RE = re.compile(r'"POST /events HTTP/1\.1" (?P<status>\d{3})')
 _DAEMON_START_MARKERS = (
@@ -27,9 +26,7 @@ _SLACK_FAILURE_CONTEXT_PREFIXES = (
     "Slack delivery failed",
     "Failed to flush overflow digest",
 )
-_SLACK_SEND_FAILURE_EVENT_RE = re.compile(
-    r"^Slack send failed for (?P<event_id>[0-9a-f]{12}):"
-)
+_SLACK_SEND_FAILURE_EVENT_RE = re.compile(r"^Slack send failed for (?P<event_id>[0-9a-f]{12}):")
 _SLACK_WEBHOOK_FAILURE_EVENT_RE = re.compile(
     r"^Slack webhook returned \d+ for (?P<event_id>[0-9a-f]{12})"
 )
@@ -71,8 +68,8 @@ def _slack_failure_event_id(line: str) -> str | None:
 
 def _as_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 def _current_slack_delivery_failures(

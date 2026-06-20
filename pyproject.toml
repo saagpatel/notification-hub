@@ -75,3 +75,6 @@ exclude = ["ops/hooks"]
 [tool.ruff]
 target-version = "py312"
 extend = "../ruff.toml"
+
+[tool.ruff.lint]
+ignore = ["E501"]

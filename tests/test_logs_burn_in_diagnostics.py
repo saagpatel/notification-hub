@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -552,7 +552,7 @@ def test_burn_in_ignores_historical_slack_failures_after_fresh_delivery_check(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    checked_at = datetime.now(timezone.utc)
+    checked_at = datetime.now(UTC)
     old_event_id = "abc123abc123"
     old_event = StoredEvent(
         event_id=old_event_id,
@@ -614,7 +614,7 @@ def test_burn_in_keeps_slack_failures_after_fresh_delivery_check(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    checked_at = datetime.now(timezone.utc) - timedelta(minutes=5)
+    checked_at = datetime.now(UTC) - timedelta(minutes=5)
     current_event_id = "def456def456"
     current_event = StoredEvent(
         event_id=current_event_id,

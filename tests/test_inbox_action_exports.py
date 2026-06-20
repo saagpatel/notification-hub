@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -109,7 +109,7 @@ def test_inbox_groups_recent_events_by_coordination_intent() -> None:
 
 
 def test_inbox_rollup_carries_latest_event_context() -> None:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     older = StoredEvent(
         source="personal-ops",
         level="urgent",
@@ -173,7 +173,7 @@ def test_inbox_rollup_carries_latest_event_context() -> None:
 
 
 def test_near_rollup_singles_returns_count_one_events() -> None:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     repeated = StoredEvent(
         source="cc",
         level="info",
@@ -208,7 +208,7 @@ def test_near_rollup_singles_returns_count_one_events() -> None:
 
 
 def test_near_rollup_singles_excludes_repeated_events() -> None:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     e1 = StoredEvent(
         source="cc",
         level="info",
@@ -232,7 +232,7 @@ def test_near_rollup_singles_excludes_repeated_events() -> None:
 
 
 def test_run_inbox_includes_near_rollup_singles() -> None:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     unique = StoredEvent(
         source="codex",
         level="info",

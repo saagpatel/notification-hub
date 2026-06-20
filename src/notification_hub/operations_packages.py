@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
@@ -29,7 +29,7 @@ def write_action_review_package(
     output_dir: Path | None = None,
 ) -> dict[str, object]:
     target_dir = output_dir or ACTION_EXPORT_DIR
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-%f")
+    timestamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S-%f")
     target_path = target_dir / f"personal-ops-actions-{timestamp}.json"
     try:
         target_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -79,7 +79,7 @@ def list_action_review_packages(
             {
                 "path": str(path),
                 "name": path.name,
-                "modified_at": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
+                "modified_at": datetime.fromtimestamp(stat.st_mtime, UTC).isoformat(),
                 "size_bytes": stat.st_size,
                 "validation_status": validation["status"],
                 "action_count": validation["action_count"],

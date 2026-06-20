@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -161,6 +161,7 @@ def test_run_status_summarizes_healthy_runtime() -> None:
                     "policy_check_ok": True,
                     "health_details_reachable": True,
                     "runtime_wiring_current": True,
+                    "durable_inbox_ok": True,
                     "recent_runtime_health_ok": True,
                     "smoke_ok": True,
                     "delivery_check_ok": True,
@@ -214,6 +215,7 @@ def test_run_status_summarizes_healthy_runtime() -> None:
         "policy_warning_count": 0,
         "retention_enabled": True,
         "retention_last_status": "ok",
+        "durable_inbox": {},
         "runtime_wiring_current": True,
         "push_notifier_available": True,
         "slack_configured": True,
@@ -374,7 +376,7 @@ def test_run_status_surfaces_visible_stale_slack_delivery_failures() -> None:
 
 def test_run_status_uses_successful_slack_delivery_check_for_historical_failures() -> None:
     latest_delivery_check = _delivery_check_state(
-        last_slack_ok_at=datetime.now(timezone.utc).isoformat(),
+        last_slack_ok_at=datetime.now(UTC).isoformat(),
         last_slack_event_id="delivery123",
     )
     with (
@@ -420,7 +422,7 @@ def test_run_status_uses_successful_slack_delivery_check_for_historical_failures
 
 def test_run_status_does_not_treat_stale_slack_delivery_check_as_current() -> None:
     latest_delivery_check = _delivery_check_state(
-        last_slack_ok_at=(datetime.now(timezone.utc) - timedelta(days=3)).isoformat(),
+        last_slack_ok_at=(datetime.now(UTC) - timedelta(days=3)).isoformat(),
         last_slack_event_id="delivery123",
     )
     with (
@@ -654,6 +656,7 @@ def test_run_verify_runtime_is_read_only_by_default() -> None:
         "policy_check_ok": True,
         "health_details_reachable": True,
         "runtime_wiring_current": True,
+        "durable_inbox_ok": True,
         "recent_runtime_health_ok": True,
         "import_queue_ok": True,
         "smoke_ok": True,

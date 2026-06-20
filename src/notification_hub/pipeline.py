@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import cast
+from typing import Literal, cast
 
 from notification_hub.channels import send_push, send_slack, send_slack_digest, write_jsonl
 from notification_hub.classifier import ClassificationDecision, explain_classification
@@ -43,6 +43,16 @@ class EventExplanation:
     log_delivery: bool
     push_delivery: bool
     slack_delivery: bool
+
+
+@dataclass(frozen=True)
+class PipelineProcessResult:
+    event: StoredEvent
+    outcome: Literal["processed", "suppressed"]
+
+
+class DeliveryError(RuntimeError):
+    """Raised when required channel delivery fails in durable-worker mode."""
 
 
 def _resolve_routing(event: Event, classified_level: Level) -> RoutingDecision:
@@ -201,6 +211,15 @@ def reset_suppression_engine() -> None:
     _slack_unconfigured_logged = False
 
 
+def build_stored_event(event: Event) -> StoredEvent:
+    """Assign server metadata and the current classified delivery level."""
+    explanation = explain_event(event)
+    return StoredEvent(
+        **event.model_dump(),
+        classified_level=explanation.routing.level,
+    )
+
+
 def _slack_delivery_enabled() -> bool:
     """Return whether Slack delivery is configured, logging the disabled state only once."""
     global _slack_unconfigured_logged
@@ -247,22 +266,24 @@ def _drain_quiet_queue_if_needed() -> None:
         logger.info("Morning delivery: push for %s", event.event_id)
 
 
-def _deliver_push(event: StoredEvent) -> None:
+def _deliver_push(event: StoredEvent) -> bool:
     """Send a push notification with rate limiting. Overflow goes to buffer."""
     if _suppression.check_push_rate():
         if send_push(event):
             _suppression.record_push()
-            return
+            return True
         logger.warning("Push delivery failed for %s", event.event_id)
+        return False
     else:
         _suppression.add_to_overflow(event)
         logger.debug("Push rate-limited, event %s added to overflow", event.event_id)
+        return True
 
 
-def _deliver_slack(event: StoredEvent) -> None:
+def _deliver_slack(event: StoredEvent) -> bool:
     """Send a Slack message with rate limiting. Overflow goes to buffer."""
     if not _slack_delivery_enabled():
-        return
+        return True
 
     # Try to flush any pending overflow first
     _flush_overflow()
@@ -270,15 +291,21 @@ def _deliver_slack(event: StoredEvent) -> None:
     if _suppression.check_slack_rate():
         if send_slack(event):
             _suppression.record_slack()
-            return
+            return True
         logger.warning("Slack delivery failed for %s", event.event_id)
+        return False
     else:
         _suppression.add_to_overflow(event)
         logger.debug("Slack rate-limited, event %s added to overflow", event.event_id)
+        return True
 
 
-def process_event(event: Event) -> StoredEvent:
-    """Full pipeline: classify, log, suppress, and route to channels.
+def process_stored_event_with_result(
+    event: StoredEvent,
+    *,
+    raise_on_delivery_failure: bool = False,
+) -> PipelineProcessResult:
+    """Full pipeline for a durable event, returning the persistence outcome.
 
     Accepted non-burst events are written to JSONL. Routing by classified level:
     - urgent: JSONL + push (with sound) + Slack
@@ -293,18 +320,53 @@ def process_event(event: Event) -> StoredEvent:
     """
     explanation = explain_event(event)
     routing = explanation.routing
-    stored = StoredEvent(
-        **event.model_dump(),
-        classified_level=routing.level,
-    )
+    payload = event.model_dump()
+    payload["classified_level"] = routing.level
+    stored = StoredEvent.model_validate(payload)
 
-    # Exact producer burst suppression happens before storage so repeated local
-    # reminder fan-out does not flood the JSONL event log.
+    # Exact producer burst suppression happens before JSONL audit logging so
+    # repeated local reminder fan-out does not flood processed-event history.
     if _suppression.is_burst_duplicate(stored):
         logger.debug("Event %s suppressed by burst dedup before storage", stored.event_id)
-        return stored
+        return PipelineProcessResult(event=stored, outcome="suppressed")
 
-    # Persist accepted non-burst events before downstream delivery suppression.
+    # Check for morning delivery of queued events
+    _drain_quiet_queue_if_needed()
+
+    # Dedup: stop delivery if duplicate (project, level) within window
+    if _suppression.is_duplicate(stored):
+        logger.debug("Event %s suppressed by dedup", stored.event_id)
+        write_jsonl(stored)
+        logger.info(
+            "Event %s: %s [source=%s, classified=%s]",
+            stored.event_id,
+            stored.title,
+            stored.level,
+            routing.level,
+        )
+        return PipelineProcessResult(event=stored, outcome="processed")
+
+    delivery_failed = False
+
+    # Route based on classified level
+    if routing.level == "urgent":
+        # Push: respect quiet hours
+        if routing.allow_push and _suppression.is_quiet_hours():
+            _suppression.queue_for_morning(stored)
+        elif routing.allow_push:
+            delivery_failed = not _deliver_push(stored) or delivery_failed
+        # Slack: always (not affected by quiet hours)
+        if routing.allow_slack:
+            delivery_failed = not _deliver_slack(stored) or delivery_failed
+
+    elif routing.level == "normal":
+        if routing.allow_slack:
+            delivery_failed = not _deliver_slack(stored) or delivery_failed
+
+    # info: JSONL only.
+    if delivery_failed and raise_on_delivery_failure:
+        raise DeliveryError(f"delivery failed for event {stored.event_id}")
+
     write_jsonl(stored)
     logger.info(
         "Event %s: %s [source=%s, classified=%s]",
@@ -314,29 +376,14 @@ def process_event(event: Event) -> StoredEvent:
         routing.level,
     )
 
-    # Check for morning delivery of queued events
-    _drain_quiet_queue_if_needed()
+    return PipelineProcessResult(event=stored, outcome="processed")
 
-    # Dedup: stop delivery if duplicate (project, level) within window
-    if _suppression.is_duplicate(stored):
-        logger.debug("Event %s suppressed by dedup", stored.event_id)
-        return stored
 
-    # Route based on classified level
-    if routing.level == "urgent":
-        # Push: respect quiet hours
-        if routing.allow_push and _suppression.is_quiet_hours():
-            _suppression.queue_for_morning(stored)
-        elif routing.allow_push:
-            _deliver_push(stored)
-        # Slack: always (not affected by quiet hours)
-        if routing.allow_slack:
-            _deliver_slack(stored)
+def process_stored_event(event: StoredEvent) -> StoredEvent:
+    """Process a stored event through the delivery pipeline."""
+    return process_stored_event_with_result(event).event
 
-    elif routing.level == "normal":
-        if routing.allow_slack:
-            _deliver_slack(stored)
 
-    # info: JSONL only (already logged above)
-
-    return stored
+def process_event(event: Event) -> StoredEvent:
+    """Assign metadata and process an event through the delivery pipeline."""
+    return process_stored_event(build_stored_event(event))

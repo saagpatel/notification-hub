@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -139,46 +139,42 @@ class TestBurstDedup:
 class TestQuietHours:
     def test_midnight_is_quiet(self) -> None:
         engine = SuppressionEngine()
-        midnight_pacific = datetime(2026, 4, 15, 7, 0, tzinfo=timezone.utc)  # midnight PT = 7 UTC
+        midnight_pacific = datetime(2026, 4, 15, 7, 0, tzinfo=UTC)  # midnight PT = 7 UTC
         assert engine.is_quiet_hours(midnight_pacific) is True
 
     def test_3am_is_quiet(self) -> None:
         engine = SuppressionEngine()
-        three_am_pacific = datetime(2026, 4, 15, 10, 0, tzinfo=timezone.utc)  # 3 AM PT = 10 UTC
+        three_am_pacific = datetime(2026, 4, 15, 10, 0, tzinfo=UTC)  # 3 AM PT = 10 UTC
         assert engine.is_quiet_hours(three_am_pacific) is True
 
     def test_noon_is_not_quiet(self) -> None:
         engine = SuppressionEngine()
-        noon_pacific = datetime(2026, 4, 15, 19, 0, tzinfo=timezone.utc)  # noon PT = 19 UTC
+        noon_pacific = datetime(2026, 4, 15, 19, 0, tzinfo=UTC)  # noon PT = 19 UTC
         assert engine.is_quiet_hours(noon_pacific) is False
 
     def test_10pm_is_not_quiet(self) -> None:
         engine = SuppressionEngine()
-        ten_pm_pacific = datetime(
-            2026, 4, 16, 5, 0, tzinfo=timezone.utc
-        )  # 10 PM PT = 5 UTC next day
+        ten_pm_pacific = datetime(2026, 4, 16, 5, 0, tzinfo=UTC)  # 10 PM PT = 5 UTC next day
         assert engine.is_quiet_hours(ten_pm_pacific) is False
 
     def test_11pm_is_quiet(self) -> None:
         engine = SuppressionEngine()
-        eleven_pm_pacific = datetime(
-            2026, 4, 16, 6, 0, tzinfo=timezone.utc
-        )  # 11 PM PT = 6 UTC next day
+        eleven_pm_pacific = datetime(2026, 4, 16, 6, 0, tzinfo=UTC)  # 11 PM PT = 6 UTC next day
         assert engine.is_quiet_hours(eleven_pm_pacific) is True
 
     def test_boundary_7am_is_not_quiet(self) -> None:
         engine = SuppressionEngine()
-        seven_am_pacific = datetime(2026, 4, 15, 14, 0, tzinfo=timezone.utc)  # 7 AM PT = 14 UTC
+        seven_am_pacific = datetime(2026, 4, 15, 14, 0, tzinfo=UTC)  # 7 AM PT = 14 UTC
         assert engine.is_quiet_hours(seven_am_pacific) is False
 
     def test_boundary_659am_is_quiet(self) -> None:
         engine = SuppressionEngine()
-        six_59_am = datetime(2026, 4, 15, 13, 59, tzinfo=timezone.utc)  # 6:59 AM PT = 13:59 UTC
+        six_59_am = datetime(2026, 4, 15, 13, 59, tzinfo=UTC)  # 6:59 AM PT = 13:59 UTC
         assert engine.is_quiet_hours(six_59_am) is True
 
     def test_boundary_1059pm_is_not_quiet(self) -> None:
         engine = SuppressionEngine()
-        ten_59_pm = datetime(2026, 4, 16, 5, 59, tzinfo=timezone.utc)  # 10:59 PM PT = 5:59 UTC
+        ten_59_pm = datetime(2026, 4, 16, 5, 59, tzinfo=UTC)  # 10:59 PM PT = 5:59 UTC
         assert engine.is_quiet_hours(ten_59_pm) is False
 
     def test_same_day_quiet_window(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -186,10 +182,10 @@ class TestQuietHours:
         monkeypatch.setattr("notification_hub.suppression.get_policy_config", lambda: policy)
         engine = SuppressionEngine()
 
-        eight_am = datetime(2026, 4, 15, 15, 0, tzinfo=timezone.utc)
-        nine_am = datetime(2026, 4, 15, 16, 0, tzinfo=timezone.utc)
-        four_pm = datetime(2026, 4, 15, 23, 0, tzinfo=timezone.utc)
-        five_pm = datetime(2026, 4, 16, 0, 0, tzinfo=timezone.utc)
+        eight_am = datetime(2026, 4, 15, 15, 0, tzinfo=UTC)
+        nine_am = datetime(2026, 4, 15, 16, 0, tzinfo=UTC)
+        four_pm = datetime(2026, 4, 15, 23, 0, tzinfo=UTC)
+        five_pm = datetime(2026, 4, 16, 0, 0, tzinfo=UTC)
         assert engine.is_quiet_hours(eight_am) is False
         assert engine.is_quiet_hours(nine_am) is True
         assert engine.is_quiet_hours(four_pm) is True
@@ -202,8 +198,8 @@ class TestQuietHours:
         monkeypatch.setattr("notification_hub.suppression.get_policy_config", lambda: policy)
         engine = SuppressionEngine()
 
-        midnight = datetime(2026, 4, 15, 7, 0, tzinfo=timezone.utc)
-        noon = datetime(2026, 4, 15, 19, 0, tzinfo=timezone.utc)
+        midnight = datetime(2026, 4, 15, 7, 0, tzinfo=UTC)
+        noon = datetime(2026, 4, 15, 19, 0, tzinfo=UTC)
         assert engine.is_quiet_hours(midnight) is False
         assert engine.is_quiet_hours(noon) is False
 
@@ -244,14 +240,14 @@ class TestRateLimiting:
 
     def test_push_rate_resets_after_window(self) -> None:
         engine = SuppressionEngine()
-        old = datetime.now(timezone.utc) - timedelta(hours=1, minutes=1)
+        old = datetime.now(UTC) - timedelta(hours=1, minutes=1)
         for _ in range(5):
             engine.record_push_at(old)
         assert engine.check_push_rate() is True
 
     def test_slack_rate_resets_after_window(self) -> None:
         engine = SuppressionEngine()
-        old = datetime.now(timezone.utc) - timedelta(hours=1, minutes=1)
+        old = datetime.now(UTC) - timedelta(hours=1, minutes=1)
         for _ in range(20):
             engine.record_slack_at(old)
         assert engine.check_slack_rate() is True
@@ -303,7 +299,7 @@ def test_uses_configured_quiet_hours_and_limits(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr("notification_hub.suppression.get_policy_config", lambda: policy)
     engine = SuppressionEngine()
 
-    nine_pm_pacific = datetime(2026, 4, 16, 4, 0, tzinfo=timezone.utc)
+    nine_pm_pacific = datetime(2026, 4, 16, 4, 0, tzinfo=UTC)
     assert engine.is_quiet_hours(nine_pm_pacific) is True
 
     assert engine.check_push_rate() is True

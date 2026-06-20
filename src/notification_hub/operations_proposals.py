@@ -4,15 +4,15 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
 from notification_hub.config import EVENTS_DIR
 from notification_hub.operations_types import (
-    ActionProposalDismissReport,
     ActionProposalDismissalListReport,
     ActionProposalDismissalReport,
+    ActionProposalDismissReport,
     ActionProposalGroupHistoryReport,
     ActionProposalUndismissReport,
     PersonalOpsActionReport,
@@ -154,7 +154,7 @@ def record_action_proposal_group_history(
     record: ActionProposalGroupHistoryReport = {
         "group_key": group_key,
         "event_type": event_type,
-        "recorded_at": datetime.now(timezone.utc).isoformat(),
+        "recorded_at": datetime.now(UTC).isoformat(),
         "status": status,
         "action_count": len(actions),
         "action_ids": [action["action_id"] for action in actions],
@@ -273,7 +273,7 @@ def dismiss_action_proposal(
             "error": "dismissal_key is required",
         }
     path = dismissals_path or ACTION_PROPOSAL_DISMISSALS
-    dismissed_at = datetime.now(timezone.utc).isoformat()
+    dismissed_at = datetime.now(UTC).isoformat()
     dismissal: ActionProposalDismissalReport = {
         "dismissal_key": key,
         "dismissed_at": dismissed_at,
@@ -334,7 +334,7 @@ def undismiss_action_proposal(
             "applied": False,
             "error": "dismissal not found",
         }
-    deleted_at = datetime.now(timezone.utc).isoformat()
+    deleted_at = datetime.now(UTC).isoformat()
     tombstone: dict[str, object] = {
         "dismissal_key": key,
         "dismissed_at": active["dismissed_at"],

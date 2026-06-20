@@ -156,7 +156,7 @@ def test_claude_hook_template_clamps_long_repo_names(tmp_path: Path) -> None:
     payload_path = tmp_path / "payload.json"
     (bin_dir / "terminal-notifier").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     (bin_dir / "git").write_text(
-        '#!/bin/sh\nprintf "%%s\\n" "%s"\n' % ("b" * 250,),
+        '#!/bin/sh\nprintf "%s\\n" "{}"\n'.format("b" * 250),
         encoding="utf-8",
     )
     (bin_dir / "curl").write_text(

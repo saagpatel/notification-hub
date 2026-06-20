@@ -9,22 +9,25 @@ classifies urgency with deterministic rules, and then delivers each event to the
 - Accepts `POST /events` on `127.0.0.1:9199`
 - Watches the Claude bridge file for new activity lines
 - Classifies events as `urgent`, `normal`, or `info`
-- Always writes events to a local JSONL log
+- Persists accepted events to a local SQLite durable inbox before acknowledging producers
+- Writes processed non-burst events to a local JSONL audit log
 - Sends urgent events to push + Slack
 - Sends normal events to Slack
 - Keeps info events in the log only
 - Suppresses noise with dedup, quiet hours, and rate limits
+- Retries failed delivery and retains exhausted events in a dead-letter box
 
 ## Architecture
 
 ```text
-Event sources -> FastAPI intake -> classifier -> suppression -> delivery channels
+Event sources -> FastAPI intake -> SQLite durable inbox -> worker -> classifier -> suppression -> delivery channels -> JSONL audit log
 ```
 
 Core modules:
 
 - `server.py`: FastAPI app and lifecycle
 - `watcher.py`: bridge file watcher and parsing
+- `durable_inbox.py`: SQLite accepted-event inbox, retry lifecycle, and dead-letter health
 - `pipeline.py`: routing flow across classification, suppression, and delivery
 - `classifier.py`: deterministic keyword rules
 - `suppression.py`: dedup, quiet hours, and rate limiting
@@ -102,10 +105,12 @@ uv run notification-hub retention --max-events 2000
 ```
 
 The doctor command checks the local API, LaunchAgent presence, bridge file path, push notifier,
-Slack Keychain setup, and policy-config load status.
-The smoke command posts a harmless `info` event and verifies it lands in the live JSONL log.
+Slack Keychain setup, policy-config load status, and durable inbox status.
+The smoke command posts a harmless `info` event and verifies the background worker lands it in the
+live JSONL audit log.
 The status command shows the compact day-to-day runtime view and suggests the next repair action
-when something is degraded, including recent Slack delivery failures found in daemon logs.
+when something is degraded, including recent Slack delivery failures found in daemon logs and
+durable inbox dead letters or stale backlog.
 The inbox command groups recent events by coordination intent so attention, blocked/waiting work,
 ready work, completions, repeated rollups, and noisy producers are easy to scan.
 The coordination-snapshot command combines inbox state and runtime status into bridge-ready JSON.
@@ -253,18 +258,21 @@ See `docs/PRODUCT-BOUNDARY.md` for the current ownership split between notificat
 personal-ops, and bridge-db.
 The logs command shows recent stored events, daemon stdout/stderr tails, and a summary of accepted
 versus rejected `/events` posts plus Slack delivery failures without changing local runtime state.
+It also reports durable inbox status and dead-letter counts.
 The burn-in command summarizes recent accepted/rejected event posts and repeated event signatures
 so noisy producers are easy to spot. Validation-error counts are scoped to the latest visible daemon
 start so fixed pre-restart errors do not keep appearing as current burn-in failures. Recent Slack
 delivery failures now degrade burn-in health so configured-but-broken delivery does not look clean.
 Daemon log files that have not changed inside the requested burn-in window are ignored for burn-in
 health, so older post-start failures do not block a fresh readiness check.
+Durable inbox dead letters or old queued backlog also degrade burn-in health.
 Repeated-event candidates now include review-only noise-rule suggestions so policy changes can be
 copied deliberately instead of inferred from raw event rows.
 The verify-runtime command combines doctor, policy-check, `/health/details`, runtime wiring checks,
-and recent burn-in health into one read-only report by default. Pass `--include-smoke` when you
-intentionally want it to post a harmless smoke event too. Pass `--verify-slack` or `--verify-push`
-when you intentionally want to send one real delivery-check notification through that channel.
+durable inbox status, and recent burn-in health into one read-only report by default. Pass
+`--include-smoke` when you intentionally want it to post a harmless smoke event too. Pass
+`--verify-slack` or `--verify-push` when you intentionally want to send one real delivery-check
+notification through that channel.
 The delivery-check command runs the same explicit transport checks directly without the rest of
 the runtime report.
 The policy-check command inspects the current policy config for overlapping keywords, shadowed
@@ -612,7 +620,10 @@ Runtime change checklist:
 - The daemon is localhost-only.
 - The canonical local Python version is pinned in `.python-version` and matches CI's Python 3.12
   target.
-- The event log is written to `~/.local/share/notification-hub/events.jsonl`.
+- Accepted events are committed to `~/.local/share/notification-hub/inbox.sqlite3` before `POST
+  /events` returns 201.
+- The JSONL event log is processed-event audit history at
+  `~/.local/share/notification-hub/events.jsonl`; it is not the durability layer.
 - Slack webhook secrets are read from macOS Keychain and are never stored in repo files.
 - If the Slack webhook is not configured, the daemon stays healthy and continues local delivery
   without spamming repeated Slack-failure warnings.
