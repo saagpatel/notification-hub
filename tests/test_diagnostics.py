@@ -169,6 +169,45 @@ def test_collect_runtime_wiring_compares_installed_files_to_templates(
     }
 
 
+def test_collect_runtime_wiring_renders_home_token_before_comparing(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    """Installed plist with real home path must match template that uses __HOME__."""
+    home = str(Path.home())
+    template_text = "WorkingDirectory\n__HOME__/Projects/notification-hub\n"
+    installed_text = f"WorkingDirectory\n{home}/Projects/notification-hub\n"
+
+    launch_agent = tmp_path / "com.saagar.notification-hub.plist"
+    launch_agent_template = tmp_path / "template.plist"
+    launch_agent.write_text(installed_text, encoding="utf-8")
+    launch_agent_template.write_text(template_text, encoding="utf-8")
+
+    # Use stubs for hooks so only the plist comparison is exercised.
+    claude_hook = tmp_path / "notify.sh"
+    claude_hook_template = tmp_path / "claude-template.sh"
+    codex_hook = tmp_path / "notify_local.py"
+    codex_hook_template = tmp_path / "codex-template.py"
+    hook_content = "jq -n --arg x y\ncurl --max-time 2\n"
+    codex_content = "urllib.request.urlopen(req, timeout=2)\n"
+    claude_hook.write_text(hook_content, encoding="utf-8")
+    claude_hook_template.write_text(hook_content, encoding="utf-8")
+    codex_hook.write_text(codex_content, encoding="utf-8")
+    codex_hook_template.write_text(codex_content, encoding="utf-8")
+    codex_hook.chmod(0o755)
+
+    monkeypatch.setattr(config_mod, "LAUNCH_AGENT_PLIST", launch_agent)
+    monkeypatch.setattr(config_mod, "LAUNCH_AGENT_TEMPLATE", launch_agent_template)
+    monkeypatch.setattr(config_mod, "CLAUDE_HOOK", claude_hook)
+    monkeypatch.setattr(config_mod, "CLAUDE_HOOK_TEMPLATE", claude_hook_template)
+    monkeypatch.setattr(config_mod, "CODEX_HOOK", codex_hook)
+    monkeypatch.setattr(config_mod, "CODEX_HOOK_TEMPLATE", codex_hook_template)
+
+    result = collect_runtime_wiring()
+    assert result["launch_agent_matches_template"] is True, (
+        "A correctly rendered plist (real home path) must match the __HOME__ template"
+    )
+
+
 def test_collect_doctor_report_handles_local_api_failure() -> None:
     with (
         patch(
