@@ -665,3 +665,34 @@ class TestPushFailureResilience:
             process_stored_event_with_result(event, raise_on_delivery_failure=True)
 
         assert not tmp_log.exists()
+
+    def test_durable_retry_bypasses_duplicate_suppression_after_failed_delivery(
+        self,
+        tmp_log: Path,
+    ) -> None:
+        event = build_stored_event(_event(body="Approval needed for draft", project="ink"))
+        with (
+            patch("notification_hub.pipeline.send_push", return_value=False),
+            patch("notification_hub.pipeline.send_slack", return_value=True),
+            patch("notification_hub.pipeline.send_slack_digest", return_value=True),
+            _patch_daytime(),
+            pytest.raises(DeliveryError),
+        ):
+            process_stored_event_with_result(event, raise_on_delivery_failure=True)
+
+        with (
+            patch("notification_hub.pipeline.send_push", return_value=True) as mock_push,
+            patch("notification_hub.pipeline.send_slack", return_value=True) as mock_slack,
+            patch("notification_hub.pipeline.send_slack_digest", return_value=True),
+            _patch_daytime(),
+        ):
+            result = process_stored_event_with_result(
+                event,
+                raise_on_delivery_failure=True,
+                skip_duplicate_suppression=True,
+            )
+
+        assert result.outcome == "processed"
+        mock_push.assert_called_once_with(result.event)
+        mock_slack.assert_called_once_with(result.event)
+        assert tmp_log.exists()

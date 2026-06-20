@@ -304,6 +304,7 @@ def process_stored_event_with_result(
     event: StoredEvent,
     *,
     raise_on_delivery_failure: bool = False,
+    skip_duplicate_suppression: bool = False,
 ) -> PipelineProcessResult:
     """Full pipeline for a durable event, returning the persistence outcome.
 
@@ -326,7 +327,7 @@ def process_stored_event_with_result(
 
     # Exact producer burst suppression happens before JSONL audit logging so
     # repeated local reminder fan-out does not flood processed-event history.
-    if _suppression.is_burst_duplicate(stored):
+    if not skip_duplicate_suppression and _suppression.is_burst_duplicate(stored):
         logger.debug("Event %s suppressed by burst dedup before storage", stored.event_id)
         return PipelineProcessResult(event=stored, outcome="suppressed")
 
@@ -334,7 +335,7 @@ def process_stored_event_with_result(
     _drain_quiet_queue_if_needed()
 
     # Dedup: stop delivery if duplicate (project, level) within window
-    if _suppression.is_duplicate(stored):
+    if not skip_duplicate_suppression and _suppression.is_duplicate(stored):
         logger.debug("Event %s suppressed by dedup", stored.event_id)
         write_jsonl(stored)
         logger.info(
