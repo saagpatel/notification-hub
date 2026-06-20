@@ -1,6 +1,6 @@
 # Current State
 
-Last updated: 2026-06-20 (source-tree durable inbox implemented; live daemon not restarted)
+Last updated: 2026-06-20 (durable inbox implemented, merged, and adopted by live daemon)
 
 ## Restart Index (2026-06-19)
 
@@ -46,8 +46,25 @@ Implemented source-tree behavior:
   durable inbox status. Dead letters, stale processing leases, and old queued backlog degrade health.
 - `notification-hub smoke` now waits briefly for the async worker to write the JSONL audit row.
 
-Live runtime was not mutated during this implementation pass: no LaunchAgent restart, launchd kick,
-smoke POST, Slack/push delivery check, or live runtime state mutation was performed.
+Live adoption after merge on 2026-06-20:
+
+- PR #88 was merged to `main`; local `main` matches `origin/main` at merge commit
+  `43e342a134732a41ae1a5745780b3caa4162cbad`.
+- The LaunchAgent was restarted from this repo and is running on `127.0.0.1:9199` with fresh
+  uptime.
+- `/health/details`, `notification-hub status --json`, and
+  `notification-hub verify-runtime --json` report `status: ok`.
+- Runtime wiring is current. The installed Codex hook had a one-line whitespace drift from the
+  checked-in template; it was normalized through the editor path after shell install was blocked by
+  the Codex control-surface guard.
+- Durable inbox live state is healthy: database exists, worker is running, no queued, processing,
+  retry-scheduled, stale-processing, or dead-letter rows.
+- `notification-hub smoke --json` passed with event id `de4a07c680a7`; the event returned 201,
+  reached JSONL audit history, and the durable row moved to `processed`.
+- `notification-hub delivery-check --json --slack --push` passed with event id `1cebf38b0bdf`.
+- Ten-minute `notification-hub burn-in --json --minutes 10 --lines 200` reports `status: ok`,
+  no rejected posts, no validation errors, no current Slack delivery failures, and no noise
+  candidates.
 
 Source-tree verification for this implementation pass:
 

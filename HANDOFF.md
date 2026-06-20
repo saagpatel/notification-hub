@@ -1,6 +1,6 @@
 # Handoff — notification-hub
 
-## Current source-tree note — 2026-06-20
+## Current live runtime note — 2026-06-20
 
 Catalog #11, NotificationHub Dead-Letter Box, is implemented in the source tree. The accepted
 contract is now: `POST /events` returns 201 only after the validated event is durably committed to
@@ -20,13 +20,29 @@ Health/reporting now surfaces durable inbox state in `/health/details`, `doctor`
 `logs`, `burn-in`, `verify-runtime`, and `/review`. Dead letters, stale processing leases, and old
 queued backlog degrade health. Startup reclaims expired `processing` leases to retry.
 
-No live runtime mutation was performed during this implementation pass: no LaunchAgent restart,
-launchd kick, smoke POST, Slack/push delivery check, or live runtime state mutation.
+PR #88 is merged to `main`, and the live LaunchAgent has adopted the durable inbox code. The
+daemon was restarted from `/Users/d/Projects/notification-hub` and came back on `127.0.0.1:9199`
+with fresh uptime. Runtime wiring is current after normalizing a one-line whitespace drift in the
+installed Codex hook.
 
-**Status:** Source-tree implementation complete; live daemon not restarted
-**Branch:** `codex/chore/ruff-base-config`
-**Verification:** `uv lock --check` passed; `uv run --frozen pytest` passed with `420 passed`;
-`uv run --frozen ruff check` passed; `uv run --frozen pyright` passed with `0 errors`.
+Live proof after restart:
+
+- `/health/details`: `status: ok`; durable inbox database exists; worker running; no queued,
+  processing, retry-scheduled, stale-processing, or dead-letter rows.
+- `notification-hub status --json`: `status: ok`, `runtime_wiring_current: true`,
+  `slack_delivery_failures: 0`.
+- `notification-hub verify-runtime --json`: `status: ok`; doctor, durable inbox, policy, import
+  queue, burn-in, and runtime wiring checks all OK.
+- `notification-hub smoke --json`: `status: ok`, event id `de4a07c680a7`, 201 response, JSONL
+  audit verified, durable row processed.
+- `notification-hub delivery-check --json --slack --push`: `status: ok`, event id
+  `1cebf38b0bdf`, Slack and push both OK.
+- `notification-hub burn-in --json --minutes 10 --lines 200`: `status: ok`, no rejected posts,
+  no validation errors, no current Slack delivery failures, no noise candidates.
+
+**Status:** Merged and adopted by live daemon
+**Branch:** `main`
+**Verification:** PR CI passed before merge; live post-adoption checks above passed.
 
 ## Previous freshness note — 2026-06-19
 
