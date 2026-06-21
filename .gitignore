@@ -9,3 +9,9 @@ build/
 .ruff_cache/
 .serena/
 .claude/
+
+# Maintainer-only session files (not for public consumption)
+CLAUDE.md
+HANDOFF.md
+DOC-RECONCILIATION.md
+IMPLEMENTATION-ROADMAP.md

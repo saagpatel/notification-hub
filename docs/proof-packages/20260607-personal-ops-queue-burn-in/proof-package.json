@@ -1,101 +1,91 @@
 {
-  "schema_version": "proof-package.v1",
-  "package_id": "20260607-personal-ops-queue-burn-in",
-  "subject": {
-    "repo": "notification-hub",
-    "lane": "personal-ops-queue-burn-in",
-    "claim": "The personal-ops queue burn-in reports ready promotion posture with no queued handoff items."
-  },
-  "producer": {
-    "repo": "notification-hub",
-    "mode": "read-only",
-    "commands": [
-      "notification-hub personal-ops-queue-burn-in"
-    ]
-  },
-  "source_state": {
-    "generated_at": "2026-06-07T06:28:46.228912+00:00",
-    "git_branch": "main",
-    "git_status": "clean",
-    "freshness_window_hours": 24
-  },
-  "claims": [
-    {
-      "id": "burn-in-status-ok",
-      "statement": "The saved burn-in report status is ok.",
-      "status": "passed",
-      "evidence": [
-        "burn-in-json"
-      ]
-    },
-    {
-      "id": "ready-for-live-promotion",
-      "statement": "The queue loop is ready for live promotion when the next real handoff appears.",
-      "status": "passed",
-      "evidence": [
-        "burn-in-json"
-      ]
-    },
-    {
-      "id": "queue-empty",
-      "statement": "The personal-ops import queue has zero queued items and does not need review.",
-      "status": "passed",
-      "evidence": [
-        "burn-in-json"
-      ]
-    },
-    {
-      "id": "runtime-report-surface",
-      "statement": "notification-hub has a CLI report surface for burn-in, queue health, readiness, and operator state evidence.",
-      "status": "passed",
-      "evidence": [
-        "cli-report-surface"
-      ]
-    }
-  ],
-  "verification": {
-    "overall": "passed",
-    "checks": [
-      {
-        "name": "saved burn-in JSON inspected",
-        "status": "passed"
-      },
-      {
-        "name": "queue status ok and queued_count=0",
-        "status": "passed"
-      }
-    ],
-    "missing_receipts": [],
-    "known_gaps": [
-      "This package wraps the latest saved burn-in report discovered during the audit; rerun burn-in for a fresh live promotion decision."
-    ]
-  },
-  "safety": {
-    "redaction": "none",
-    "secrets_checked": true,
-    "live_write_performed": false
-  },
-  "artifacts": [
-    {
-      "id": "burn-in-json",
-      "kind": "json-receipt",
-      "path": "/Users/d/.local/share/notification-hub/burn-in-reports/personal-ops-queue-burn-in-20260607-062846.json",
-      "description": "Saved personal-ops queue burn-in report.",
-      "required": true
-    },
-    {
-      "id": "cli-report-surface",
-      "kind": "source-contract",
-      "path": "../../../src/notification_hub/cli_reports.py",
-      "description": "CLI report rendering surfaces for operator and burn-in evidence.",
-      "required": true
-    },
-    {
-      "id": "burn-in-tests",
-      "kind": "test-contract",
-      "path": "../../../tests/test_logs_burn_in_diagnostics.py",
-      "description": "Tests covering burn-in diagnostics and repeated-signature reporting.",
-      "required": true
-    }
-  ]
+	"schema_version": "proof-package.v1",
+	"package_id": "20260607-personal-ops-queue-burn-in",
+	"subject": {
+		"repo": "notification-hub",
+		"lane": "personal-ops-queue-burn-in",
+		"claim": "The personal-ops queue burn-in reports ready promotion posture with no queued handoff items."
+	},
+	"producer": {
+		"repo": "notification-hub",
+		"mode": "read-only",
+		"commands": ["notification-hub personal-ops-queue-burn-in"]
+	},
+	"source_state": {
+		"generated_at": "2026-06-07T06:28:46.228912+00:00",
+		"git_branch": "main",
+		"git_status": "clean",
+		"freshness_window_hours": 24
+	},
+	"claims": [
+		{
+			"id": "burn-in-status-ok",
+			"statement": "The saved burn-in report status is ok.",
+			"status": "passed",
+			"evidence": ["burn-in-json"]
+		},
+		{
+			"id": "ready-for-live-promotion",
+			"statement": "The queue loop is ready for live promotion when the next real handoff appears.",
+			"status": "passed",
+			"evidence": ["burn-in-json"]
+		},
+		{
+			"id": "queue-empty",
+			"statement": "The personal-ops import queue has zero queued items and does not need review.",
+			"status": "passed",
+			"evidence": ["burn-in-json"]
+		},
+		{
+			"id": "runtime-report-surface",
+			"statement": "notification-hub has a CLI report surface for burn-in, queue health, readiness, and operator state evidence.",
+			"status": "passed",
+			"evidence": ["cli-report-surface"]
+		}
+	],
+	"verification": {
+		"overall": "passed",
+		"checks": [
+			{
+				"name": "saved burn-in JSON inspected",
+				"status": "passed"
+			},
+			{
+				"name": "queue status ok and queued_count=0",
+				"status": "passed"
+			}
+		],
+		"missing_receipts": [],
+		"known_gaps": [
+			"This package wraps the latest saved burn-in report discovered during the audit; rerun burn-in for a fresh live promotion decision."
+		]
+	},
+	"safety": {
+		"redaction": "none",
+		"secrets_checked": true,
+		"live_write_performed": false
+	},
+	"artifacts": [
+		{
+			"id": "burn-in-json",
+			"kind": "json-receipt",
+			"path": "~/.local/share/notification-hub/burn-in-reports/personal-ops-queue-burn-in-20260607-062846.json",
+			"description": "Saved personal-ops queue burn-in report.",
+			"required": true
+		},
+		{
+			"id": "cli-report-surface",
+			"kind": "source-contract",
+			"path": "../../../src/notification_hub/cli_reports.py",
+			"description": "CLI report rendering surfaces for operator and burn-in evidence.",
+			"required": true
+		},
+		{
+			"id": "burn-in-tests",
+			"kind": "test-contract",
+			"path": "../../../tests/test_logs_burn_in_diagnostics.py",
+			"description": "Tests covering burn-in diagnostics and repeated-signature reporting.",
+			"required": true
+		}
+	]
 }

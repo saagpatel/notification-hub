@@ -1,9 +1,20 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  TEMPLATE — substitute before installing.
+
+  Replace every __HOME__ token with your actual home directory (e.g. /Users/yourname).
+  Rename the Label to your own reverse-domain label (e.g. com.yourname.notification-hub).
+
+  Install:
+    sed 's|__HOME__|'"$HOME"'|g' ops/launchagents/com.saagar.notification-hub.plist \
+      > ~/Library/LaunchAgents/com.yourname.notification-hub.plist
+    launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.yourname.notification-hub.plist
+-->
 <plist version="1.0">
   <dict>
     <key>Label</key>
-    <string>com.saagar.notification-hub</string>
+    <string>com.yourname.notification-hub</string>
     <key>ProgramArguments</key>
     <array>
       <string>/opt/homebrew/bin/uv</string>
@@ -17,19 +28,19 @@
       <string>9199</string>
     </array>
     <key>WorkingDirectory</key>
-    <string>/Users/d/Projects/notification-hub</string>
+    <string>__HOME__/Projects/notification-hub</string>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>/Users/d/Library/Logs/notification-hub/stdout.log</string>
+    <string>__HOME__/Library/Logs/notification-hub/stdout.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/d/Library/Logs/notification-hub/stderr.log</string>
+    <string>__HOME__/Library/Logs/notification-hub/stderr.log</string>
     <key>EnvironmentVariables</key>
     <dict>
       <key>HOME</key>
-      <string>/Users/d</string>
+      <string>__HOME__</string>
       <key>PATH</key>
       <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
     </dict>

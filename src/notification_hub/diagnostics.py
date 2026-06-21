@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, TypedDict, cast
 
 import httpx
@@ -63,12 +64,23 @@ def _path_text(path: object) -> str | None:
         return None
 
 
+def _render_template(text: str) -> str:
+    """Substitute template tokens so the rendered output matches a correctly installed file."""
+    return text.replace("__HOME__", str(Path.home()))
+
+
 def _matches_template(installed_path: object, template_path: object) -> bool:
+    """Return True when the installed file matches the repo template after token substitution.
+
+    The repo template uses ``__HOME__`` placeholders that the install step replaces
+    with the real home directory.  Comparing raw bytes would always produce a mismatch
+    for a correctly installed file, so the template is rendered before the comparison.
+    """
     installed = _path_text(installed_path)
     template = _path_text(template_path)
     if installed is None or template is None:
         return False
-    return installed.strip() == template.strip()
+    return installed.strip() == _render_template(template).strip()
 
 
 def _path_executable(path: object) -> bool:

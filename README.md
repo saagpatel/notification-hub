@@ -1,8 +1,23 @@
 # Notification Hub
 
+[![CI](https://github.com/saagpatel/notification-hub/actions/workflows/ci.yml/badge.svg)](https://github.com/saagpatel/notification-hub/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 `notification-hub` is a small local daemon that turns AI-tool events into routed notifications.
 It accepts structured events over HTTP, watches the shared bridge file for appended activity,
 classifies urgency with deterministic rules, and then delivers each event to the right channel.
+
+## Is this for you?
+
+This project is personal infrastructure built for one operator's AI-tool workflow (Claude Code,
+Codex, and Claude.ai). It is published openly so others can adapt the pattern — a lightweight
+localhost daemon that routes structured AI-tool events to push and Slack — but it is not a
+general-purpose notification library and has no stability guarantees for external users.
+
+If you want to run it yourself, expect to substitute your own home directory, rename the LaunchAgent
+label to your reverse-domain prefix, wire up your own bridge file path, and adapt the policy config
+to your workflow. The Operator Commands and Policy Config sections document everything that is
+configurable.
 
 ## What It Does
 
@@ -419,7 +434,7 @@ window_minutes = 10
 source = "personal-ops"
 project = "mail"
 title_contains = "approval requested"
-body_contains = "phase 34 secondary approval"
+body_contains = "workflow secondary approval"
 level = "urgent"
 window_minutes = 30
 
@@ -427,7 +442,7 @@ window_minutes = 30
 source = "personal-ops"
 project = "mail"
 title_contains = "draft ready"
-body_contains = "phase 34 secondary approval"
+body_contains = "workflow secondary approval"
 level = "info"
 window_minutes = 30
 
@@ -629,7 +644,10 @@ Runtime change checklist:
   without spamming repeated Slack-failure warnings.
 - If a Slack webhook is added later, the daemon will retry Keychain lookup automatically within
   about a minute, so a manual restart is usually not required.
-- LaunchAgent support lives at `~/Library/LaunchAgents/com.saagar.notification-hub.plist`.
+- LaunchAgent support lives at `~/Library/LaunchAgents/com.yourname.notification-hub.plist`.
+  The template at `ops/launchagents/com.saagar.notification-hub.plist` uses `__HOME__` tokens and
+  a `com.yourname` label placeholder — substitute your home directory and rename the label to your
+  own reverse-domain prefix before installing.
 - Repo-owned runtime templates live under `ops/`: the LaunchAgent template, Claude Code hook
   template, and Codex hook template are the source of truth for machine-local wiring.
 - `GET /health/details` reports whether push delivery is available, whether Slack is configured,
@@ -641,18 +659,19 @@ Runtime change checklist:
 Refresh local runtime wiring from repo templates:
 
 ```bash
-install -m 644 ops/launchagents/com.saagar.notification-hub.plist ~/Library/LaunchAgents/com.saagar.notification-hub.plist
+# Substitute your home dir and rename the label to your reverse-domain prefix first:
+sed 's|__HOME__|'"$HOME"'|g; s|com\.yourname|com.yourname|g' \
+  ops/launchagents/com.saagar.notification-hub.plist \
+  > ~/Library/LaunchAgents/com.yourname.notification-hub.plist
 install -m 755 ops/hooks/claude-notify.sh ~/.claude/hooks/notify.sh
 install -m 755 ops/hooks/codex-notify-local.py ~/.codex/hooks/notify_local.py
-launchctl bootout "gui/$(id -u)" ~/Library/LaunchAgents/com.saagar.notification-hub.plist 2>/dev/null || true
-launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.saagar.notification-hub.plist
-launchctl kickstart -k "gui/$(id -u)/com.saagar.notification-hub"
+launchctl bootout "gui/$(id -u)" ~/Library/LaunchAgents/com.yourname.notification-hub.plist 2>/dev/null || true
+launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.yourname.notification-hub.plist
+launchctl kickstart -k "gui/$(id -u)/com.yourname.notification-hub"
 ```
 
 ## Docs
 
 - `README.md`: project overview, setup, and verification
 - `docs/CURRENT-STATE.md`: restart index plus dated repo/runtime evidence; reverify live state before treating it as current
-- `IMPLEMENTATION-ROADMAP.md`: phased implementation history
-- `CLAUDE.md`: maintainer notes and portfolio context
 - `docs/PRODUCT-BOUNDARY.md`: notification-hub, personal-ops, and bridge-db ownership split
