@@ -68,6 +68,11 @@ def parse_activity_line(line: str) -> Event | None:
     if not match:
         return None
     date_str, tag, project, summary, branch = match.groups()
+    try:
+        timestamp = datetime.fromisoformat(date_str).replace(tzinfo=UTC)
+    except ValueError:
+        logger.warning("Bridge watcher: skipping line with invalid date %r", date_str)
+        return None
     title = f"Bridge: {project.strip()}"
     body_parts = [summary.strip()]
     if branch:
@@ -83,7 +88,7 @@ def parse_activity_line(line: str) -> Event | None:
         title=title,
         body=" ".join(body_parts),
         project=project.strip(),
-        timestamp=datetime.fromisoformat(date_str).replace(tzinfo=UTC),
+        timestamp=timestamp,
     )
 
 
@@ -93,28 +98,44 @@ class BridgeFileHandler(FileSystemEventHandler):
     def __init__(self, on_event: Callable[[Event], None]) -> None:
         super().__init__()
         self._on_event = on_event
-        self._last_content = self._read_file()
+        self._last_content = self._read_file() or ""
 
-    def _read_file(self) -> str:
+    def _read_file(self) -> str | None:
+        """Return bridge file content, "" if absent, or None if unreadable this cycle."""
         try:
             return BRIDGE_FILE.read_text(encoding="utf-8")
         except FileNotFoundError:
             return ""
+        except (OSError, UnicodeDecodeError) as exc:
+            logger.warning("Bridge watcher could not read %s: %s", BRIDGE_FILE, exc)
+            return None
+
+    def _emit_line(self, line: str) -> None:
+        parsed = parse_activity_line(line)
+        if parsed is None:
+            return
+        logger.info("Bridge watcher detected: %s", parsed.title)
+        try:
+            self._on_event(parsed)
+        except Exception:
+            logger.exception("Bridge watcher event callback failed for %s", parsed.title)
 
     def on_modified(self, event: DirModifiedEvent | FileModifiedEvent) -> None:
-        if not isinstance(event, FileModifiedEvent):
-            return
-        src = event.src_path.decode() if isinstance(event.src_path, bytes) else event.src_path
-        if Path(src).resolve() != BRIDGE_FILE.resolve():
-            return
-        new_content = self._read_file()
-        new_lines = diff_sections(self._last_content, new_content)
-        self._last_content = new_content
-        for line in new_lines:
-            parsed = parse_activity_line(line)
-            if parsed:
-                logger.info("Bridge watcher detected: %s", parsed.title)
-                self._on_event(parsed)
+        try:
+            if not isinstance(event, FileModifiedEvent):
+                return
+            src = event.src_path.decode() if isinstance(event.src_path, bytes) else event.src_path
+            if Path(src).resolve() != BRIDGE_FILE.resolve():
+                return
+            new_content = self._read_file()
+            if new_content is None:
+                return  # transient read failure; keep last state, retry on the next event
+            new_lines = diff_sections(self._last_content, new_content)
+            self._last_content = new_content
+            for line in new_lines:
+                self._emit_line(line)
+        except Exception:
+            logger.exception("Bridge watcher on_modified failed; watcher continues")
 
 
 def start_watcher(on_event: Callable[[Event], None]) -> ObserverHandle:
