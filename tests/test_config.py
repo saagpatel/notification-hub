@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -521,3 +522,35 @@ class TestPolicyAnalysis:
             "routing rule 1 is shadowed by earlier evaluation rule 2" in warning
             for warning in warnings
         )
+
+
+class TestRoutingChoiceValidation:
+    """Present-but-invalid enum values are dropped with a warning, not silently."""
+
+    def test_warns_on_invalid_force_level(self, caplog: pytest.LogCaptureFixture) -> None:
+        with caplog.at_level(logging.WARNING, logger="notification_hub.config"):
+            rules = config_mod._parse_routing_rules(
+                [{"source": "codex", "force_level": "critical"}]
+            )
+        assert rules[0].force_level is None
+        assert rules[0].source == "codex"
+        assert any("invalid force_level=" in m and "critical" in m for m in caplog.messages)
+
+    def test_warns_on_invalid_source(self, caplog: pytest.LogCaptureFixture) -> None:
+        with caplog.at_level(logging.WARNING, logger="notification_hub.config"):
+            rules = config_mod._parse_routing_rules([{"source": "not_a_source", "project": "demo"}])
+        assert rules[0].source is None
+        assert rules[0].project == "demo"
+        assert any("invalid source=" in m and "not_a_source" in m for m in caplog.messages)
+
+    def test_valid_force_level_does_not_warn(self, caplog: pytest.LogCaptureFixture) -> None:
+        with caplog.at_level(logging.WARNING, logger="notification_hub.config"):
+            rules = config_mod._parse_routing_rules([{"source": "codex", "force_level": "normal"}])
+        assert rules[0].force_level == "normal"
+        assert not [m for m in caplog.messages if "force_level" in m]
+
+    def test_warns_on_invalid_noise_level(self, caplog: pytest.LogCaptureFixture) -> None:
+        with caplog.at_level(logging.WARNING, logger="notification_hub.config"):
+            rules = config_mod._parse_noise_rules([{"source": "codex", "level": "bogus"}])
+        assert rules[0].level is None
+        assert any("invalid level=" in m and "bogus" in m for m in caplog.messages)

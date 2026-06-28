@@ -7,6 +7,7 @@ import logging
 import os
 import shutil
 import subprocess
+import time
 from pathlib import Path
 from typing import TypedDict
 
@@ -16,6 +17,14 @@ from notification_hub.config import EVENTS_DIR, EVENTS_LOG, get_slack_webhook_ur
 from notification_hub.models import StoredEvent
 
 logger = logging.getLogger(__name__)
+
+# Slack delivery retry policy. Transient failures (network errors, timeouts,
+# HTTP 429, and 5xx) are retried with exponential backoff; permanent client
+# errors (other 4xx) and success short-circuit immediately.
+_SLACK_TIMEOUT_SECONDS = 10.0
+_SLACK_MAX_ATTEMPTS = 3
+_SLACK_RETRY_BASE_SECONDS = 0.5
+_SLACK_RETRY_MAX_SECONDS = 30.0
 
 # Source labels for push notification subtitles
 _SOURCE_LABELS: dict[str, str] = {
@@ -215,24 +224,75 @@ def format_slack_digest(events: list[StoredEvent]) -> SlackPayload:
     }
 
 
+def _parse_retry_after(resp: httpx.Response) -> float | None:
+    """Return the Retry-After header in seconds (capped), or None if absent/invalid."""
+    raw = resp.headers.get("Retry-After")
+    if raw is None:
+        return None
+    try:
+        seconds = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return min(max(seconds, 0.0), _SLACK_RETRY_MAX_SECONDS)
+
+
+def _post_to_slack(webhook_url: str, payload: SlackPayload, description: str) -> bool:
+    """POST a payload to a Slack webhook with bounded retry on transient failures.
+
+    Retries network errors, timeouts, HTTP 429, and 5xx with exponential backoff
+    (honoring Retry-After on 429). Returns immediately on a 200 or a permanent
+    client error (other 4xx). Returns True only when Slack accepts the payload.
+    """
+    for attempt in range(1, _SLACK_MAX_ATTEMPTS + 1):
+        retry_after: float | None = None
+        try:
+            resp = httpx.post(webhook_url, json=payload, timeout=_SLACK_TIMEOUT_SECONDS)
+        except httpx.TransportError as exc:
+            # Covers all timeout + network variants; retry these.
+            transient = True
+            reason = type(exc).__name__
+        except Exception as exc:
+            # Permanent/setup error (bad URL, unsupported protocol). Log the type
+            # only — exception messages can embed the webhook URL (a bearer token).
+            logger.warning("Slack %s failed (%s); not retrying", description, type(exc).__name__)
+            return False
+        else:
+            if resp.status_code == 200:
+                logger.info("Slack %s sent (attempt %d)", description, attempt)
+                return True
+            transient = resp.status_code == 429 or resp.status_code >= 500
+            reason = f"HTTP {resp.status_code}"
+            if resp.status_code == 429:
+                retry_after = _parse_retry_after(resp)
+
+        if not transient or attempt == _SLACK_MAX_ATTEMPTS:
+            logger.warning("Slack %s failed (%s) after %d attempt(s)", description, reason, attempt)
+            return False
+
+        delay = (
+            retry_after
+            if retry_after is not None
+            else min(_SLACK_RETRY_BASE_SECONDS * (2 ** (attempt - 1)), _SLACK_RETRY_MAX_SECONDS)
+        )
+        logger.warning(
+            "Slack %s transient failure (%s); retrying in %.1fs (attempt %d/%d)",
+            description,
+            reason,
+            delay,
+            attempt,
+            _SLACK_MAX_ATTEMPTS,
+        )
+        time.sleep(delay)
+    return False  # defensive: the loop always returns on the final attempt
+
+
 def send_slack(event: StoredEvent) -> bool:
     """Send a single event to Slack via webhook. Returns True if sent."""
     webhook_url = get_slack_webhook_url()
     if webhook_url is None:
         logger.warning("No Slack webhook configured, skipping event %s", event.event_id)
         return False
-
-    payload = format_slack_message(event)
-    try:
-        resp = httpx.post(webhook_url, json=payload, timeout=10)
-        if resp.status_code == 200:
-            logger.info("Slack message sent for event %s", event.event_id)
-            return True
-        logger.warning("Slack webhook returned %d for %s", resp.status_code, event.event_id)
-        return False
-    except Exception as exc:
-        logger.warning("Slack send failed for %s: %s", event.event_id, exc)
-        return False
+    return _post_to_slack(webhook_url, format_slack_message(event), f"event {event.event_id}")
 
 
 def send_slack_digest(events: list[StoredEvent]) -> bool:
@@ -245,14 +305,6 @@ def send_slack_digest(events: list[StoredEvent]) -> bool:
         logger.warning("No Slack webhook configured, skipping digest of %d events", len(events))
         return False
 
-    payload = format_slack_digest(events)
-    try:
-        resp = httpx.post(webhook_url, json=payload, timeout=10)
-        if resp.status_code == 200:
-            logger.info("Slack digest sent: %d events", len(events))
-            return True
-        logger.warning("Slack digest webhook returned %d", resp.status_code)
-        return False
-    except Exception as exc:
-        logger.warning("Slack digest failed: %s", exc)
-        return False
+    return _post_to_slack(
+        webhook_url, format_slack_digest(events), f"digest of {len(events)} events"
+    )
