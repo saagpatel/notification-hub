@@ -258,13 +258,28 @@ def _as_optional_lower_string(value: object) -> str | None:
     return None if candidate is None else candidate.lower()
 
 
-def _as_optional_choice(value: object, valid: frozenset[str]) -> str | None:
-    """Return a lowercase string when it matches the allowed choices."""
+def _as_optional_choice(
+    value: object, valid: frozenset[str], *, field: str | None = None
+) -> str | None:
+    """Return a lowercase string when it matches the allowed choices.
+
+    When `field` is given and the value is present but not an allowed choice, log
+    a warning so a misconfigured rule surfaces instead of being silently dropped.
+    """
     candidate = _as_optional_string(value)
     if candidate is None:
         return None
     lowered = candidate.lower()
-    return lowered if lowered in valid else None
+    if lowered in valid:
+        return lowered
+    if field is not None:
+        logger.warning(
+            "Ignoring invalid %s=%r in routing config (valid: %s)",
+            field,
+            candidate,
+            ", ".join(sorted(valid)),
+        )
+    return None
 
 
 def _parse_routing_rules(value: object) -> tuple[RoutingRule, ...]:
@@ -275,7 +290,7 @@ def _parse_routing_rules(value: object) -> tuple[RoutingRule, ...]:
     rules: list[RoutingRule] = []
     for item in cast(list[object], value):
         raw_rule = _as_mapping(item)
-        source = _as_optional_choice(raw_rule.get("source"), VALID_SOURCES)
+        source = _as_optional_choice(raw_rule.get("source"), VALID_SOURCES, field="source")
         project = _as_optional_string(raw_rule.get("project"))
         project_prefix = _as_optional_string(raw_rule.get("project_prefix"))
         title_contains = _as_optional_lower_string(raw_rule.get("title_contains"))
@@ -299,7 +314,9 @@ def _parse_routing_rules(value: object) -> tuple[RoutingRule, ...]:
                 title_contains=title_contains,
                 body_contains=body_contains,
                 text_contains=text_contains,
-                force_level=_as_optional_choice(raw_rule.get("force_level"), VALID_LEVELS),
+                force_level=_as_optional_choice(
+                    raw_rule.get("force_level"), VALID_LEVELS, field="force_level"
+                ),
                 disable_push=_as_bool(raw_rule.get("disable_push")),
                 disable_slack=_as_bool(raw_rule.get("disable_slack")),
                 continue_matching=_as_bool(raw_rule.get("continue_matching")),
@@ -336,7 +353,7 @@ def _parse_noise_rules(value: object) -> tuple[NoiseRule, ...]:
     rules: list[NoiseRule] = []
     for item in cast(list[object], value):
         raw_rule = _as_mapping(item)
-        source = _as_optional_choice(raw_rule.get("source"), VALID_SOURCES)
+        source = _as_optional_choice(raw_rule.get("source"), VALID_SOURCES, field="source")
         project = _as_optional_string(raw_rule.get("project"))
         project_prefix = _as_optional_string(raw_rule.get("project_prefix"))
         title_contains = _as_optional_lower_string(raw_rule.get("title_contains"))
@@ -360,7 +377,7 @@ def _parse_noise_rules(value: object) -> tuple[NoiseRule, ...]:
                 title_contains=title_contains,
                 body_contains=body_contains,
                 text_contains=text_contains,
-                level=_as_optional_choice(raw_rule.get("level"), VALID_LEVELS),
+                level=_as_optional_choice(raw_rule.get("level"), VALID_LEVELS, field="level"),
                 window_minutes=_as_int(raw_rule.get("window_minutes"), 5, minimum=1),
             )
         )
