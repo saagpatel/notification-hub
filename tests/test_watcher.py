@@ -2,7 +2,17 @@
 
 from __future__ import annotations
 
-from notification_hub.watcher import diff_sections, extract_section_lines, parse_activity_line
+from pathlib import Path
+
+from watchdog.events import FileModifiedEvent
+
+import notification_hub.watcher as watcher_mod
+from notification_hub.watcher import (
+    BridgeFileHandler,
+    diff_sections,
+    extract_section_lines,
+    parse_activity_line,
+)
 
 SAMPLE_BRIDGE = """\
 # Bridge File
@@ -102,3 +112,91 @@ class TestParseActivityLine:
         assert parse_activity_line("not a valid line") is None
         assert parse_activity_line("") is None
         assert parse_activity_line("<!-- comment -->") is None
+
+    def test_regex_valid_but_invalid_date_returns_none(self) -> None:
+        # Matches \d{4}-\d{2}-\d{2} but is not a real calendar date; must not raise.
+        assert parse_activity_line("- [2026-13-45] proj: impossible date") is None
+
+
+# A watched section that starts empty (comment only) so an appended line is "new".
+_WATCHED_BASE = "## Recent Codex Activity\n<!-- codex appends here -->\n"
+
+
+def _modified_event(path: Path) -> FileModifiedEvent:
+    return FileModifiedEvent(src_path=str(path))
+
+
+class TestBridgeFileHandlerResilience:
+    """The watcher thread must survive transient I/O, bad data, and callback errors."""
+
+    def test_emits_event_on_new_activity(self, monkeypatch, tmp_path) -> None:
+        bridge = tmp_path / "bridge.md"
+        bridge.write_text(_WATCHED_BASE, encoding="utf-8")
+        monkeypatch.setattr(watcher_mod, "BRIDGE_FILE", bridge)
+        events: list = []
+        handler = BridgeFileHandler(events.append)
+        bridge.write_text(_WATCHED_BASE + "- [2026-04-14] proj: did a thing\n", encoding="utf-8")
+        handler.on_modified(_modified_event(bridge))
+        assert len(events) == 1
+        assert events[0].project == "proj"
+
+    def test_read_oserror_returns_none(self, monkeypatch, tmp_path) -> None:
+        bridge = tmp_path / "bridge.md"
+        bridge.write_text(_WATCHED_BASE, encoding="utf-8")
+        monkeypatch.setattr(watcher_mod, "BRIDGE_FILE", bridge)
+        handler = BridgeFileHandler(lambda e: None)
+
+        class FailingPath:
+            def read_text(self, *args, **kwargs):
+                raise PermissionError("temporarily locked")
+
+        monkeypatch.setattr(watcher_mod, "BRIDGE_FILE", FailingPath())
+        assert handler._read_file() is None  # must not raise
+
+    def test_read_unicode_error_returns_none(self, monkeypatch, tmp_path) -> None:
+        bridge = tmp_path / "bridge.md"
+        bridge.write_text(_WATCHED_BASE, encoding="utf-8")
+        monkeypatch.setattr(watcher_mod, "BRIDGE_FILE", bridge)
+        handler = BridgeFileHandler(lambda e: None)
+
+        class GarbledPath:
+            def read_text(self, *args, **kwargs):
+                raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+
+        monkeypatch.setattr(watcher_mod, "BRIDGE_FILE", GarbledPath())
+        assert handler._read_file() is None
+
+    def test_on_modified_survives_read_failure(self, monkeypatch, tmp_path) -> None:
+        bridge = tmp_path / "bridge.md"
+        bridge.write_text(_WATCHED_BASE, encoding="utf-8")
+        monkeypatch.setattr(watcher_mod, "BRIDGE_FILE", bridge)
+        events: list = []
+        handler = BridgeFileHandler(events.append)
+        prior = handler._last_content
+
+        class FailingPath:
+            def read_text(self, *args, **kwargs):
+                raise OSError("transient I/O")
+
+            def resolve(self):
+                return bridge.resolve()
+
+        monkeypatch.setattr(watcher_mod, "BRIDGE_FILE", FailingPath())
+        handler.on_modified(_modified_event(bridge))  # must not raise
+        assert events == []
+        assert handler._last_content == prior  # state preserved for the next cycle
+
+    def test_on_modified_survives_callback_error(self, monkeypatch, tmp_path) -> None:
+        bridge = tmp_path / "bridge.md"
+        bridge.write_text(_WATCHED_BASE, encoding="utf-8")
+        monkeypatch.setattr(watcher_mod, "BRIDGE_FILE", bridge)
+        calls: list = []
+
+        def boom(event) -> None:
+            calls.append(event)
+            raise RuntimeError("pipeline down")
+
+        handler = BridgeFileHandler(boom)
+        bridge.write_text(_WATCHED_BASE + "- [2026-04-14] proj: did a thing\n", encoding="utf-8")
+        handler.on_modified(_modified_event(bridge))  # must not raise
+        assert len(calls) == 1  # callback attempted; its error was swallowed
