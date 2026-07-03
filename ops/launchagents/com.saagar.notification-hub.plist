@@ -4,17 +4,17 @@
   TEMPLATE — substitute before installing.
 
   Replace every __HOME__ token with your actual home directory (e.g. /Users/yourname).
-  Rename the Label to your own reverse-domain label (e.g. com.yourname.notification-hub).
+  The default Label matches the project-owned LaunchAgent path.
 
   Install:
     sed 's|__HOME__|'"$HOME"'|g' ops/launchagents/com.saagar.notification-hub.plist \
-      > ~/Library/LaunchAgents/com.yourname.notification-hub.plist
-    launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.yourname.notification-hub.plist
+      > ~/Library/LaunchAgents/com.saagar.notification-hub.plist
+    launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.saagar.notification-hub.plist
 -->
 <plist version="1.0">
   <dict>
     <key>Label</key>
-    <string>com.yourname.notification-hub</string>
+    <string>com.saagar.notification-hub</string>
     <key>ProgramArguments</key>
     <array>
       <string>/opt/homebrew/bin/uv</string>

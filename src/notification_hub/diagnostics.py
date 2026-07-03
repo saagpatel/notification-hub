@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any, TypedDict, cast
 
@@ -12,6 +13,7 @@ import notification_hub.config as config_mod
 from notification_hub.durable_inbox import collect_health as collect_durable_inbox_health
 
 _GENERIC_DIAGNOSTIC_ERROR = "diagnostic check failed; inspect local logs for details"
+_XML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 
 
 class DeliveryStatus(TypedDict):
@@ -69,6 +71,12 @@ def _render_template(text: str) -> str:
     return text.replace("__HOME__", str(Path.home()))
 
 
+def _normalize_template_text(text: str) -> str:
+    """Drop installer-only XML comments before comparing runtime plist bodies."""
+    without_comments = _XML_COMMENT_RE.sub("", text)
+    return "\n".join(line for line in without_comments.splitlines() if line.strip()).strip()
+
+
 def _matches_template(installed_path: object, template_path: object) -> bool:
     """Return True when the installed file matches the repo template after token substitution.
 
@@ -80,7 +88,7 @@ def _matches_template(installed_path: object, template_path: object) -> bool:
     template = _path_text(template_path)
     if installed is None or template is None:
         return False
-    return installed.strip() == _render_template(template).strip()
+    return _normalize_template_text(installed) == _normalize_template_text(_render_template(template))
 
 
 def _path_executable(path: object) -> bool:
