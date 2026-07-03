@@ -59,3 +59,35 @@ notification-hub is a localhost-only notification daemon for Claude Code, Codex,
 ## SecondBrain knowledge vault
 
 Prior lessons, decisions, and context for this project live in SecondBrain at `wiki/maps/projects/notification-hub.md`. The whole vault is searchable via the `engraph` MCP — query it for this project + its stack before non-trivial work.
+
+<!-- portfolio-context:start -->
+# Portfolio Context
+
+## What This Project Is
+
+notification-hub: `notification-hub` is a small local daemon that turns AI-tool events into routed notifications.
+
+## Current State
+
+Portfolio truth currently marks this project as `active` with `boilerplate` context. Phase 104 recovered minimum-viable context so future sessions can resume without rediscovery.
+
+## Stack
+
+- Primary stack: Python
+
+## How To Run
+
+```bash
+uv sync --frozen --group dev
+uv run --frozen uvicorn notification_hub.server:app --host 127.0.0.1 --port 9199 --reload
+```
+
+## Known Risks
+
+- This repo only has minimum-viable recovery context today; deeper handoff details may still live in the README and supporting docs.
+
+## Next Recommended Move
+
+Use this context plus the README and supporting docs to resume the next active task, then promote the repo beyond minimum-viable by capturing a dedicated handoff, roadmap, or discovery artifact.
+
+<!-- portfolio-context:end -->
