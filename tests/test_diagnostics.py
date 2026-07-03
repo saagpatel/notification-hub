@@ -174,8 +174,15 @@ def test_collect_runtime_wiring_renders_home_token_before_comparing(
 ) -> None:
     """Installed plist with real home path must match template that uses __HOME__."""
     home = str(Path.home())
-    template_text = "WorkingDirectory\n__HOME__/Projects/notification-hub\n"
-    installed_text = f"WorkingDirectory\n{home}/Projects/notification-hub\n"
+    template_text = (
+        "<!-- install notes stay in the repo template only -->\n"
+        "Label\ncom.saagar.notification-hub\n"
+        "WorkingDirectory\n__HOME__/Projects/notification-hub\n"
+    )
+    installed_text = (
+        "Label\ncom.saagar.notification-hub\n"
+        f"WorkingDirectory\n{home}/Projects/notification-hub\n"
+    )
 
     launch_agent = tmp_path / "com.saagar.notification-hub.plist"
     launch_agent_template = tmp_path / "template.plist"
