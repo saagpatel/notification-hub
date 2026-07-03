@@ -1,5 +1,7 @@
 """Tests for configuration and Keychain integration."""
 
+# pyright: reportPrivateUsage=false
+
 from __future__ import annotations
 
 import logging

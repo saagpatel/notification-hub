@@ -1,12 +1,16 @@
 """Tests for bridge file watcher diff logic and event parsing."""
 
+# pyright: reportPrivateUsage=false
+
 from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from watchdog.events import FileModifiedEvent
 
 import notification_hub.watcher as watcher_mod
+from notification_hub.models import Event
 from notification_hub.watcher import (
     BridgeFileHandler,
     diff_sections,
@@ -129,56 +133,64 @@ def _modified_event(path: Path) -> FileModifiedEvent:
 class TestBridgeFileHandlerResilience:
     """The watcher thread must survive transient I/O, bad data, and callback errors."""
 
-    def test_emits_event_on_new_activity(self, monkeypatch, tmp_path) -> None:
+    def test_emits_event_on_new_activity(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
         bridge = tmp_path / "bridge.md"
         bridge.write_text(_WATCHED_BASE, encoding="utf-8")
         monkeypatch.setattr(watcher_mod, "BRIDGE_FILE", bridge)
-        events: list = []
+        events: list[Event] = []
         handler = BridgeFileHandler(events.append)
         bridge.write_text(_WATCHED_BASE + "- [2026-04-14] proj: did a thing\n", encoding="utf-8")
         handler.on_modified(_modified_event(bridge))
         assert len(events) == 1
         assert events[0].project == "proj"
 
-    def test_read_oserror_returns_none(self, monkeypatch, tmp_path) -> None:
+    def test_read_oserror_returns_none(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
         bridge = tmp_path / "bridge.md"
         bridge.write_text(_WATCHED_BASE, encoding="utf-8")
         monkeypatch.setattr(watcher_mod, "BRIDGE_FILE", bridge)
         handler = BridgeFileHandler(lambda e: None)
 
         class FailingPath:
-            def read_text(self, *args, **kwargs):
+            def read_text(self, *args: object, **kwargs: object) -> str:
                 raise PermissionError("temporarily locked")
 
         monkeypatch.setattr(watcher_mod, "BRIDGE_FILE", FailingPath())
         assert handler._read_file() is None  # must not raise
 
-    def test_read_unicode_error_returns_none(self, monkeypatch, tmp_path) -> None:
+    def test_read_unicode_error_returns_none(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
         bridge = tmp_path / "bridge.md"
         bridge.write_text(_WATCHED_BASE, encoding="utf-8")
         monkeypatch.setattr(watcher_mod, "BRIDGE_FILE", bridge)
         handler = BridgeFileHandler(lambda e: None)
 
         class GarbledPath:
-            def read_text(self, *args, **kwargs):
+            def read_text(self, *args: object, **kwargs: object) -> str:
                 raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
 
         monkeypatch.setattr(watcher_mod, "BRIDGE_FILE", GarbledPath())
         assert handler._read_file() is None
 
-    def test_on_modified_survives_read_failure(self, monkeypatch, tmp_path) -> None:
+    def test_on_modified_survives_read_failure(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
         bridge = tmp_path / "bridge.md"
         bridge.write_text(_WATCHED_BASE, encoding="utf-8")
         monkeypatch.setattr(watcher_mod, "BRIDGE_FILE", bridge)
-        events: list = []
+        events: list[Event] = []
         handler = BridgeFileHandler(events.append)
         prior = handler._last_content
 
         class FailingPath:
-            def read_text(self, *args, **kwargs):
+            def read_text(self, *args: object, **kwargs: object) -> str:
                 raise OSError("transient I/O")
 
-            def resolve(self):
+            def resolve(self) -> Path:
                 return bridge.resolve()
 
         monkeypatch.setattr(watcher_mod, "BRIDGE_FILE", FailingPath())
@@ -186,13 +198,15 @@ class TestBridgeFileHandlerResilience:
         assert events == []
         assert handler._last_content == prior  # state preserved for the next cycle
 
-    def test_on_modified_survives_callback_error(self, monkeypatch, tmp_path) -> None:
+    def test_on_modified_survives_callback_error(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
         bridge = tmp_path / "bridge.md"
         bridge.write_text(_WATCHED_BASE, encoding="utf-8")
         monkeypatch.setattr(watcher_mod, "BRIDGE_FILE", bridge)
-        calls: list = []
+        calls: list[Event] = []
 
-        def boom(event) -> None:
+        def boom(event: Event) -> None:
             calls.append(event)
             raise RuntimeError("pipeline down")
 

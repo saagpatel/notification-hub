@@ -19,9 +19,22 @@ ELAPSED=$((NOW - START_EPOCH))
 if [ "$ELAPSED" -lt 30 ]; then exit 0; fi
 
 CWD=$(echo "$INPUT" | jq -r '.cwd // "."')
-REPO=$(basename "$CWD")
+SESSION_LABEL=$(basename "$CWD")
 BRANCH=$(git -C "$CWD" branch --show-current 2>/dev/null || echo "")
+REMOTE_URL=$(git -C "$CWD" config --get remote.origin.url 2>/dev/null || echo "")
+if [ "$CWD" = "$HOME" ]; then
+  REPO="home-adhoc"
+elif [ -n "$REMOTE_URL" ]; then
+  REMOTE_CLEAN=${REMOTE_URL%.git}
+  REPO=$(printf '%s' "$REMOTE_CLEAN" | sed -E 's#^.*github.com[:/]([^/[:space:]]+)/([^/[:space:]]+)$#\1/\2#')
+  if [ "$REPO" = "$REMOTE_CLEAN" ] || ! printf '%s' "$REPO" | grep -Eq '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'; then
+    REPO="unresolved"
+  fi
+else
+  REPO="unresolved"
+fi
 REPO=${REPO:0:100}
+SESSION_LABEL=${SESSION_LABEL:0:200}
 
 terminal-notifier \
   -title "Claude Code" \
@@ -35,6 +48,7 @@ HUB_PAYLOAD=$(jq -n \
   --arg level "normal" \
   --arg title "Session Complete" \
   --arg repo "$REPO" \
+  --arg session_label "$SESSION_LABEL" \
   --arg branch "$BRANCH" \
   --arg elapsed "$ELAPSED" \
   '{
@@ -42,7 +56,8 @@ HUB_PAYLOAD=$(jq -n \
     level: $level,
     title: $title,
     body: (($repo + (if $branch == "" then "" else " (" + $branch + ")" end) + ": Done (" + $elapsed + "s)")[:2000]),
-    project: ($repo[:100])
+    project: ($repo[:100]),
+    session_label: ($session_label[:200])
   }')
 
 curl -s --max-time 2 -X POST http://127.0.0.1:9199/events \
