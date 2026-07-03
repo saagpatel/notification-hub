@@ -131,6 +131,7 @@ def test_collect_doctor_report_degrades_on_dead_lettered_events() -> None:
     assert report["status"] == "degraded"
     assert checks["durable_inbox_ok"] is False
     assert durable_inbox["dead_letter_count"] == 1
+    assert durable_inbox["recent_dead_letter_count"] == 1
 
 
 def test_collect_runtime_wiring_compares_installed_files_to_templates(
