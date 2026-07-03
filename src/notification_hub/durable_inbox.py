@@ -29,6 +29,7 @@ RETRY_BACKOFF_CAP_SECONDS = 600
 PROCESSED_RETENTION_DAYS = 30
 PROCESSED_RETENTION_ROWS = 10_000
 DEAD_LETTER_RETENTION_DAYS = 90
+DEAD_LETTER_DEGRADED_AFTER_SECONDS = 24 * 60 * 60
 BACKLOG_DEGRADED_AFTER_SECONDS = 300
 
 
@@ -42,6 +43,7 @@ class DurableInboxHealth(TypedDict):
     processed_count: int
     suppressed_count: int
     dead_letter_count: int
+    recent_dead_letter_count: int
     stale_processing_count: int
     oldest_pending_at: str | None
     oldest_pending_age_seconds: float | None
@@ -446,6 +448,7 @@ def collect_health(*, path: Path | None = None, create: bool = False) -> Durable
             "processed_count": 0,
             "suppressed_count": 0,
             "dead_letter_count": 0,
+            "recent_dead_letter_count": 0,
             "stale_processing_count": 0,
             "oldest_pending_at": None,
             "oldest_pending_age_seconds": None,
@@ -457,7 +460,9 @@ def collect_health(*, path: Path | None = None, create: bool = False) -> Durable
         }
     try:
         init_schema(path)
-        now = isoformat()
+        now_dt = utc_now()
+        now = isoformat(now_dt)
+        recent_dead_cutoff = isoformat(now_dt - timedelta(seconds=DEAD_LETTER_DEGRADED_AFTER_SECONDS))
         with _connect(path) as conn:
             rows = conn.execute(
                 "SELECT status, COUNT(*) AS count FROM durable_events GROUP BY status"
@@ -471,13 +476,17 @@ def collect_health(*, path: Path | None = None, create: bool = False) -> Durable
                     MAX(created_at) AS last_accepted_at,
                     MAX(processed_at) AS last_processed_at,
                     MAX(dead_lettered_at) AS last_dead_lettered_at,
+                    SUM(CASE WHEN status = 'dead_lettered'
+                        AND dead_lettered_at IS NOT NULL
+                        AND dead_lettered_at >= ?
+                        THEN 1 ELSE 0 END) AS recent_dead_letter_count,
                     SUM(CASE WHEN status = 'processing'
                         AND lease_until IS NOT NULL
                         AND lease_until < ?
                         THEN 1 ELSE 0 END) AS stale_processing_count
                 FROM durable_events
                 """,
-                (now,),
+                (recent_dead_cutoff, now),
             ).fetchone()
     except sqlite3.Error as exc:
         return {
@@ -490,6 +499,7 @@ def collect_health(*, path: Path | None = None, create: bool = False) -> Durable
             "processed_count": 0,
             "suppressed_count": 0,
             "dead_letter_count": 0,
+            "recent_dead_letter_count": 0,
             "stale_processing_count": 0,
             "oldest_pending_at": None,
             "oldest_pending_age_seconds": None,
@@ -506,6 +516,7 @@ def collect_health(*, path: Path | None = None, create: bool = False) -> Durable
     processed = counts.get("processed", 0)
     suppressed = counts.get("suppressed", 0)
     dead = counts.get("dead_lettered", 0)
+    recent_dead = int(aggregate["recent_dead_letter_count"] or 0)
     oldest_pending_at = cast(str | None, aggregate["oldest_pending_at"])
     stale_processing = int(aggregate["stale_processing_count"] or 0)
     oldest_pending_dt = _parse_iso(oldest_pending_at)
@@ -517,9 +528,9 @@ def collect_health(*, path: Path | None = None, create: bool = False) -> Durable
         oldest_pending_age_seconds is not None
         and oldest_pending_age_seconds > BACKLOG_DEGRADED_AFTER_SECONDS
     )
-    if dead > 0:
+    if recent_dead > 0:
         status = "degraded"
-        next_action = "Inspect dead-lettered events and plan a manual redrive."
+        next_action = "Inspect recent dead-lettered events and plan a manual redrive."
     elif stale_processing > 0:
         status = "degraded"
         next_action = "Reclaim stale processing leases, then verify the worker drains the inbox."
@@ -528,7 +539,11 @@ def collect_health(*, path: Path | None = None, create: bool = False) -> Durable
         next_action = "Inspect the durable inbox worker; queued events are not draining."
     else:
         status = "ok"
-        next_action = "Durable inbox is clear."
+        next_action = (
+            "Durable inbox is clear; historical dead letters remain retained for review."
+            if dead
+            else "Durable inbox is clear."
+        )
 
     return {
         "status": status,
@@ -540,6 +555,7 @@ def collect_health(*, path: Path | None = None, create: bool = False) -> Durable
         "processed_count": processed,
         "suppressed_count": suppressed,
         "dead_letter_count": dead,
+        "recent_dead_letter_count": recent_dead,
         "stale_processing_count": stale_processing,
         "oldest_pending_at": oldest_pending_at,
         "oldest_pending_age_seconds": oldest_pending_age_seconds,

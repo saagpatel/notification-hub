@@ -125,7 +125,7 @@ The smoke command posts a harmless `info` event and verifies the background work
 live JSONL audit log.
 The status command shows the compact day-to-day runtime view and suggests the next repair action
 when something is degraded, including recent Slack delivery failures found in daemon logs and
-durable inbox dead letters or stale backlog.
+recent durable inbox dead letters or stale backlog.
 The inbox command groups recent events by coordination intent so attention, blocked/waiting work,
 ready work, completions, repeated rollups, and noisy producers are easy to scan.
 The coordination-snapshot command combines inbox state and runtime status into bridge-ready JSON.
@@ -280,7 +280,9 @@ start so fixed pre-restart errors do not keep appearing as current burn-in failu
 delivery failures now degrade burn-in health so configured-but-broken delivery does not look clean.
 Daemon log files that have not changed inside the requested burn-in window are ignored for burn-in
 health, so older post-start failures do not block a fresh readiness check.
-Durable inbox dead letters or old queued backlog also degrade burn-in health.
+Recent durable inbox dead letters or old queued backlog also degrade burn-in health. Historical
+dead letters remain counted for review, but they do not keep runtime readiness degraded once they
+are outside the actionable review window.
 Repeated-event candidates now include review-only noise-rule suggestions so policy changes can be
 copied deliberately instead of inferred from raw event rows.
 The verify-runtime command combines doctor, policy-check, `/health/details`, runtime wiring checks,

@@ -81,6 +81,7 @@ def print_doctor_report(report: dict[str, object]) -> None:
     if durable_inbox:
         print(f"- durable inbox status: {durable_inbox.get('status')}")
         print(f"- durable dead letters: {durable_inbox.get('dead_letter_count')}")
+        print(f"- durable recent dead letters: {durable_inbox.get('recent_dead_letter_count')}")
     print(f"- policy path: {config['path']}")
     print(f"- retention enabled: {retention['enabled']}")
     print(f"- retention interval minutes: {retention['interval_minutes']}")

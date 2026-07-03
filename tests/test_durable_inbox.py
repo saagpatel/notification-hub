@@ -119,7 +119,35 @@ def test_max_attempt_failure_moves_to_dead_letter(tmp_path: Path) -> None:
     assert stored is not None
     assert stored.status == "dead_lettered"
     assert stored.dead_lettered_at is not None
-    assert collect_health(path=db_path)["dead_letter_count"] == 1
+    health = collect_health(path=db_path)
+    assert health["status"] == "degraded"
+    assert health["dead_letter_count"] == 1
+    assert health["recent_dead_letter_count"] == 1
+
+
+def test_old_dead_letters_remain_visible_without_degrading_health(tmp_path: Path) -> None:
+    db_path = tmp_path / "inbox.sqlite3"
+    enqueue_event(_event(), path=db_path, max_attempts=1)
+    claimed = claim_next_due_event(path=db_path)
+    assert claimed is not None
+    record_processing_failure(claimed, RuntimeError("old failure"), path=db_path)
+    old_dead_lettered_at = (datetime.now(UTC) - timedelta(days=3)).isoformat()
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            UPDATE durable_events
+            SET dead_lettered_at = ?, updated_at = ?
+            WHERE event_id = ?
+            """,
+            (old_dead_lettered_at, old_dead_lettered_at, claimed.event_id),
+        )
+
+    health = collect_health(path=db_path)
+
+    assert health["status"] == "ok"
+    assert health["dead_letter_count"] == 1
+    assert health["recent_dead_letter_count"] == 0
+    assert "historical dead letters" in health["next_action"]
 
 
 def test_suppressed_event_is_persisted_as_terminal_state(tmp_path: Path) -> None:
