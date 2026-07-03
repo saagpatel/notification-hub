@@ -1,6 +1,18 @@
 # Current State
 
-Last updated: 2026-06-20 (durable inbox implemented, merged, and adopted by live daemon)
+Last updated: 2026-07-03 (hook project identity now uses canonical repo names)
+
+## Project Identity Update (2026-07-03)
+
+Repo-owned Claude Code and Codex notification hooks now treat `project` as the
+canonical `owner/repo` identity when a git remote can be resolved from the event
+working directory. Bare home-directory events use the named `home-adhoc`
+fallback, and unresolved non-repo events use `unresolved`; hooks should not emit
+prompt/session slugs or empty strings as `project`.
+
+Raw prompt or folder labels that are still useful for display/debugging are
+preserved separately as `session_label`. Notification-hub remains an ephemeral
+signals transport, not an authority for project truth.
 
 ## Restart Index (2026-06-19)
 
