@@ -48,7 +48,16 @@ def test_claude_hook_template_builds_valid_json_for_shell_sensitive_values(
     bin_dir.mkdir()
     payload_path = tmp_path / "payload.json"
     (bin_dir / "terminal-notifier").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-    (bin_dir / "git").write_text('#!/bin/sh\nprintf "%s\\n" "feat/json safe"\n', encoding="utf-8")
+    (bin_dir / "git").write_text(
+        """#!/bin/sh
+if [ "$3" = "config" ]; then
+  printf "%s\\n" "git@github.com:saagpatel/repo-json-safe.git"
+  exit 0
+fi
+printf "%s\\n" "feat/json safe"
+""",
+        encoding="utf-8",
+    )
     (bin_dir / "curl").write_text(
         """#!/bin/sh
 while [ "$#" -gt 0 ]; do
@@ -89,12 +98,19 @@ exit 1
     event = Event.model_validate(payload)
     assert event.source == "cc"
     assert event.level == "normal"
-    assert event.project == 'repo "quoted" name'
-    assert 'repo "quoted" name (feat/json safe): Done' in event.body
+    assert event.project == "saagpatel/repo-json-safe"
+    assert event.session_label == 'repo "quoted" name'
+    assert "saagpatel/repo-json-safe (feat/json safe): Done" in event.body
 
 
-def test_codex_hook_template_posts_valid_payload_with_project_from_cwd() -> None:
-    module = _load_codex_template({"cwd": "/Users/d/Projects/notification-hub", "message": "done"})
+def test_codex_hook_template_posts_valid_payload_with_repo_project_from_cwd() -> None:
+    module = _load_codex_template(
+        {
+            "cwd": str(REPO_ROOT),
+            "project": "task-clear-my-portfolio-s-dependabot",
+            "message": "done",
+        }
+    )
     captured: dict[str, object] = {}
 
     def _capture_urlopen(req: object, timeout: int) -> object:
@@ -107,7 +123,18 @@ def test_codex_hook_template_posts_valid_payload_with_project_from_cwd() -> None
             "attention",
             "Codex needs attention",
             "A verification or runtime issue needs review.",
-            module.project_from_payload({"cwd": "/Users/d/Projects/notification-hub"}),
+            module.project_from_payload(
+                {
+                    "cwd": str(REPO_ROOT),
+                    "project": "task-clear-my-portfolio-s-dependabot",
+                }
+            ),
+            module.raw_session_label_from_payload(
+                {
+                    "cwd": str(REPO_ROOT),
+                    "project": "task-clear-my-portfolio-s-dependabot",
+                }
+            ),
         )
 
     assert captured["timeout"] == 2
@@ -116,7 +143,25 @@ def test_codex_hook_template_posts_valid_payload_with_project_from_cwd() -> None
     event = Event.model_validate(payload)
     assert event.source == "codex"
     assert event.level == "normal"
-    assert event.project == "notification-hub"
+    assert event.project == "saagpatel/notification-hub"
+    assert event.session_label == "task-clear-my-portfolio-s-dependabot"
+
+
+def test_codex_hook_template_home_event_uses_named_fallback_not_prompt_slug() -> None:
+    module = _load_codex_template({"message": "done"})
+    payload = {
+        "cwd": str(Path.home()),
+        "project": "task-clear-my-portfolio-s-dependabot",
+    }
+
+    assert module.project_from_payload(payload) == "home-adhoc"
+    assert module.raw_session_label_from_payload(payload) == "task-clear-my-portfolio-s-dependabot"
+
+
+def test_codex_hook_template_missing_identity_uses_unresolved_not_empty() -> None:
+    module = _load_codex_template({"message": "done"})
+
+    assert module.project_from_payload({"project": ""}) == "unresolved"
 
 
 def test_codex_hook_template_clamps_payload_to_event_schema() -> None:
@@ -133,7 +178,8 @@ def test_codex_hook_template_clamps_payload_to_event_schema() -> None:
             "complete",
             "T" * 250,
             "B" * 2500,
-            "P" * 150,
+            "saagpatel/notification-hub",
+            "P" * 250,
         )
 
     payload_data = cast(bytes, captured["data"])
@@ -143,6 +189,8 @@ def test_codex_hook_template_clamps_payload_to_event_schema() -> None:
     assert len(event.body) <= 2000
     assert event.project is not None
     assert len(event.project) <= 100
+    assert event.session_label is not None
+    assert len(event.session_label) <= 200
 
 
 def test_claude_hook_template_clamps_long_repo_names(tmp_path: Path) -> None:
@@ -199,6 +247,9 @@ exit 1
     event = Event.model_validate(payload)
     assert event.project is not None
     assert len(event.project) <= 100
+    assert event.project == "unresolved"
+    assert event.session_label is not None
+    assert len(event.session_label) <= 200
     assert len(event.body) <= 2000
 
 

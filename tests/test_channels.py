@@ -1,5 +1,7 @@
 """Tests for delivery channels: JSONL logging, terminal-notifier push, and Slack."""
 
+# pyright: reportPrivateUsage=false
+
 from __future__ import annotations
 
 import json

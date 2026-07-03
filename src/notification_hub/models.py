@@ -57,6 +57,7 @@ class Event(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     body: str = Field(min_length=1, max_length=2000)
     project: str | None = Field(default=None, max_length=100)
+    session_label: str | None = Field(default=None, max_length=200)
     intent: Intent | None = None
     context: dict[str, EventContextValue] = Field(default_factory=dict)
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
@@ -93,9 +94,9 @@ class Event(BaseModel):
         """Remove control characters to prevent log injection."""
         return _CONTROL_CHARS.sub("", v)
 
-    @field_validator("project")
+    @field_validator("project", "session_label")
     @classmethod
-    def validate_project(cls, v: str | None) -> str | None:
+    def validate_optional_label(cls, v: str | None) -> str | None:
         if v is not None:
             v = _CONTROL_CHARS.sub("", v)
         return v

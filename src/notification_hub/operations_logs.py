@@ -164,6 +164,7 @@ def event_report(event: StoredEvent) -> RecentEventReport:
         "level": event.level,
         "classified_level": event.classified_level,
         "project": event.project,
+        "session_label": event.session_label,
         "title": event.title,
         "body": event.body,
         "intent": infer_intent(event),

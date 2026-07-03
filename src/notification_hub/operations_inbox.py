@@ -13,6 +13,7 @@ def inbox_item(event: StoredEvent) -> InboxItemReport:
         "timestamp": event.timestamp.isoformat(),
         "source": event.source,
         "project": event.project,
+        "session_label": event.session_label,
         "level": event.classified_level or event.level,
         "intent": infer_intent(event),
         "title": event.title,

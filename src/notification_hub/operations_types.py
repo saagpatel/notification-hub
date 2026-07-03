@@ -49,6 +49,7 @@ class RecentEventReport(TypedDict):
     level: str
     classified_level: str | None
     project: str | None
+    session_label: NotRequired[str | None]
     title: str
     body: str
     intent: str
@@ -59,6 +60,7 @@ class InboxItemReport(TypedDict):
     timestamp: str
     source: str
     project: str | None
+    session_label: NotRequired[str | None]
     level: str
     intent: str
     title: str
