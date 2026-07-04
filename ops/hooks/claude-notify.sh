@@ -63,6 +63,6 @@ HUB_PAYLOAD=$(jq -n \
 curl -s --max-time 2 -X POST http://127.0.0.1:9199/events \
   -H "Content-Type: application/json" \
   -d "$HUB_PAYLOAD" \
-  >/dev/null 2>&1 &
+  >/dev/null 2>&1
 
-exit 0
+exit $?
