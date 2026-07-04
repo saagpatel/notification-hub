@@ -27,6 +27,19 @@ notification-hub is a localhost-only notification daemon for Claude Code, Codex,
 - Treat tests, `ruff`, and `pyright` as required quality gates for changes.
 - Do not touch machine-local LaunchAgent state, hooks, or runtime logs unless explicitly requested.
 
+## Review guidelines
+
+Focus Codex review on daemon determinism, localhost-only boundaries,
+LaunchAgent and hook template drift, install/runtime verification truthfulness,
+event durability, identity mapping, stale notification state, and additive
+failure behavior when notification-hub is down. Treat docs or scripts that make
+operator recovery commands target the wrong label, path, port, or runtime as
+merge-relevant.
+
+For docs-only PRs, comment only when docs claim a runtime state, hook behavior,
+health result, install command, or burn-in result that is not supported by the
+reviewed files or canonical checks.
+
 ## Codex App Usage
 
 - Use Codex App Projects for repo-specific implementation, review, and verification in this checkout.
