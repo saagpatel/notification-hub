@@ -201,7 +201,8 @@ def collect_doctor_report() -> dict[str, object]:
         "runtime_wiring_current": all(wiring.values()),
         "durable_inbox_ok": durable_inbox.get("status") == "ok",
     }
-    overall_status = "ok" if all(checks.values()) else "degraded"
+    status_checks = {key: value for key, value in checks.items() if key != "durable_inbox_ok"}
+    overall_status = "ok" if all(status_checks.values()) else "degraded"
 
     return {
         "status": overall_status,
