@@ -26,19 +26,29 @@ from notification_hub.config import (
     clear_webhook_cache,
     get_policy_config,
     get_slack_webhook_url,
+    live_smoke_authorized,
     load_policy_config_file,
 )
 from notification_hub.models import BRIDGE_SOURCE_ALIASES, SOURCE_IDS
 
 
 @pytest.fixture(autouse=True)
-def fresh_cache() -> None:
+def fresh_cache(monkeypatch: pytest.MonkeyPatch) -> None:
     """Clear webhook cache between tests."""
+    monkeypatch.setenv("NOTIFICATION_HUB_TEST_ALLOW_KEYCHAIN", "1")
     clear_webhook_cache()
     clear_policy_cache()
 
 
 class TestKeychainWebhook:
+    def test_test_mode_blocks_keychain_without_explicit_fixture_override(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("NOTIFICATION_HUB_TEST_ALLOW_KEYCHAIN")
+        with patch("notification_hub.config.subprocess.run") as mock_run:
+            assert get_slack_webhook_url() is None
+        mock_run.assert_not_called()
+
     def test_reads_from_keychain(self) -> None:
         mock_result = MagicMock()
         mock_result.returncode = 0
@@ -168,6 +178,16 @@ def test_valid_sources_track_shared_source_ids() -> None:
     assert config_mod.VALID_SOURCES == frozenset(SOURCE_IDS)
     assert BRIDGE_SOURCE_ALIASES["notion_os"] == "notion-os"
     assert BRIDGE_SOURCE_ALIASES["personal_ops"] == "personal-ops"
+
+
+def test_live_smoke_requires_both_gates_and_non_test_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NOTIFICATION_HUB_LIVE_SMOKE", "1")
+    monkeypatch.setenv("NOTIFICATION_HUB_OPERATOR_APPROVED", "1")
+    assert live_smoke_authorized() is False
+    monkeypatch.delenv("NOTIFICATION_HUB_TEST_MODE")
+    assert live_smoke_authorized() is True
 
 
 class TestPolicyConfig:

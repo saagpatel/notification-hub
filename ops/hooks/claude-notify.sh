@@ -63,9 +63,7 @@ HUB_PAYLOAD=$(jq -n \
     session_label: ($session_label[:200])
   }')
 
-curl -s --max-time 2 -X POST http://127.0.0.1:9199/events \
-  -H "Content-Type: application/json" \
-  -d "$HUB_PAYLOAD" \
-  >/dev/null 2>&1 &
+printf '%s' "$HUB_PAYLOAD" | python3 "$(dirname "$0")/notification-hub-producer.py" \
+  >/dev/null 2>&1 || true
 
 exit 0

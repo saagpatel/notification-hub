@@ -62,6 +62,10 @@ cursor is rejected as a rewrite/regression instead of silently rewinding.
    controlled live smoke event with end-to-end destination readback.
 
 No live destination is contacted by schema initialization or cursor polling alone.
+Dedicated live-smoke tooling must refuse to run unless both
+`NOTIFICATION_HUB_LIVE_SMOKE=1` and `NOTIFICATION_HUB_OPERATOR_APPROVED=1` are present, and test mode
+is off. Test mode blocks terminal-notifier, Slack HTTP, and Keychain lookup unless an isolated test
+double explicitly opts in.
 
 ## Rollback
 

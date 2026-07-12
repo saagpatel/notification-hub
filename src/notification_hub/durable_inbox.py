@@ -64,12 +64,18 @@ class DurableInboxHealth(TypedDict):
     queued_count: int
     processing_count: int
     retry_scheduled_count: int
+    retrying_count: int
     processed_count: int
     suppressed_count: int
     dead_letter_count: int
     unresolved_dead_letter_count: int
     recent_dead_letter_count: int
     delivery_state_counts: dict[str, int]
+    attempted_count: int
+    accepted_count: int
+    delivered_count: int
+    observed_count: int
+    dispositioned_count: int
     stale_processing_count: int
     oldest_pending_at: str | None
     oldest_pending_age_seconds: float | None
@@ -283,7 +289,13 @@ def record_channel_state(
         assignments = ["state = ?", "updated_at = ?"]
         values: list[object] = [state, now]
         if state == "attempted":
-            assignments.extend(["attempt_count = attempt_count + 1", "attempted_at = ?"])
+            assignments.extend(
+                [
+                    "attempt_count = attempt_count + 1",
+                    "attempted_at = ?",
+                    "backoff_until = NULL",
+                ]
+            )
             values.append(now)
         elif timestamp_column is not None:
             assignments.append(f"{timestamp_column} = COALESCE({timestamp_column}, ?)")
@@ -321,6 +333,16 @@ def channel_state_counts(*, path: Path | None = None) -> dict[str, int]:
             "SELECT state, COUNT(*) AS count FROM channel_deliveries GROUP BY state"
         ).fetchall()
     return {str(row["state"]): int(row["count"]) for row in rows}
+
+
+def channels_in_state(event_id: str, state: str, *, path: Path | None = None) -> frozenset[str]:
+    init_schema(path)
+    with _connect(path) as conn:
+        rows = conn.execute(
+            "SELECT channel FROM channel_deliveries WHERE event_id = ? AND state = ?",
+            (event_id, state),
+        ).fetchall()
+    return frozenset(str(row["channel"]) for row in rows)
 
 
 def get_channel_state(event_id: str, channel: str, *, path: Path | None = None) -> str | None:
@@ -770,12 +792,18 @@ def collect_health(*, path: Path | None = None, create: bool = False) -> Durable
             "queued_count": 0,
             "processing_count": 0,
             "retry_scheduled_count": 0,
+            "retrying_count": 0,
             "processed_count": 0,
             "suppressed_count": 0,
             "dead_letter_count": 0,
             "unresolved_dead_letter_count": 0,
             "recent_dead_letter_count": 0,
             "delivery_state_counts": {},
+            "attempted_count": 0,
+            "accepted_count": 0,
+            "delivered_count": 0,
+            "observed_count": 0,
+            "dispositioned_count": 0,
             "stale_processing_count": 0,
             "oldest_pending_at": None,
             "oldest_pending_age_seconds": None,
@@ -828,6 +856,8 @@ def collect_health(*, path: Path | None = None, create: bool = False) -> Durable
             ).fetchone()
             delivery_counts = {str(row["state"]): int(row["count"]) for row in delivery_rows}
             delivery_counts["attempted"] = int(attempted_row["count"] or 0)
+            for state in ("accepted", "delivered", "observed", "dispositioned"):
+                delivery_counts.setdefault(state, 0)
     except sqlite3.Error as exc:
         return {
             "status": "degraded",
@@ -836,12 +866,18 @@ def collect_health(*, path: Path | None = None, create: bool = False) -> Durable
             "queued_count": 0,
             "processing_count": 0,
             "retry_scheduled_count": 0,
+            "retrying_count": 0,
             "processed_count": 0,
             "suppressed_count": 0,
             "dead_letter_count": 0,
             "unresolved_dead_letter_count": 0,
             "recent_dead_letter_count": 0,
             "delivery_state_counts": {},
+            "attempted_count": 0,
+            "accepted_count": 0,
+            "delivered_count": 0,
+            "observed_count": 0,
+            "dispositioned_count": 0,
             "stale_processing_count": 0,
             "oldest_pending_at": None,
             "oldest_pending_age_seconds": None,
@@ -891,12 +927,18 @@ def collect_health(*, path: Path | None = None, create: bool = False) -> Durable
         "queued_count": queued,
         "processing_count": processing,
         "retry_scheduled_count": retry_scheduled,
+        "retrying_count": retry_scheduled,
         "processed_count": processed,
         "suppressed_count": suppressed,
         "dead_letter_count": dead,
         "unresolved_dead_letter_count": unresolved_dead,
         "recent_dead_letter_count": recent_dead,
         "delivery_state_counts": delivery_counts,
+        "attempted_count": delivery_counts["attempted"],
+        "accepted_count": delivery_counts["accepted"],
+        "delivered_count": delivery_counts["delivered"],
+        "observed_count": delivery_counts["observed"],
+        "dispositioned_count": delivery_counts["dispositioned"],
         "stale_processing_count": stale_processing,
         "oldest_pending_at": oldest_pending_at,
         "oldest_pending_age_seconds": oldest_pending_age_seconds,

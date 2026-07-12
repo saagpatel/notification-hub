@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 from _pytest.capture import CaptureFixture
 
 from notification_hub.cli import main
@@ -551,6 +552,7 @@ def test_cli_status_json_output(capsys: CaptureFixture[str]) -> None:
 def test_run_delivery_check_persists_successful_transport_state(tmp_path: Path) -> None:
     state_path = tmp_path / "delivery-check-state.json"
     with (
+        patch("notification_hub.operations.live_smoke_authorized", return_value=True),
         patch("notification_hub.operations.DELIVERY_CHECK_STATE", state_path),
         patch("notification_hub.operations.send_slack", return_value=True),
         patch("notification_hub.operations.send_push", return_value=False),
@@ -563,6 +565,16 @@ def test_run_delivery_check_persists_successful_transport_state(tmp_path: Path) 
     assert payload["last_slack_ok_at"] is not None
     assert payload["last_push_event_id"] is None
     assert payload["last_push_ok_at"] is None
+
+
+def test_run_delivery_check_refuses_without_separate_live_smoke_gates() -> None:
+    with (
+        patch("notification_hub.operations.live_smoke_authorized", return_value=False),
+        patch("notification_hub.operations.send_slack") as mock_slack,
+        pytest.raises(PermissionError, match="LIVE_SMOKE"),
+    ):
+        run_delivery_check(verify_slack=True)
+    mock_slack.assert_not_called()
 
 
 def test_cli_logs_json_output(capsys: CaptureFixture[str]) -> None:
@@ -890,6 +902,7 @@ def test_run_verify_runtime_delivery_check_is_opt_in() -> None:
 def test_run_delivery_check_reports_transport_results(tmp_path: Path) -> None:
     state_path = tmp_path / "delivery-check-state.json"
     with (
+        patch("notification_hub.operations.live_smoke_authorized", return_value=True),
         patch("notification_hub.operations.DELIVERY_CHECK_STATE", state_path),
         patch("notification_hub.operations.send_slack", return_value=True) as mock_slack,
         patch("notification_hub.operations.send_push", return_value=False) as mock_push,

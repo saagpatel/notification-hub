@@ -5,7 +5,7 @@ import hashlib
 import json
 import re
 import subprocess
-import urllib.request
+import sys
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -195,15 +195,17 @@ def post_to_hub(
         payload["event_id"] = event_id
     if session_label is not None:
         payload["session_label"] = clamp_text(session_label, MAX_SESSION_LABEL_LENGTH)
-    body = json.dumps(payload).encode()
-    req = urllib.request.Request(
-        "http://127.0.0.1:9199/events",
-        data=body,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
+    producer = Path(__file__).with_name("notification-hub-producer.py")
     try:
-        urllib.request.urlopen(req, timeout=2)
+        subprocess.run(
+            [sys.executable, str(producer)],
+            input=json.dumps(payload),
+            text=True,
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=3,
+        )
     except Exception:
         pass
 

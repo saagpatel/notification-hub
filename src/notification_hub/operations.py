@@ -30,6 +30,7 @@ from notification_hub.config import (
     PolicyConfig,
     analyze_policy_config,
     get_policy_config,
+    live_smoke_authorized,
     load_policy_config_file,
 )
 from notification_hub.diagnostics import collect_doctor_report
@@ -3369,6 +3370,11 @@ def run_delivery_check(
     *, verify_slack: bool = False, verify_push: bool = False
 ) -> DeliveryCheckReport:
     """Send explicit opt-in transport checks for Slack and/or push delivery."""
+    if not live_smoke_authorized():
+        raise PermissionError(
+            "live delivery check requires NOTIFICATION_HUB_LIVE_SMOKE=1 and "
+            "NOTIFICATION_HUB_OPERATOR_APPROVED=1 with test mode disabled"
+        )
     event = StoredEvent(
         source="codex",
         level="normal",

@@ -72,6 +72,7 @@ exit 1
 """,
         encoding="utf-8",
     )
+    (bin_dir / "python3").write_text('#!/bin/sh\ncat > "$CURL_PAYLOAD"\n', encoding="utf-8")
     for script in bin_dir.iterdir():
         script.chmod(0o755)
 
@@ -115,33 +116,28 @@ def test_codex_hook_template_posts_valid_payload_with_repo_project_from_cwd() ->
     )
     captured: dict[str, object] = {}
 
-    def _capture_urlopen(req: object, timeout: int) -> object:
-        captured["timeout"] = timeout
-        captured["data"] = getattr(req, "data")
-        return object()
+    def _capture_run(args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        captured["timeout"] = kwargs["timeout"]
+        captured["data"] = kwargs["input"]
+        return subprocess.CompletedProcess(cast(list[str], args), 0)
 
-    with patch.object(module.urllib.request, "urlopen", side_effect=_capture_urlopen):
+    hook_payload = {
+        "cwd": str(REPO_ROOT),
+        "project": "task-clear-my-portfolio-s-dependabot",
+    }
+    project = module.project_from_payload(hook_payload)
+    session_label = module.raw_session_label_from_payload(hook_payload)
+    with patch.object(module.subprocess, "run", side_effect=_capture_run):
         module.post_to_hub(
             "attention",
             "Codex needs attention",
             "A verification or runtime issue needs review.",
-            module.project_from_payload(
-                {
-                    "cwd": str(REPO_ROOT),
-                    "project": "task-clear-my-portfolio-s-dependabot",
-                }
-            ),
-            module.raw_session_label_from_payload(
-                {
-                    "cwd": str(REPO_ROOT),
-                    "project": "task-clear-my-portfolio-s-dependabot",
-                }
-            ),
+            project,
+            session_label,
         )
 
-    assert captured["timeout"] == 2
-    payload_data = cast(bytes, captured["data"])
-    payload = json.loads(payload_data.decode())
+    assert captured["timeout"] == 3
+    payload = json.loads(cast(str, captured["data"]))
     event = Event.model_validate(payload)
     assert event.source == "codex"
     assert event.level == "normal"
@@ -165,15 +161,15 @@ def test_codex_hook_template_reuses_deterministic_id_for_same_input() -> None:
     module = _load_codex_template(payload)
     captured: list[str] = []
 
-    def _capture_urlopen(req: object, timeout: int) -> object:
-        assert timeout == 2
-        body = json.loads(cast(bytes, getattr(req, "data")).decode())
+    def _capture_run(args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        assert kwargs["timeout"] == 3
+        body = json.loads(cast(str, kwargs["input"]))
         captured.append(str(body["event_id"]))
-        return object()
+        return subprocess.CompletedProcess(cast(list[str], args), 0)
 
     with (
         patch.object(module, "run_safely"),
-        patch.object(module.urllib.request, "urlopen", side_effect=_capture_urlopen),
+        patch.object(module.subprocess, "run", side_effect=_capture_run),
     ):
         assert module.main() == 0
         assert module.main() == 0
@@ -193,12 +189,12 @@ def test_codex_hook_template_clamps_payload_to_event_schema() -> None:
     module = _load_codex_template({"message": "done"})
     captured: dict[str, object] = {}
 
-    def _capture_urlopen(req: object, timeout: int) -> object:
-        captured["timeout"] = timeout
-        captured["data"] = getattr(req, "data")
-        return object()
+    def _capture_run(args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        captured["timeout"] = kwargs["timeout"]
+        captured["data"] = kwargs["input"]
+        return subprocess.CompletedProcess(cast(list[str], args), 0)
 
-    with patch.object(module.urllib.request, "urlopen", side_effect=_capture_urlopen):
+    with patch.object(module.subprocess, "run", side_effect=_capture_run):
         module.post_to_hub(
             "complete",
             "T" * 250,
@@ -207,8 +203,7 @@ def test_codex_hook_template_clamps_payload_to_event_schema() -> None:
             "P" * 250,
         )
 
-    payload_data = cast(bytes, captured["data"])
-    payload = json.loads(payload_data.decode())
+    payload = json.loads(cast(str, captured["data"]))
     event = Event.model_validate(payload)
     assert len(event.title) <= 200
     assert len(event.body) <= 2000
@@ -246,6 +241,7 @@ exit 1
 """,
         encoding="utf-8",
     )
+    (bin_dir / "python3").write_text('#!/bin/sh\ncat > "$CURL_PAYLOAD"\n', encoding="utf-8")
     for script in bin_dir.iterdir():
         script.chmod(0o755)
 

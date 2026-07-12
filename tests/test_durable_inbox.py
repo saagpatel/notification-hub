@@ -12,6 +12,7 @@ from notification_hub.durable_inbox import (
     IdempotencyConflictError,
     accepted_channels,
     channel_state_counts,
+    channels_in_state,
     claim_next_due_event,
     collect_health,
     disposition_dead_letter,
@@ -124,6 +125,9 @@ def test_channel_state_tracks_attempt_and_acceptance_without_claiming_delivery(
     assert collect_health(path=db_path)["delivery_state_counts"] == {
         "accepted": 1,
         "attempted": 1,
+        "delivered": 0,
+        "observed": 0,
+        "dispositioned": 0,
     }
 
 
@@ -138,6 +142,27 @@ def test_channel_failure_is_not_treated_as_accepted(tmp_path: Path) -> None:
 
     assert accepted_channels("channel-failure", path=db_path) == frozenset()
     assert channel_state_counts(path=db_path) == {"failed": 1}
+    assert channels_in_state("channel-failure", "failed", path=db_path) == frozenset({"push"})
+
+
+def test_channel_backoff_is_persisted_and_cleared_on_retry(tmp_path: Path) -> None:
+    db_path = tmp_path / "inbox.sqlite3"
+    enqueue_event(_event("channel-backoff"), path=db_path)
+    record_channel_state("channel-backoff", "slack", "attempted", path=db_path)
+    record_channel_state(
+        "channel-backoff",
+        "slack",
+        "failed",
+        path=db_path,
+        error_category="timeout",
+        backoff_until="2026-07-12T13:00:00Z",
+    )
+    assert (
+        get_channel_receipts("channel-backoff", "slack", path=db_path)["backoff_until"]
+        == "2026-07-12T13:00:00Z"
+    )
+    record_channel_state("channel-backoff", "slack", "attempted", path=db_path)
+    assert get_channel_receipts("channel-backoff", "slack", path=db_path)["backoff_until"] is None
 
 
 def test_channel_receipts_remain_distinct_across_lifecycle(tmp_path: Path) -> None:
@@ -157,6 +182,12 @@ def test_channel_receipts_remain_distinct_across_lifecycle(tmp_path: Path) -> No
     assert receipts["acceptance_receipt"] == "ack:1"
     assert receipts["delivery_receipt"] == "readback:1"
     assert receipts["observation_receipt"] == "operator:1"
+    health = collect_health(path=db_path)
+    assert health["attempted_count"] == 0
+    assert health["observed_count"] == 1
+    assert health["accepted_count"] == 0
+    assert health["delivered_count"] == 0
+    assert health["dispositioned_count"] == 0
 
 
 def test_reclaim_stale_processing_lease(tmp_path: Path) -> None:
@@ -171,6 +202,66 @@ def test_reclaim_stale_processing_lease(tmp_path: Path) -> None:
     stored = get_event(claimed.event_id, path=db_path)
     assert stored is not None
     assert stored.status == "retry_scheduled"
+
+
+def test_restart_before_first_attempt_preserves_queued_event(tmp_path: Path) -> None:
+    db_path = tmp_path / "inbox.sqlite3"
+    enqueue_event(_event("restart-before-attempt"), path=db_path)
+
+    init_schema(db_path)  # Simulate a fresh process reopening the same durable database.
+    claimed = claim_next_due_event(path=db_path)
+
+    assert claimed is not None
+    assert claimed.event_id == "restart-before-attempt"
+    assert claimed.attempt_count == 1
+
+
+def test_restart_after_acceptance_before_terminal_receipt_skips_accepted_channel(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "inbox.sqlite3"
+    enqueue_event(_event("restart-after-acceptance"), path=db_path)
+    claimed = claim_next_due_event(path=db_path)
+    assert claimed is not None
+    record_channel_state(
+        claimed.event_id,
+        "slack",
+        "accepted",
+        path=db_path,
+        destination_ref="fixture:accepted",
+    )
+    record_processing_failure(claimed, RuntimeError("crash before terminal receipt"), path=db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "UPDATE durable_events SET next_attempt_at = ? WHERE event_id = ?",
+            ((datetime.now(UTC) - timedelta(seconds=1)).isoformat(), claimed.event_id),
+        )
+
+    init_schema(db_path)
+    retried = claim_next_due_event(path=db_path)
+
+    assert retried is not None and retried.attempt_count == 2
+    assert accepted_channels(retried.event_id, path=db_path) == frozenset({"slack"})
+
+
+def test_rate_limit_overflow_retry_survives_restart(tmp_path: Path) -> None:
+    db_path = tmp_path / "inbox.sqlite3"
+    enqueue_event(_event("overflow-restart"), path=db_path)
+    claimed = claim_next_due_event(path=db_path)
+    assert claimed is not None
+    record_processing_failure(claimed, RuntimeError("rate_limited"), path=db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "UPDATE durable_events SET next_attempt_at = ? WHERE event_id = ?",
+            ((datetime.now(UTC) - timedelta(seconds=1)).isoformat(), claimed.event_id),
+        )
+
+    init_schema(db_path)
+    retried = claim_next_due_event(path=db_path)
+
+    assert retried is not None
+    assert retried.event_id == "overflow-restart"
+    assert retried.attempt_count == 2
 
 
 def test_retry_backoff_schedules_transient_failure(tmp_path: Path) -> None:

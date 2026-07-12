@@ -748,6 +748,29 @@ class TestPushFailureResilience:
         mock_slack.assert_not_called()
         assert states == [("push", "attempted"), ("push", "accepted")]
 
+    def test_one_channel_acceptance_and_other_channel_failure_are_distinct(
+        self, tmp_log: Path
+    ) -> None:
+        event = build_stored_event(_event(body="Approval needed", project="ink"))
+        states: list[tuple[str, str]] = []
+        with (
+            patch("notification_hub.pipeline.send_push", return_value=True),
+            patch("notification_hub.pipeline.send_slack", return_value=False),
+            patch("notification_hub.pipeline.send_slack_digest", return_value=True),
+            _patch_daytime(),
+            pytest.raises(DeliveryError),
+        ):
+            process_stored_event_with_result(
+                event,
+                raise_on_delivery_failure=True,
+                durable_mode=True,
+                channel_state_recorder=lambda channel, state: states.append((channel, state)),
+            )
+
+        assert ("push", "accepted") in states
+        assert ("slack", "failed") in states
+        assert not tmp_log.exists()
+
     def test_push_failure_doesnt_break_pipeline(self, tmp_log: Path) -> None:
         with (
             patch("notification_hub.pipeline.send_push", return_value=False),

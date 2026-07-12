@@ -14,7 +14,12 @@ from typing import TypedDict
 
 import httpx
 
-from notification_hub.config import EVENTS_DIR, EVENTS_LOG, get_slack_webhook_url
+from notification_hub.config import (
+    EVENTS_DIR,
+    EVENTS_LOG,
+    get_slack_webhook_url,
+    test_mode_enabled,
+)
 from notification_hub.models import StoredEvent
 
 logger = logging.getLogger(__name__)
@@ -62,6 +67,13 @@ _LOCAL_PATH_RE = re.compile(r"/(?:Users|private|var|tmp)/[^\s)\]}]+")
 _SECRET_ASSIGNMENT_RE = re.compile(
     r"(?i)\b(token|secret|password|api[_-]?key|authorization)\b\s*[:=]\s*[^\s,;]+"
 )
+
+
+def _live_transport_blocked() -> bool:
+    return (
+        test_mode_enabled()
+        and os.environ.get("NOTIFICATION_HUB_TEST_ALLOW_ISOLATED_TRANSPORT") != "1"
+    )
 
 
 def redact_for_external_delivery(event: StoredEvent) -> StoredEvent:
@@ -161,6 +173,9 @@ def read_jsonl(path: Path | None = None) -> list[StoredEvent]:
 
 def send_push(event: StoredEvent) -> bool:
     """Send a macOS push notification via terminal-notifier. Returns True if sent."""
+    if _live_transport_blocked():
+        logger.warning("Push blocked by notification-hub test mode for %s", event.event_id)
+        return False
     notifier = find_push_notifier()
     if notifier is None:
         logger.warning("terminal-notifier not found, skipping push for %s", event.event_id)
@@ -330,6 +345,9 @@ def _post_to_slack(webhook_url: str, payload: SlackPayload, description: str) ->
 
 def send_slack(event: StoredEvent) -> bool:
     """Send a single event to Slack via webhook. Returns True if sent."""
+    if _live_transport_blocked():
+        logger.warning("Slack blocked by notification-hub test mode for %s", event.event_id)
+        return False
     webhook_url = get_slack_webhook_url()
     if webhook_url is None:
         logger.warning("No Slack webhook configured, skipping event %s", event.event_id)
@@ -341,6 +359,9 @@ def send_slack_digest(events: list[StoredEvent]) -> bool:
     """Send a digest of multiple events to Slack. Returns True if sent."""
     if not events:
         return True
+    if _live_transport_blocked():
+        logger.warning("Slack digest blocked by notification-hub test mode")
+        return False
 
     webhook_url = get_slack_webhook_url()
     if webhook_url is None:

@@ -11,6 +11,7 @@ import httpx
 import notification_hub.channels as channels_mod
 import notification_hub.config as config_mod
 from notification_hub.durable_inbox import collect_health as collect_durable_inbox_health
+from notification_hub.producer_health import collect_producer_health
 
 _GENERIC_DIAGNOSTIC_ERROR = "diagnostic check failed; inspect local logs for details"
 _XML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
@@ -47,6 +48,7 @@ class RuntimeWiringStatus(TypedDict):
     launch_agent_matches_template: bool
     claude_hook_matches_template: bool
     codex_hook_matches_template: bool
+    producer_helpers_match_template: bool
     launch_agent_uses_frozen: bool
     claude_hook_uses_safe_json: bool
     hook_timeout_configured: bool
@@ -116,10 +118,18 @@ def collect_runtime_wiring() -> RuntimeWiringStatus:
             config_mod.CODEX_HOOK,
             config_mod.CODEX_HOOK_TEMPLATE,
         ),
+        "producer_helpers_match_template": _matches_template(
+            config_mod.CLAUDE_PRODUCER_HELPER,
+            config_mod.PRODUCER_HELPER_TEMPLATE,
+        )
+        and _matches_template(
+            config_mod.CODEX_PRODUCER_HELPER,
+            config_mod.PRODUCER_HELPER_TEMPLATE,
+        ),
         "launch_agent_uses_frozen": "--frozen" in launch_agent_text,
         "claude_hook_uses_safe_json": "jq -n" in claude_hook_text and "--arg" in claude_hook_text,
-        "hook_timeout_configured": "--max-time 2" in claude_hook_text
-        and "timeout=2" in codex_hook_text,
+        "hook_timeout_configured": "notification-hub-producer.py" in claude_hook_text
+        and "timeout=3" in codex_hook_text,
         "codex_hook_executable": _path_executable(config_mod.CODEX_HOOK),
     }
 
@@ -157,6 +167,7 @@ def collect_runtime_readiness() -> dict[str, object]:
         "retention": retention,
         "runtime_wiring": collect_runtime_wiring(),
         "durable_inbox": collect_durable_inbox_health(),
+        "producer_outbox": collect_producer_health(),
     }
 
 
@@ -190,6 +201,7 @@ def collect_doctor_report() -> dict[str, object]:
     config = cast(ConfigStatus, readiness["config"])
     wiring = cast(RuntimeWiringStatus, readiness["runtime_wiring"])
     durable_inbox = cast(dict[str, object], readiness.get("durable_inbox", {}))
+    producer_outbox = cast(dict[str, object], readiness.get("producer_outbox", {}))
 
     checks = {
         "local_api_healthy": bool(local_api["reachable"]),
@@ -200,6 +212,7 @@ def collect_doctor_report() -> dict[str, object]:
         "policy_load_ok": config["load_error"] is None,
         "runtime_wiring_current": all(wiring.values()),
         "durable_inbox_ok": durable_inbox.get("status") == "ok",
+        "producer_outbox_ok": producer_outbox.get("status", "ok") == "ok",
     }
     overall_status = "ok" if all(checks.values()) else "degraded"
 

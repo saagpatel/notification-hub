@@ -650,8 +650,10 @@ Runtime change checklist:
   The template at `ops/launchagents/com.saagar.notification-hub.plist` uses `__HOME__` tokens and
   a `com.yourname` label placeholder — substitute your home directory and rename the label to your
   own reverse-domain prefix before installing.
-- Repo-owned runtime templates live under `ops/`: the LaunchAgent template, Claude Code hook
-  template, and Codex hook template are the source of truth for machine-local wiring.
+- Repo-owned runtime templates live under `ops/`: the LaunchAgent template, both hook templates,
+  and the durable producer helper are the source of truth for machine-local wiring. Failed hook
+  posts remain queued in `~/.local/share/notification-hub/producer-outbox.sqlite3` and retry on a
+  later hook invocation; accepted producer receipts remain as history.
 - `GET /health/details` reports whether push delivery is available, whether Slack is configured,
   whether key local files exist, whether a policy config file was loaded, how many policy warnings
   were found, the current retention settings plus the last retention result, and current
@@ -667,6 +669,8 @@ sed 's|__HOME__|'"$HOME"'|g; s|com\.yourname|com.yourname|g' \
   > ~/Library/LaunchAgents/com.yourname.notification-hub.plist
 install -m 755 ops/hooks/claude-notify.sh ~/.claude/hooks/notify.sh
 install -m 755 ops/hooks/codex-notify-local.py ~/.codex/hooks/notify_local.py
+install -m 755 ops/hooks/notification-hub-producer.py ~/.claude/hooks/notification-hub-producer.py
+install -m 755 ops/hooks/notification-hub-producer.py ~/.codex/hooks/notification-hub-producer.py
 launchctl bootout "gui/$(id -u)" ~/Library/LaunchAgents/com.yourname.notification-hub.plist 2>/dev/null || true
 launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.yourname.notification-hub.plist
 launchctl kickstart -k "gui/$(id -u)/com.yourname.notification-hub"

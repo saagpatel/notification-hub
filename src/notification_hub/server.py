@@ -27,8 +27,10 @@ from notification_hub.durable_inbox import (
     DurableEventRecord,
     IdempotencyConflictError,
     accepted_channels,
+    channels_in_state,
     claim_next_due_event,
     enqueue_event,
+    get_event,
     mark_delivered,
     prune_retained_events,
     reclaim_stale_processing,
@@ -258,6 +260,17 @@ async def _durable_inbox_loop() -> None:
             )
         except Exception as exc:  # noqa: BLE001 - failures become retry/DLQ state
             status = await asyncio.to_thread(record_processing_failure, record, exc)
+            updated = await asyncio.to_thread(get_event, record.event_id)
+            backoff_until = updated.next_attempt_at if updated is not None else None
+            failed_channels = await asyncio.to_thread(channels_in_state, record.event_id, "failed")
+            for channel in failed_channels:
+                await asyncio.to_thread(
+                    record_channel_state,
+                    record.event_id,
+                    channel,
+                    "failed",
+                    backoff_until=backoff_until,
+                )
             logger.warning(
                 "Durable event %s delivery failed; status=%s attempt=%s/%s",
                 record.event_id,

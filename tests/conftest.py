@@ -13,6 +13,7 @@ import notification_hub.config as config_mod
 import notification_hub.durable_inbox as durable_inbox_mod
 import notification_hub.operations as operations_mod
 import notification_hub.pipeline as pipeline_mod
+import notification_hub.producer_health as producer_health_mod
 import notification_hub.server as server_mod
 import notification_hub.watcher as watcher_mod
 from notification_hub.config import clear_policy_cache, clear_webhook_cache
@@ -48,6 +49,9 @@ def isolate_runtime_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> It
     monkeypatch.setattr(config_mod, "EVENTS_LOG", events_log)
     monkeypatch.setattr(config_mod, "DURABLE_INBOX_DB", durable_inbox_db)
     monkeypatch.setattr(durable_inbox_mod, "DEFAULT_DB_PATH", durable_inbox_db)
+    monkeypatch.setattr(
+        producer_health_mod, "DEFAULT_PRODUCER_OUTBOX_DB", events_dir / "producer-outbox.sqlite3"
+    )
     monkeypatch.setattr(config_mod, "DAEMON_LOG_DIR", daemon_log_dir)
     monkeypatch.setattr(config_mod, "DAEMON_STDOUT_LOG", daemon_log_dir / "stdout.log")
     monkeypatch.setattr(config_mod, "DAEMON_STDERR_LOG", daemon_log_dir / "stderr.log")
@@ -57,6 +61,8 @@ def isolate_runtime_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> It
     )
     monkeypatch.setattr(config_mod, "CLAUDE_HOOK", tmp_path / "notify.sh")
     monkeypatch.setattr(config_mod, "CODEX_HOOK", tmp_path / "notify_local.py")
+    monkeypatch.setattr(config_mod, "CLAUDE_PRODUCER_HELPER", tmp_path / "claude-producer.py")
+    monkeypatch.setattr(config_mod, "CODEX_PRODUCER_HELPER", tmp_path / "codex-producer.py")
     monkeypatch.setattr(channels_mod, "EVENTS_DIR", events_dir)
     monkeypatch.setattr(channels_mod, "EVENTS_LOG", events_log)
     monkeypatch.setattr(operations_mod, "EVENTS_DIR", events_dir)

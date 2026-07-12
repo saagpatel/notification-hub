@@ -55,6 +55,7 @@ def test_collect_runtime_readiness_reports_config_and_paths() -> None:
                 "launch_agent_matches_template": True,
                 "claude_hook_matches_template": True,
                 "codex_hook_matches_template": True,
+                "producer_helpers_match_template": True,
                 "launch_agent_uses_frozen": True,
                 "claude_hook_uses_safe_json": True,
                 "hook_timeout_configured": True,
@@ -91,6 +92,7 @@ def test_collect_runtime_readiness_reports_config_and_paths() -> None:
         "launch_agent_matches_template": True,
         "claude_hook_matches_template": True,
         "codex_hook_matches_template": True,
+        "producer_helpers_match_template": True,
         "launch_agent_uses_frozen": True,
         "claude_hook_uses_safe_json": True,
         "hook_timeout_configured": True,
@@ -143,13 +145,20 @@ def test_collect_runtime_wiring_compares_installed_files_to_templates(
     claude_hook_template = tmp_path / "claude-template.sh"
     codex_hook = tmp_path / "notify_local.py"
     codex_hook_template = tmp_path / "codex-template.py"
+    claude_producer = tmp_path / "claude-producer.py"
+    codex_producer = tmp_path / "codex-producer.py"
+    producer_template = tmp_path / "producer-template.py"
 
     launch_agent.write_text("uv run --frozen uvicorn\n", encoding="utf-8")
     launch_agent_template.write_text("uv run --frozen uvicorn\n", encoding="utf-8")
-    claude_hook.write_text("jq -n --arg repo x\ncurl --max-time 2\n", encoding="utf-8")
-    claude_hook_template.write_text("jq -n --arg repo x\ncurl --max-time 2\n", encoding="utf-8")
-    codex_hook.write_text("urllib.request.urlopen(req, timeout=2)\n", encoding="utf-8")
-    codex_hook_template.write_text("urllib.request.urlopen(req, timeout=2)\n", encoding="utf-8")
+    claude_hook.write_text("jq -n --arg repo x\nnotification-hub-producer.py\n", encoding="utf-8")
+    claude_hook_template.write_text(
+        "jq -n --arg repo x\nnotification-hub-producer.py\n", encoding="utf-8"
+    )
+    codex_hook.write_text("notification-hub-producer.py timeout=3\n", encoding="utf-8")
+    codex_hook_template.write_text("notification-hub-producer.py timeout=3\n", encoding="utf-8")
+    for producer in (claude_producer, codex_producer, producer_template):
+        producer.write_text("producer helper\n", encoding="utf-8")
     codex_hook.chmod(0o755)
 
     monkeypatch.setattr(config_mod, "LAUNCH_AGENT_PLIST", launch_agent)
@@ -158,11 +167,15 @@ def test_collect_runtime_wiring_compares_installed_files_to_templates(
     monkeypatch.setattr(config_mod, "CLAUDE_HOOK_TEMPLATE", claude_hook_template)
     monkeypatch.setattr(config_mod, "CODEX_HOOK", codex_hook)
     monkeypatch.setattr(config_mod, "CODEX_HOOK_TEMPLATE", codex_hook_template)
+    monkeypatch.setattr(config_mod, "CLAUDE_PRODUCER_HELPER", claude_producer)
+    monkeypatch.setattr(config_mod, "CODEX_PRODUCER_HELPER", codex_producer)
+    monkeypatch.setattr(config_mod, "PRODUCER_HELPER_TEMPLATE", producer_template)
 
     assert collect_runtime_wiring() == {
         "launch_agent_matches_template": True,
         "claude_hook_matches_template": True,
         "codex_hook_matches_template": True,
+        "producer_helpers_match_template": True,
         "launch_agent_uses_frozen": True,
         "claude_hook_uses_safe_json": True,
         "hook_timeout_configured": True,
@@ -248,6 +261,7 @@ def test_collect_doctor_report_handles_local_api_failure() -> None:
                     "launch_agent_matches_template": True,
                     "claude_hook_matches_template": True,
                     "codex_hook_matches_template": True,
+                    "producer_helpers_match_template": True,
                     "launch_agent_uses_frozen": True,
                     "claude_hook_uses_safe_json": True,
                     "hook_timeout_configured": True,
@@ -304,6 +318,7 @@ def test_collect_doctor_report_handles_local_api_os_failure() -> None:
                     "launch_agent_matches_template": True,
                     "claude_hook_matches_template": True,
                     "codex_hook_matches_template": True,
+                    "producer_helpers_match_template": True,
                     "launch_agent_uses_frozen": True,
                     "claude_hook_uses_safe_json": True,
                     "hook_timeout_configured": True,

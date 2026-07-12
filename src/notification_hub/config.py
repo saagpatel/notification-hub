@@ -22,6 +22,7 @@ PORT = 9199
 EVENTS_DIR = Path.home() / ".local" / "share" / "notification-hub"
 EVENTS_LOG = EVENTS_DIR / "events.jsonl"
 DURABLE_INBOX_DB = EVENTS_DIR / "inbox.sqlite3"
+PRODUCER_OUTBOX_DB = EVENTS_DIR / "producer-outbox.sqlite3"
 DAEMON_LOG_DIR = Path.home() / "Library" / "Logs" / "notification-hub"
 DAEMON_STDOUT_LOG = DAEMON_LOG_DIR / "stdout.log"
 DAEMON_STDERR_LOG = DAEMON_LOG_DIR / "stderr.log"
@@ -31,10 +32,13 @@ EXAMPLE_POLICY_CONFIG = Path(__file__).resolve().parents[2] / "config" / "policy
 LAUNCH_AGENT_PLIST = Path.home() / "Library" / "LaunchAgents" / "com.saagar.notification-hub.plist"
 CLAUDE_HOOK = Path.home() / ".claude" / "hooks" / "notify.sh"
 CODEX_HOOK = Path.home() / ".codex" / "hooks" / "notify_local.py"
+CLAUDE_PRODUCER_HELPER = Path.home() / ".claude" / "hooks" / "notification-hub-producer.py"
+CODEX_PRODUCER_HELPER = Path.home() / ".codex" / "hooks" / "notification-hub-producer.py"
 RUNTIME_TEMPLATE_DIR = Path(__file__).resolve().parents[2] / "ops"
 LAUNCH_AGENT_TEMPLATE = RUNTIME_TEMPLATE_DIR / "launchagents" / "com.saagar.notification-hub.plist"
 CLAUDE_HOOK_TEMPLATE = RUNTIME_TEMPLATE_DIR / "hooks" / "claude-notify.sh"
 CODEX_HOOK_TEMPLATE = RUNTIME_TEMPLATE_DIR / "hooks" / "codex-notify-local.py"
+PRODUCER_HELPER_TEMPLATE = RUNTIME_TEMPLATE_DIR / "hooks" / "notification-hub-producer.py"
 
 BRIDGE_FILE = Path.home() / ".claude" / "projects" / "-Users-d" / "memory" / "claude_ai_context.md"
 BRIDGE_DB_PATH = Path.home() / ".local" / "share" / "bridge-db" / "bridge.db"
@@ -47,6 +51,20 @@ def bridge_cursor_enabled() -> bool:
         "true",
         "yes",
     }
+
+
+def test_mode_enabled() -> bool:
+    """Return whether all live credentials and destinations must fail closed."""
+    return os.environ.get("NOTIFICATION_HUB_TEST_MODE", "").lower() in {"1", "true", "yes"}
+
+
+def live_smoke_authorized() -> bool:
+    """Require two explicit gates before any dedicated live-smoke workflow."""
+    return (
+        os.environ.get("NOTIFICATION_HUB_LIVE_SMOKE", "") == "1"
+        and os.environ.get("NOTIFICATION_HUB_OPERATOR_APPROVED", "") == "1"
+        and not test_mode_enabled()
+    )
 
 
 _POLICY_LOAD_ERROR = "policy config could not be loaded"
@@ -707,6 +725,9 @@ def clear_policy_cache() -> None:
 def get_slack_webhook_url() -> str | None:
     """Read Slack webhook URL from macOS Keychain with a short retry window for missing values."""
     global _cached_webhook_url, _cached_webhook_checked_at
+    if test_mode_enabled() and os.environ.get("NOTIFICATION_HUB_TEST_ALLOW_KEYCHAIN") != "1":
+        logger.info("Keychain lookup blocked by notification-hub test mode")
+        return None
     if isinstance(_cached_webhook_url, str):
         return _cached_webhook_url
 

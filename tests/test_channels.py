@@ -26,6 +26,11 @@ from notification_hub.channels import (
 from notification_hub.models import Level, Source, StoredEvent
 
 
+@pytest.fixture(autouse=True)
+def allow_isolated_channel_doubles(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NOTIFICATION_HUB_TEST_ALLOW_ISOLATED_TRANSPORT", "1")
+
+
 @pytest.fixture
 def tmp_log(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     log_dir = tmp_path / "notification-hub"
@@ -132,6 +137,14 @@ class TestPushNotifierDiscovery:
 
 
 class TestSendPush:
+    def test_test_mode_blocks_push_without_isolated_transport_override(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("NOTIFICATION_HUB_TEST_ALLOW_ISOLATED_TRANSPORT")
+        with patch("notification_hub.channels.subprocess.run") as mock_run:
+            assert send_push(_make_event()) is False
+        mock_run.assert_not_called()
+
     def test_sends_notification_when_notifier_available(self) -> None:
         event = _make_event(title="Alert", source="codex", project="ink")
         with (
@@ -305,6 +318,18 @@ class TestSlackFormatting:
 
 
 class TestSendSlack:
+    def test_test_mode_blocks_slack_before_keychain_or_http(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("NOTIFICATION_HUB_TEST_ALLOW_ISOLATED_TRANSPORT")
+        with (
+            patch("notification_hub.channels.get_slack_webhook_url") as mock_keychain,
+            patch("notification_hub.channels.httpx.post") as mock_post,
+        ):
+            assert send_slack(_make_event()) is False
+        mock_keychain.assert_not_called()
+        mock_post.assert_not_called()
+
     def test_sends_when_webhook_configured(self) -> None:
         event = _make_event(classified_level="urgent")
         mock_resp = MagicMock()
