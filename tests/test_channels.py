@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -16,6 +17,7 @@ from notification_hub.channels import (
     format_slack_digest,
     format_slack_message,
     read_jsonl,
+    redact_for_external_delivery,
     send_push,
     send_slack,
     send_slack_digest,
@@ -178,6 +180,18 @@ class TestSendPush:
             result = send_push(event)
         assert result is False
 
+    def test_returns_false_on_nonzero_exit(self) -> None:
+        event = _make_event()
+        with (
+            patch("notification_hub.channels.find_push_notifier", return_value="/usr/bin/tn"),
+            patch(
+                "notification_hub.channels.subprocess.run",
+                return_value=subprocess.CompletedProcess(["/usr/bin/tn"], 7),
+            ),
+        ):
+            result = send_push(event)
+        assert result is False
+
     def test_returns_false_on_timeout(self) -> None:
         import subprocess as sp
 
@@ -215,6 +229,32 @@ class TestSendPush:
 
 
 class TestSlackFormatting:
+    def test_external_redaction_removes_local_paths_and_secret_assignments(self) -> None:
+        event = _make_event(
+            title="token=title-secret",
+            body="Inspect /Users/d/.codex/session.json token=super-secret",
+            project="/Users/d/private-project",
+        )
+
+        redacted = redact_for_external_delivery(event)
+
+        assert "/Users/d" not in redacted.body
+        assert "super-secret" not in redacted.body
+        assert "title-secret" not in redacted.title
+        assert redacted.project is not None and "/Users/d" not in redacted.project
+        assert "[local-path-redacted]" in redacted.body
+
+    def test_secret_event_external_copy_contains_no_original_content(self) -> None:
+        event = _make_event(title="Password leaked", body="password=hunter2").model_copy(
+            update={"privacy_class": "secret", "context": {"token": "abc"}}
+        )
+
+        redacted = redact_for_external_delivery(event)
+
+        assert redacted.title == "Sensitive notification"
+        assert "hunter2" not in redacted.body
+        assert redacted.context == {}
+
     def test_message_includes_level_emoji(self) -> None:
         event = _make_event(classified_level="urgent")
         payload = format_slack_message(event)

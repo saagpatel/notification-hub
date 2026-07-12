@@ -101,6 +101,8 @@ exit 1
     assert event.project == "saagpatel/repo-json-safe"
     assert event.session_label == 'repo "quoted" name'
     assert "saagpatel/repo-json-safe (feat/json safe): Done" in event.body
+    assert event.event_id.startswith("cc:")
+    assert len(event.event_id) == 35
 
 
 def test_codex_hook_template_posts_valid_payload_with_repo_project_from_cwd() -> None:
@@ -156,6 +158,29 @@ def test_codex_hook_template_home_event_uses_named_fallback_not_prompt_slug() ->
 
     assert module.project_from_payload(payload) == "home-adhoc"
     assert module.raw_session_label_from_payload(payload) == "task-clear-my-portfolio-s-dependabot"
+
+
+def test_codex_hook_template_reuses_deterministic_id_for_same_input() -> None:
+    payload = {"cwd": str(REPO_ROOT), "message": "turn completed", "turn_id": "turn-7"}
+    module = _load_codex_template(payload)
+    captured: list[str] = []
+
+    def _capture_urlopen(req: object, timeout: int) -> object:
+        assert timeout == 2
+        body = json.loads(cast(bytes, getattr(req, "data")).decode())
+        captured.append(str(body["event_id"]))
+        return object()
+
+    with (
+        patch.object(module, "run_safely"),
+        patch.object(module.urllib.request, "urlopen", side_effect=_capture_urlopen),
+    ):
+        assert module.main() == 0
+        assert module.main() == 0
+
+    assert captured[0] == captured[1]
+    assert captured[0].startswith("codex:")
+    assert len(captured[0]) == 38
 
 
 def test_codex_hook_template_missing_identity_uses_unresolved_not_empty() -> None:

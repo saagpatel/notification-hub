@@ -12,6 +12,7 @@ import notification_hub.channels as channels_mod
 import notification_hub.config as config_mod
 import notification_hub.durable_inbox as durable_inbox_mod
 import notification_hub.operations as operations_mod
+import notification_hub.pipeline as pipeline_mod
 import notification_hub.server as server_mod
 import notification_hub.watcher as watcher_mod
 from notification_hub.config import clear_policy_cache, clear_webhook_cache
@@ -28,6 +29,12 @@ async def client() -> AsyncIterator[AsyncClient]:
 @pytest.fixture(autouse=True)
 def isolate_runtime_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Keep tests away from the real machine event log, bridge file, and server globals."""
+    isolated_home = tmp_path / "home"
+    isolated_home.mkdir()
+    monkeypatch.setenv("HOME", str(isolated_home))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    monkeypatch.setenv("NOTIFICATION_HUB_TEST_MODE", "1")
     events_dir = tmp_path / "notification-hub"
     events_log = events_dir / "events.jsonl"
     durable_inbox_db = events_dir / "inbox.sqlite3"
@@ -56,6 +63,13 @@ def isolate_runtime_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> It
     monkeypatch.setattr(operations_mod, "EVENTS_LOG", events_log)
     monkeypatch.setattr(operations_mod, "DAEMON_STDOUT_LOG", daemon_log_dir / "stdout.log")
     monkeypatch.setattr(operations_mod, "DAEMON_STDERR_LOG", daemon_log_dir / "stderr.log")
+    # Fail closed: no test may contact a live notification destination unless it
+    # explicitly replaces these transports with an isolated fixture double.
+    monkeypatch.setattr(pipeline_mod, "send_push", lambda _event: False)
+    monkeypatch.setattr(pipeline_mod, "send_slack", lambda _event: False)
+    monkeypatch.setattr(pipeline_mod, "send_slack_digest", lambda _events: False)
+    monkeypatch.setattr(operations_mod, "send_push", lambda _event: False)
+    monkeypatch.setattr(channels_mod, "get_slack_webhook_url", lambda: None)
 
     monkeypatch.setattr(config_mod, "BRIDGE_FILE", bridge_file)
     monkeypatch.setattr(server_mod, "BRIDGE_FILE", bridge_file)

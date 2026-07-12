@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -33,6 +35,28 @@ DEAD_LETTER_DEGRADED_AFTER_SECONDS = 24 * 60 * 60
 BACKLOG_DEGRADED_AFTER_SECONDS = 300
 
 
+class IdempotencyConflictError(ValueError):
+    """Raised when an event id is reused with a different canonical payload."""
+
+
+def event_payload_digest(event: StoredEvent) -> str:
+    """Return a stable digest that excludes server receipt metadata."""
+    if event.payload_digest is not None:
+        return event.payload_digest
+    payload = event.model_dump(
+        mode="json",
+        exclude={
+            "event_id",
+            "timestamp",
+            "payload_digest",
+            "received_at",
+            "classified_level",
+        },
+    )
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
 class DurableInboxHealth(TypedDict):
     status: str
     db_path: str
@@ -43,7 +67,9 @@ class DurableInboxHealth(TypedDict):
     processed_count: int
     suppressed_count: int
     dead_letter_count: int
+    unresolved_dead_letter_count: int
     recent_dead_letter_count: int
+    delivery_state_counts: dict[str, int]
     stale_processing_count: int
     oldest_pending_at: str | None
     oldest_pending_age_seconds: float | None
@@ -126,7 +152,253 @@ def init_schema(path: Path | None = None) -> None:
                 ON durable_events(status, lease_until);
             CREATE INDEX IF NOT EXISTS idx_durable_events_retention
                 ON durable_events(status, processed_at, dead_lettered_at);
+            CREATE TABLE IF NOT EXISTS schema_metadata (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS channel_deliveries (
+                event_id TEXT NOT NULL,
+                channel TEXT NOT NULL,
+                state TEXT NOT NULL,
+                attempt_count INTEGER NOT NULL DEFAULT 0,
+                attempted_at TEXT,
+                accepted_at TEXT,
+                delivered_at TEXT,
+                observed_at TEXT,
+                dispositioned_at TEXT,
+                destination_ref TEXT,
+                acceptance_receipt TEXT,
+                delivery_receipt TEXT,
+                observation_receipt TEXT,
+                terminal_disposition TEXT,
+                backoff_until TEXT,
+                last_error_category TEXT,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY(event_id, channel),
+                FOREIGN KEY(event_id) REFERENCES durable_events(event_id) ON DELETE RESTRICT
+            );
+            CREATE TABLE IF NOT EXISTS consumer_cursors (
+                consumer TEXT PRIMARY KEY,
+                cursor_value INTEGER NOT NULL,
+                updated_at TEXT NOT NULL
+            );
             """
+        )
+        columns = {
+            str(row[1]) for row in conn.execute("PRAGMA table_info(durable_events)").fetchall()
+        }
+        if "payload_digest" not in columns:
+            conn.execute("ALTER TABLE durable_events ADD COLUMN payload_digest TEXT")
+        if "dead_letter_disposition" not in columns:
+            conn.execute("ALTER TABLE durable_events ADD COLUMN dead_letter_disposition TEXT")
+        if "dead_letter_disposition_ref" not in columns:
+            conn.execute("ALTER TABLE durable_events ADD COLUMN dead_letter_disposition_ref TEXT")
+        if "dead_letter_dispositioned_at" not in columns:
+            conn.execute("ALTER TABLE durable_events ADD COLUMN dead_letter_dispositioned_at TEXT")
+        channel_columns = {
+            str(row[1]) for row in conn.execute("PRAGMA table_info(channel_deliveries)").fetchall()
+        }
+        for name in (
+            "acceptance_receipt",
+            "delivery_receipt",
+            "observation_receipt",
+            "terminal_disposition",
+            "backoff_until",
+        ):
+            if name not in channel_columns:
+                conn.execute(f"ALTER TABLE channel_deliveries ADD COLUMN {name} TEXT")  # noqa: S608
+        conn.execute(
+            "INSERT OR REPLACE INTO schema_metadata(key, value) VALUES('schema_version', '5')"
+        )
+
+
+def accepted_channels(event_id: str, *, path: Path | None = None) -> frozenset[str]:
+    init_schema(path)
+    with _connect(path) as conn:
+        rows = conn.execute(
+            "SELECT channel FROM channel_deliveries WHERE event_id = ? "
+            "AND state IN ('accepted', 'delivered', 'observed', 'dispositioned')",
+            (event_id,),
+        ).fetchall()
+    return frozenset(str(row["channel"]) for row in rows)
+
+
+def record_channel_state(
+    event_id: str,
+    channel: str,
+    state: str,
+    *,
+    path: Path | None = None,
+    destination_ref: str | None = None,
+    error_category: str | None = None,
+    backoff_until: str | None = None,
+) -> None:
+    """Persist one monotonic channel state without claiming unsupported readback."""
+    allowed = {
+        "attempted",
+        "buffered",
+        "accepted",
+        "delivered",
+        "observed",
+        "failed",
+        "dispositioned",
+    }
+    if state not in allowed:
+        raise ValueError(f"unsupported channel state: {state}")
+    now = isoformat()
+    timestamp_column = {
+        "attempted": "attempted_at",
+        "accepted": "accepted_at",
+        "delivered": "delivered_at",
+        "observed": "observed_at",
+        "dispositioned": "dispositioned_at",
+    }.get(state)
+    init_schema(path)
+    with _connect(path) as conn:
+        existing = conn.execute(
+            "SELECT state FROM channel_deliveries WHERE event_id = ? AND channel = ?",
+            (event_id, channel),
+        ).fetchone()
+        current_state = str(existing["state"]) if existing is not None else None
+        terminal_rank = {
+            "attempted": 1,
+            "buffered": 1,
+            "failed": 1,
+            "accepted": 2,
+            "delivered": 3,
+            "observed": 4,
+            "dispositioned": 5,
+        }
+        if (
+            current_state is not None
+            and terminal_rank[current_state] > terminal_rank[state]
+            and not (current_state in {"buffered", "failed"} and state == "attempted")
+        ):
+            return
+        conn.execute(
+            "INSERT OR IGNORE INTO channel_deliveries "
+            "(event_id, channel, state, updated_at) VALUES (?, ?, ?, ?)",
+            (event_id, channel, state, now),
+        )
+        assignments = ["state = ?", "updated_at = ?"]
+        values: list[object] = [state, now]
+        if state == "attempted":
+            assignments.extend(["attempt_count = attempt_count + 1", "attempted_at = ?"])
+            values.append(now)
+        elif timestamp_column is not None:
+            assignments.append(f"{timestamp_column} = COALESCE({timestamp_column}, ?)")
+            values.append(now)
+        if destination_ref is not None:
+            assignments.append("destination_ref = ?")
+            values.append(destination_ref)
+            receipt_column = {
+                "accepted": "acceptance_receipt",
+                "delivered": "delivery_receipt",
+                "observed": "observation_receipt",
+                "dispositioned": "terminal_disposition",
+            }.get(state)
+            if receipt_column is not None:
+                assignments.append(f"{receipt_column} = ?")
+                values.append(destination_ref)
+        if error_category is not None:
+            assignments.append("last_error_category = ?")
+            values.append(error_category)
+        if backoff_until is not None:
+            assignments.append("backoff_until = ?")
+            values.append(backoff_until)
+        values.extend([event_id, channel])
+        conn.execute(
+            f"UPDATE channel_deliveries SET {', '.join(assignments)} "  # noqa: S608
+            "WHERE event_id = ? AND channel = ?",
+            values,
+        )
+
+
+def channel_state_counts(*, path: Path | None = None) -> dict[str, int]:
+    init_schema(path)
+    with _connect(path) as conn:
+        rows = conn.execute(
+            "SELECT state, COUNT(*) AS count FROM channel_deliveries GROUP BY state"
+        ).fetchall()
+    return {str(row["state"]): int(row["count"]) for row in rows}
+
+
+def get_channel_state(event_id: str, channel: str, *, path: Path | None = None) -> str | None:
+    init_schema(path)
+    with _connect(path) as conn:
+        row = conn.execute(
+            "SELECT state FROM channel_deliveries WHERE event_id = ? AND channel = ?",
+            (event_id, channel),
+        ).fetchone()
+    return str(row["state"]) if row is not None else None
+
+
+def get_channel_receipts(
+    event_id: str, channel: str, *, path: Path | None = None
+) -> dict[str, str | None]:
+    init_schema(path)
+    with _connect(path) as conn:
+        row = conn.execute(
+            "SELECT acceptance_receipt, delivery_receipt, observation_receipt, "
+            "terminal_disposition, backoff_until FROM channel_deliveries "
+            "WHERE event_id = ? AND channel = ?",
+            (event_id, channel),
+        ).fetchone()
+    if row is None:
+        raise KeyError((event_id, channel))
+    return {key: cast(str | None, row[key]) for key in row.keys()}
+
+
+def disposition_dead_letter(
+    event_id: str,
+    disposition: str,
+    disposition_ref: str,
+    *,
+    path: Path | None = None,
+) -> None:
+    """Resolve an actionable dead letter without deleting its historical record."""
+    if not disposition.strip() or not disposition_ref.strip():
+        raise ValueError("dead-letter disposition and reference must be non-empty")
+    init_schema(path)
+    with _connect(path) as conn:
+        row = conn.execute(
+            "SELECT status FROM durable_events WHERE event_id = ?", (event_id,)
+        ).fetchone()
+        if row is None:
+            raise KeyError(event_id)
+        if str(row["status"]) != "dead_lettered":
+            raise ValueError("only dead-lettered events can be dispositioned")
+        conn.execute(
+            "UPDATE durable_events SET dead_letter_disposition = ?, "
+            "dead_letter_disposition_ref = ?, dead_letter_dispositioned_at = ?, "
+            "updated_at = ? WHERE event_id = ?",
+            (disposition, disposition_ref, isoformat(), isoformat(), event_id),
+        )
+
+
+def get_consumer_cursor(consumer: str, *, path: Path | None = None) -> int | None:
+    init_schema(path)
+    with _connect(path) as conn:
+        row = conn.execute(
+            "SELECT cursor_value FROM consumer_cursors WHERE consumer = ?", (consumer,)
+        ).fetchone()
+    return int(row["cursor_value"]) if row is not None else None
+
+
+def advance_consumer_cursor(consumer: str, cursor_value: int, *, path: Path | None = None) -> None:
+    """Advance monotonically; retries after a crash remain safe by event id."""
+    init_schema(path)
+    with _connect(path) as conn:
+        current = conn.execute(
+            "SELECT cursor_value FROM consumer_cursors WHERE consumer = ?", (consumer,)
+        ).fetchone()
+        if current is not None and int(current["cursor_value"]) > cursor_value:
+            raise ValueError("consumer cursor cannot move backwards")
+        conn.execute(
+            "INSERT INTO consumer_cursors(consumer, cursor_value, updated_at) VALUES(?, ?, ?) "
+            "ON CONFLICT(consumer) DO UPDATE SET cursor_value=excluded.cursor_value, "
+            "updated_at=excluded.updated_at",
+            (consumer, cursor_value, isoformat()),
         )
 
 
@@ -140,7 +412,23 @@ def enqueue_event(
     init_schema(path)
     now = isoformat()
     payload_json = event.model_dump_json()
+    payload_digest = event_payload_digest(event)
     with _connect(path) as conn:
+        existing = conn.execute(
+            "SELECT payload_json, payload_digest FROM durable_events WHERE event_id = ?",
+            (event.event_id,),
+        ).fetchone()
+        if existing is not None:
+            existing_event = StoredEvent.model_validate_json(str(existing["payload_json"]))
+            existing_digest = str(
+                existing["payload_digest"] or event_payload_digest(existing_event)
+            )
+            if existing_digest != payload_digest:
+                raise IdempotencyConflictError(
+                    f"event_id {event.event_id!r} already exists with a different payload digest"
+                )
+            return existing_event
+
         conn.execute(
             """
             INSERT OR IGNORE INTO durable_events (
@@ -156,9 +444,10 @@ def enqueue_event(
                 project,
                 level,
                 classified_level,
-                title
+                title,
+                payload_digest
             )
-            VALUES (?, ?, 'queued', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, 'queued', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 event.event_id,
@@ -172,6 +461,7 @@ def enqueue_event(
                 event.level,
                 event.classified_level,
                 event.title,
+                payload_digest,
             ),
         )
         row = conn.execute(
@@ -359,6 +649,32 @@ def record_processing_failure(
         return "retry_scheduled"
 
 
+def record_processing_deferred(
+    record: DurableEventRecord,
+    retry_at: datetime,
+    *,
+    path: Path | None = None,
+) -> DurableEventStatus:
+    """Durably defer without consuming the delivery failure budget."""
+    now = isoformat()
+    with _connect(path) as conn:
+        conn.execute(
+            """
+            UPDATE durable_events
+            SET status = 'retry_scheduled',
+                attempt_count = CASE WHEN attempt_count > 0 THEN attempt_count - 1 ELSE 0 END,
+                lease_until = NULL,
+                next_attempt_at = ?,
+                last_error = NULL,
+                last_error_type = NULL,
+                updated_at = ?
+            WHERE event_id = ?
+            """,
+            (isoformat(retry_at), now, record.event_id),
+        )
+    return "retry_scheduled"
+
+
 def reclaim_stale_processing(
     *,
     path: Path | None = None,
@@ -410,6 +726,10 @@ def prune_retained_events(
                 ORDER BY processed_at DESC
                 LIMIT ?
               )
+              AND NOT EXISTS (
+                SELECT 1 FROM channel_deliveries
+                WHERE channel_deliveries.event_id = durable_events.event_id
+              )
             """,
             (processed_cutoff, processed_retention_rows),
         ).rowcount
@@ -419,6 +739,11 @@ def prune_retained_events(
             WHERE status = 'dead_lettered'
               AND dead_lettered_at IS NOT NULL
               AND dead_lettered_at < ?
+              AND dead_letter_disposition IS NOT NULL
+              AND NOT EXISTS (
+                SELECT 1 FROM channel_deliveries
+                WHERE channel_deliveries.event_id = durable_events.event_id
+              )
             """,
             (dead_letter_cutoff,),
         ).rowcount
@@ -448,7 +773,9 @@ def collect_health(*, path: Path | None = None, create: bool = False) -> Durable
             "processed_count": 0,
             "suppressed_count": 0,
             "dead_letter_count": 0,
+            "unresolved_dead_letter_count": 0,
             "recent_dead_letter_count": 0,
+            "delivery_state_counts": {},
             "stale_processing_count": 0,
             "oldest_pending_at": None,
             "oldest_pending_age_seconds": None,
@@ -462,7 +789,9 @@ def collect_health(*, path: Path | None = None, create: bool = False) -> Durable
         init_schema(path)
         now_dt = utc_now()
         now = isoformat(now_dt)
-        recent_dead_cutoff = isoformat(now_dt - timedelta(seconds=DEAD_LETTER_DEGRADED_AFTER_SECONDS))
+        recent_dead_cutoff = isoformat(
+            now_dt - timedelta(seconds=DEAD_LETTER_DEGRADED_AFTER_SECONDS)
+        )
         with _connect(path) as conn:
             rows = conn.execute(
                 "SELECT status, COUNT(*) AS count FROM durable_events GROUP BY status"
@@ -480,6 +809,9 @@ def collect_health(*, path: Path | None = None, create: bool = False) -> Durable
                         AND dead_lettered_at IS NOT NULL
                         AND dead_lettered_at >= ?
                         THEN 1 ELSE 0 END) AS recent_dead_letter_count,
+                    SUM(CASE WHEN status = 'dead_lettered'
+                        AND dead_letter_disposition IS NULL
+                        THEN 1 ELSE 0 END) AS unresolved_dead_letter_count,
                     SUM(CASE WHEN status = 'processing'
                         AND lease_until IS NOT NULL
                         AND lease_until < ?
@@ -488,6 +820,14 @@ def collect_health(*, path: Path | None = None, create: bool = False) -> Durable
                 """,
                 (recent_dead_cutoff, now),
             ).fetchone()
+            delivery_rows = conn.execute(
+                "SELECT state, COUNT(*) AS count FROM channel_deliveries GROUP BY state"
+            ).fetchall()
+            attempted_row = conn.execute(
+                "SELECT COALESCE(SUM(attempt_count), 0) AS count FROM channel_deliveries"
+            ).fetchone()
+            delivery_counts = {str(row["state"]): int(row["count"]) for row in delivery_rows}
+            delivery_counts["attempted"] = int(attempted_row["count"] or 0)
     except sqlite3.Error as exc:
         return {
             "status": "degraded",
@@ -499,7 +839,9 @@ def collect_health(*, path: Path | None = None, create: bool = False) -> Durable
             "processed_count": 0,
             "suppressed_count": 0,
             "dead_letter_count": 0,
+            "unresolved_dead_letter_count": 0,
             "recent_dead_letter_count": 0,
+            "delivery_state_counts": {},
             "stale_processing_count": 0,
             "oldest_pending_at": None,
             "oldest_pending_age_seconds": None,
@@ -516,6 +858,7 @@ def collect_health(*, path: Path | None = None, create: bool = False) -> Durable
     processed = counts.get("processed", 0)
     suppressed = counts.get("suppressed", 0)
     dead = counts.get("dead_lettered", 0)
+    unresolved_dead = int(aggregate["unresolved_dead_letter_count"] or 0)
     recent_dead = int(aggregate["recent_dead_letter_count"] or 0)
     oldest_pending_at = cast(str | None, aggregate["oldest_pending_at"])
     stale_processing = int(aggregate["stale_processing_count"] or 0)
@@ -528,9 +871,9 @@ def collect_health(*, path: Path | None = None, create: bool = False) -> Durable
         oldest_pending_age_seconds is not None
         and oldest_pending_age_seconds > BACKLOG_DEGRADED_AFTER_SECONDS
     )
-    if recent_dead > 0:
+    if unresolved_dead > 0:
         status = "degraded"
-        next_action = "Inspect recent dead-lettered events and plan a manual redrive."
+        next_action = "Review and disposition every unresolved dead-lettered event."
     elif stale_processing > 0:
         status = "degraded"
         next_action = "Reclaim stale processing leases, then verify the worker drains the inbox."
@@ -539,11 +882,7 @@ def collect_health(*, path: Path | None = None, create: bool = False) -> Durable
         next_action = "Inspect the durable inbox worker; queued events are not draining."
     else:
         status = "ok"
-        next_action = (
-            "Durable inbox is clear; historical dead letters remain retained for review."
-            if dead
-            else "Durable inbox is clear."
-        )
+        next_action = "Durable inbox is clear."
 
     return {
         "status": status,
@@ -555,7 +894,9 @@ def collect_health(*, path: Path | None = None, create: bool = False) -> Durable
         "processed_count": processed,
         "suppressed_count": suppressed,
         "dead_letter_count": dead,
+        "unresolved_dead_letter_count": unresolved_dead,
         "recent_dead_letter_count": recent_dead,
+        "delivery_state_counts": delivery_counts,
         "stale_processing_count": stale_processing,
         "oldest_pending_at": oldest_pending_at,
         "oldest_pending_age_seconds": oldest_pending_age_seconds,

@@ -35,6 +35,7 @@ else
 fi
 REPO=${REPO:0:100}
 SESSION_LABEL=${SESSION_LABEL:0:200}
+EVENT_ID="cc:$(printf '%s' "$TRANSCRIPT|$FIRST_TS|Session Complete" | shasum -a 256 | cut -d' ' -f1 | cut -c1-32)"
 
 terminal-notifier \
   -title "Claude Code" \
@@ -51,7 +52,9 @@ HUB_PAYLOAD=$(jq -n \
   --arg session_label "$SESSION_LABEL" \
   --arg branch "$BRANCH" \
   --arg elapsed "$ELAPSED" \
+  --arg event_id "$EVENT_ID" \
   '{
+    event_id: $event_id,
     source: $source,
     level: $level,
     title: $title,

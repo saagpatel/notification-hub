@@ -61,6 +61,27 @@ class Event(BaseModel):
     intent: Intent | None = None
     context: dict[str, EventContextValue] = Field(default_factory=dict)
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    event_id: str = Field(
+        default_factory=lambda: uuid.uuid4().hex[:12],
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9._:-]+$",
+    )
+    causal_parent_id: str | None = Field(default=None, max_length=128)
+    source_revision: str | None = Field(default=None, max_length=200)
+    event_type: str | None = Field(default=None, max_length=100)
+    sequence: int | None = Field(default=None, ge=0)
+    privacy_class: Literal["public", "internal", "sensitive", "secret"] = "internal"
+    required_destinations: list[str] = Field(default_factory=list)
+    semantic_dedupe_key: str | None = Field(default=None, min_length=1, max_length=200)
+
+    @field_validator("required_destinations")
+    @classmethod
+    def validate_required_destinations(cls, values: list[str]) -> list[str]:
+        allowed = {"log", "push", "slack"}
+        if unknown := set(values) - allowed:
+            raise ValueError(f"unknown required destination(s): {', '.join(sorted(unknown))}")
+        return list(dict.fromkeys(values))
 
     @field_validator("source", mode="before")
     @classmethod
@@ -119,9 +140,11 @@ class Event(BaseModel):
 class StoredEvent(Event):
     """Event with server-assigned metadata, written to JSONL."""
 
-    event_id: str = Field(default_factory=lambda: uuid.uuid4().hex[:12])
     received_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     classified_level: Level | None = None
+    payload_digest: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+    suppression_predecessor_id: str | None = Field(default=None, max_length=128)
+    suppression_policy: str | None = Field(default=None, max_length=100)
 
 
 class EventResponse(BaseModel):

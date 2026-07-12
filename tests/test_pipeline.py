@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
 from unittest.mock import patch
@@ -9,10 +10,12 @@ from unittest.mock import patch
 import pytest
 
 import notification_hub.channels as channels_mod
-from notification_hub.config import PolicyConfig, RoutingPolicy, RoutingRule
+from notification_hub.config import PolicyConfig, RoutingPolicy, RoutingRule, SuppressionPolicy
 from notification_hub.models import Event, Level, Source
 from notification_hub.pipeline import (
+    DeliveryDeferred,
     DeliveryError,
+    QueueCapacityError,
     build_event_explanation_report,
     build_stored_event,
     explain_event,
@@ -50,6 +53,7 @@ def _event(
     level: Level = "info",
     source: Source = "cc",
     project: str | None = None,
+    semantic_dedupe_key: str | None = None,
 ) -> Event:
     return Event(
         source=source,
@@ -57,6 +61,7 @@ def _event(
         title=title,
         body=body,
         project=project,
+        semantic_dedupe_key=semantic_dedupe_key,
     )
 
 
@@ -444,14 +449,35 @@ class TestLogging:
 
 
 class TestDedup:
-    def test_duplicate_event_suppresses_delivery(self, tmp_log: Path) -> None:
+    def test_project_and_level_alone_do_not_suppress_delivery(self, tmp_log: Path) -> None:
         p1, p2, p3 = _patch_channels()
         with p1 as mock_push, p2 as mock_slack, p3, _patch_daytime():
             process_event(_event(body="Verification failed", project="ink"))
             process_event(_event(body="Verification failed again", project="ink"))
-        # First fires, second is deduped (same project + same classified level)
+        assert mock_push.call_count == 2
+        assert mock_slack.call_count == 2
+
+    def test_explicit_semantic_dedupe_records_predecessor_and_policy(self, tmp_log: Path) -> None:
+        p1, p2, p3 = _patch_channels()
+        with p1 as mock_push, p2 as mock_slack, p3, _patch_daytime():
+            first = process_event(
+                _event(
+                    body="Verification failed",
+                    project="ink",
+                    semantic_dedupe_key="build:77:failed",
+                )
+            )
+            second = process_event(
+                _event(
+                    body="Updated wording",
+                    project="ink",
+                    semantic_dedupe_key="build:77:failed",
+                )
+            )
         assert mock_push.call_count == 1
         assert mock_slack.call_count == 1
+        assert second.suppression_predecessor_id == first.event_id
+        assert second.suppression_policy == "producer-semantic-key-window"
 
     def test_personal_ops_exact_burst_duplicate_is_not_logged_or_delivered(
         self,
@@ -470,7 +496,7 @@ class TestDedup:
             first = process_event(event)
             second = process_event(event)
 
-        assert first.event_id != second.event_id
+        assert first.event_id == second.event_id
         assert tmp_log.read_text(encoding="utf-8").count("\n") == 1
         mock_push.assert_not_called()
         mock_slack.assert_not_called()
@@ -483,11 +509,11 @@ class TestDedup:
             process_event(_event(body="Verification failed", project="codec"))
         assert mock_push.call_count == 2
 
-    def test_dedup_still_logs_to_jsonl(self, tmp_log: Path) -> None:
+    def test_semantic_dedup_still_logs_to_jsonl(self, tmp_log: Path) -> None:
         p1, p2, p3 = _patch_channels()
         with p1, p2, p3, _patch_daytime():
-            process_event(_event(body="Verification failed", project="ink"))
-            process_event(_event(body="Verification failed again", project="ink"))
+            process_event(_event(body="Verification failed", semantic_dedupe_key="failure:1"))
+            process_event(_event(body="Verification failed again", semantic_dedupe_key="failure:1"))
         lines = tmp_log.read_text().strip().split("\n")
         assert len(lines) == 2  # Both logged, even if second delivery suppressed
 
@@ -532,6 +558,18 @@ class TestQuietHours:
             with patch.object(get_suppression_engine(), "is_quiet_hours", return_value=True):
                 process_event(_event(body="Session complete for ink"))
         mock_slack.assert_called_once()
+
+    def test_full_quiet_queue_fails_honestly_without_processed_log(
+        self, tmp_log: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        policy = PolicyConfig(suppression=SuppressionPolicy(max_quiet_queue=0))
+        monkeypatch.setattr("notification_hub.suppression.get_policy_config", lambda: policy)
+        with (
+            patch.object(get_suppression_engine(), "is_quiet_hours", return_value=True),
+            pytest.raises(QueueCapacityError, match="quiet-hours queue full"),
+        ):
+            process_event(_event(body="Approval needed"))
+        assert not tmp_log.exists()
 
 
 class TestRateLimiting:
@@ -642,6 +680,74 @@ class TestRateLimiting:
 
 
 class TestPushFailureResilience:
+    def test_durable_quiet_hour_delivery_is_deferred_not_memory_queued(self, tmp_log: Path) -> None:
+        event = build_stored_event(_event(body="Approval needed for draft", project="ink"))
+        states: list[tuple[str, str]] = []
+        with (
+            patch("notification_hub.pipeline.send_slack", return_value=True),
+            patch("notification_hub.pipeline.send_slack_digest", return_value=True),
+            patch.object(get_suppression_engine(), "is_quiet_hours", return_value=True),
+            patch.object(
+                get_suppression_engine(),
+                "next_quiet_end",
+                return_value=datetime.now(UTC) + timedelta(hours=1),
+            ),
+            pytest.raises(DeliveryDeferred),
+        ):
+            process_stored_event_with_result(
+                event,
+                raise_on_delivery_failure=True,
+                durable_mode=True,
+                channel_state_recorder=lambda channel, state: states.append((channel, state)),
+            )
+
+        assert ("push", "buffered") in states
+        assert get_suppression_engine().snapshot()["queued_for_morning"] == 0
+
+    def test_durable_rate_limit_does_not_use_memory_overflow(self, tmp_log: Path) -> None:
+        event = build_stored_event(_event(body="Session complete", project="ink"))
+        engine = get_suppression_engine()
+        for _ in range(20):
+            engine.record_slack()
+
+        with (
+            patch("notification_hub.pipeline.send_slack") as mock_slack,
+            patch("notification_hub.pipeline.send_slack_digest") as mock_digest,
+            _patch_daytime(),
+            pytest.raises(DeliveryError),
+        ):
+            process_stored_event_with_result(
+                event,
+                raise_on_delivery_failure=True,
+                durable_mode=True,
+            )
+
+        mock_slack.assert_not_called()
+        mock_digest.assert_not_called()
+        assert engine.snapshot()["overflow_buffered"] == 0
+
+    def test_retry_skips_channel_already_accepted_on_prior_attempt(self, tmp_log: Path) -> None:
+        event = build_stored_event(_event(body="Approval needed for draft", project="ink"))
+        states: list[tuple[str, str]] = []
+        with (
+            patch("notification_hub.pipeline.send_push", return_value=True) as mock_push,
+            patch("notification_hub.pipeline.send_slack", return_value=True) as mock_slack,
+            patch("notification_hub.pipeline.send_slack_digest", return_value=True),
+            _patch_daytime(),
+        ):
+            result = process_stored_event_with_result(
+                event,
+                raise_on_delivery_failure=True,
+                skip_duplicate_suppression=True,
+                skip_channels=frozenset({"slack"}),
+                channel_state_recorder=lambda channel, state: states.append((channel, state)),
+            )
+
+        assert result.outcome == "processed"
+        mock_push.assert_called_once()
+        mock_slack.assert_not_called()
+        assert states == [("push", "attempted"), ("push", "accepted")]
+
     def test_push_failure_doesnt_break_pipeline(self, tmp_log: Path) -> None:
         with (
             patch("notification_hub.pipeline.send_push", return_value=False),

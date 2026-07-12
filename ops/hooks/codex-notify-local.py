@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import subprocess
@@ -179,6 +180,7 @@ def post_to_hub(
     message: str,
     project: str,
     session_label: str | None = None,
+    event_id: str | None = None,
 ) -> None:
     """Fire-and-forget POST to notification hub. Ignores all errors."""
     hub_level = "urgent" if level == "waiting" else "normal"
@@ -189,6 +191,8 @@ def post_to_hub(
         "body": clamp_text(message, MAX_BODY_LENGTH) or "Codex notification.",
         "project": clamp_text(project, MAX_PROJECT_LENGTH),
     }
+    if event_id is not None:
+        payload["event_id"] = event_id
     if session_label is not None:
         payload["session_label"] = clamp_text(session_label, MAX_SESSION_LABEL_LENGTH)
     body = json.dumps(payload).encode()
@@ -223,6 +227,10 @@ def main() -> int:
         message,
         project_from_payload(payload),
         raw_session_label_from_payload(payload),
+        "codex:"
+        + hashlib.sha256(
+            json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()[:32],
     )
     return 0
 

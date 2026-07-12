@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -57,6 +58,36 @@ _PUSH_NOTIFIER_CANDIDATES: tuple[str, ...] = (
     "/opt/homebrew/bin/terminal-notifier",
     "/usr/local/bin/terminal-notifier",
 )
+_LOCAL_PATH_RE = re.compile(r"/(?:Users|private|var|tmp)/[^\s)\]}]+")
+_SECRET_ASSIGNMENT_RE = re.compile(
+    r"(?i)\b(token|secret|password|api[_-]?key|authorization)\b\s*[:=]\s*[^\s,;]+"
+)
+
+
+def redact_for_external_delivery(event: StoredEvent) -> StoredEvent:
+    """Return a destination-safe copy without changing durable local evidence."""
+    if event.privacy_class == "secret":
+        return event.model_copy(
+            update={
+                "title": "Sensitive notification",
+                "body": "Secret-bearing details are available only in the local event record.",
+                "context": {},
+            }
+        )
+
+    def redact_text(value: str) -> str:
+        value = _LOCAL_PATH_RE.sub("[local-path-redacted]", value)
+        return _SECRET_ASSIGNMENT_RE.sub(lambda match: f"{match.group(1)}=[redacted]", value)
+
+    return event.model_copy(
+        update={
+            "title": redact_text(event.title),
+            "body": redact_text(event.body),
+            "project": redact_text(event.project) if event.project else None,
+            "session_label": redact_text(event.session_label) if event.session_label else None,
+            "context": {},
+        }
+    )
 
 
 class SlackTextObject(TypedDict):
@@ -135,6 +166,7 @@ def send_push(event: StoredEvent) -> bool:
         logger.warning("terminal-notifier not found, skipping push for %s", event.event_id)
         return False
 
+    event = redact_for_external_delivery(event)
     subtitle = _SOURCE_LABELS.get(event.source, event.source)
     if event.project:
         subtitle = f"{subtitle} — {event.project}"
@@ -158,14 +190,22 @@ def send_push(event: StoredEvent) -> bool:
     ]
 
     try:
-        subprocess.run(
+        result = subprocess.run(
             cmd,
             check=False,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             timeout=5,
         )
-        logger.info("Push sent for event %s", event.event_id)
+        returncode = getattr(result, "returncode", 0)
+        if isinstance(returncode, int) and returncode != 0:
+            logger.warning(
+                "terminal-notifier exited non-zero for %s (exit=%d)",
+                event.event_id,
+                returncode,
+            )
+            return False
+        logger.info("Push accepted by terminal-notifier for event %s", event.event_id)
         return True
     except subprocess.TimeoutExpired:
         logger.warning("terminal-notifier timed out for %s", event.event_id)
@@ -177,6 +217,7 @@ def send_push(event: StoredEvent) -> bool:
 
 def format_slack_message(event: StoredEvent) -> SlackPayload:
     """Build a Slack Block Kit message payload for an event."""
+    event = redact_for_external_delivery(event)
     level = event.classified_level or event.level
     level_emoji = _LEVEL_EMOJI.get(level, ":white_circle:")
     source_emoji = _SOURCE_EMOJI.get(event.source, ":question:")
@@ -205,7 +246,8 @@ def format_slack_message(event: StoredEvent) -> SlackPayload:
 def format_slack_digest(events: list[StoredEvent]) -> SlackPayload:
     """Build a Slack digest message for multiple batched events."""
     lines: list[str] = []
-    for event in events:
+    for raw_event in events:
+        event = redact_for_external_delivery(raw_event)
         level = event.classified_level or event.level
         emoji = _LEVEL_EMOJI.get(level, ":white_circle:")
         project = f"`{event.project}` " if event.project else ""

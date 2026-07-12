@@ -179,6 +179,42 @@ async def test_create_event_persists_before_ack_with_stable_event_id(client: Asy
     assert record.event.title == "Durable ack"
 
 
+async def test_create_event_identical_retry_returns_original_receipt(client: AsyncClient) -> None:
+    payload = {
+        "event_id": "producer:stable:0001",
+        "source": "codex",
+        "level": "info",
+        "title": "Stable retry",
+        "body": "Same payload, same receipt.",
+        "timestamp": "2026-07-12T12:00:00Z",
+    }
+
+    first = await client.post("/events", json=payload)
+    second = await client.post("/events", json=payload)
+
+    assert first.status_code == 201
+    assert second.status_code == 201
+    assert first.json()["event_id"] == "producer:stable:0001"
+    assert second.json() == first.json()
+
+
+async def test_create_event_conflicting_retry_returns_409(client: AsyncClient) -> None:
+    payload = {
+        "event_id": "producer:stable:0002",
+        "source": "codex",
+        "level": "info",
+        "title": "Stable retry",
+        "body": "Original payload.",
+        "timestamp": "2026-07-12T12:00:00Z",
+    }
+    first = await client.post("/events", json=payload)
+    conflicting = await client.post("/events", json={**payload, "body": "Conflicting payload."})
+
+    assert first.status_code == 201
+    assert conflicting.status_code == 409
+    assert "different payload digest" in conflicting.json()["detail"]
+
+
 async def test_create_event_classified_level_in_response(client: AsyncClient) -> None:
     payload = {
         "source": "cc",

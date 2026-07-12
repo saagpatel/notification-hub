@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sqlite3
 import time
 from collections.abc import AsyncGenerator, Sequence
 from contextlib import asynccontextmanager
@@ -14,15 +15,25 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from notification_hub.config import BRIDGE_FILE, get_policy_config
+from notification_hub.bridge_cursor import poll_bridge_protected_activity
+from notification_hub.config import (
+    BRIDGE_DB_PATH,
+    BRIDGE_FILE,
+    bridge_cursor_enabled,
+    get_policy_config,
+)
 from notification_hub.diagnostics import collect_runtime_readiness
 from notification_hub.durable_inbox import (
     DurableEventRecord,
+    IdempotencyConflictError,
+    accepted_channels,
     claim_next_due_event,
     enqueue_event,
     mark_delivered,
     prune_retained_events,
     reclaim_stale_processing,
+    record_channel_state,
+    record_processing_deferred,
     record_processing_failure,
 )
 from notification_hub.durable_inbox import (
@@ -69,6 +80,7 @@ from notification_hub.operations import (
     validate_action_package,
 )
 from notification_hub.pipeline import (
+    DeliveryDeferred,
     build_stored_event,
     get_suppression_engine,
     process_stored_event_with_result,
@@ -92,6 +104,7 @@ _event_count: int = 0
 _observer: ObserverHandle | None = None
 _retention_task: asyncio.Task[None] | None = None
 _durable_inbox_task: asyncio.Task[None] | None = None
+_bridge_cursor_task: asyncio.Task[None] | None = None
 _latest_review_package_path: str | None = None
 _latest_review_package_validation_status: str | None = None
 
@@ -200,10 +213,18 @@ def _persist_event_for_processing(event: Event) -> StoredEvent:
 
 
 def _process_durable_record(record: DurableEventRecord) -> None:
+    completed_channels = accepted_channels(record.event_id)
+
+    def record_state(channel: str, state: str) -> None:
+        record_channel_state(record.event_id, channel, state)
+
     result = process_stored_event_with_result(
         record.event,
         raise_on_delivery_failure=True,
         skip_duplicate_suppression=record.attempt_count > 1,
+        skip_channels=completed_channels,
+        channel_state_recorder=record_state,
+        durable_mode=True,
     )
     mark_delivered(
         record.event_id,
@@ -226,6 +247,15 @@ async def _durable_inbox_loop() -> None:
 
         try:
             await asyncio.to_thread(_process_durable_record, record)
+        except DeliveryDeferred as exc:
+            status = await asyncio.to_thread(record_processing_deferred, record, exc.retry_at)
+            logger.info(
+                "Durable event %s deferred for %s; status=%s retry_at=%s",
+                record.event_id,
+                exc.channel,
+                status,
+                exc.retry_at.isoformat(),
+            )
         except Exception as exc:  # noqa: BLE001 - failures become retry/DLQ state
             status = await asyncio.to_thread(record_processing_failure, record, exc)
             logger.warning(
@@ -235,6 +265,27 @@ async def _durable_inbox_loop() -> None:
                 record.attempt_count,
                 record.max_attempts,
             )
+
+
+async def _bridge_cursor_loop() -> None:
+    while True:
+        try:
+            result = await asyncio.to_thread(poll_bridge_protected_activity, BRIDGE_DB_PATH)
+            if result.consumed:
+                logger.info(
+                    "BridgeDB cursor accepted %d protected event(s); cursor=%d",
+                    result.consumed,
+                    result.cursor_after,
+                )
+            if result.gap_ranges:
+                logger.warning(
+                    "BridgeDB cursor observed %d source id gap(s): %s",
+                    len(result.gap_ranges),
+                    result.gap_ranges,
+                )
+        except (OSError, sqlite3.Error, ValueError):
+            logger.exception("BridgeDB cursor poll failed; cursor remains retryable")
+        await asyncio.sleep(2)
 
 
 def _handle_bridge_event(event: Event) -> None:
@@ -323,7 +374,7 @@ async def _review_runtime_status() -> dict[str, object]:
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     """Start bridge watcher on startup, stop on shutdown."""
-    global _start_time, _observer, _retention_task, _durable_inbox_task
+    global _start_time, _observer, _retention_task, _durable_inbox_task, _bridge_cursor_task
     _start_time = time.monotonic()
     _configure_retention_status()
     await asyncio.to_thread(init_durable_inbox_schema)
@@ -332,7 +383,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         logger.warning("Reclaimed %d stale durable inbox processing lease(s)", reclaimed)
     await asyncio.to_thread(prune_retained_events)
 
-    if BRIDGE_FILE.parent.exists():
+    if bridge_cursor_enabled():
+        _bridge_cursor_task = asyncio.create_task(_bridge_cursor_loop())
+        logger.info("Durable BridgeDB cursor active; markdown watcher disabled")
+    elif BRIDGE_FILE.parent.exists():
         _observer = start_watcher(_handle_bridge_event)
         logger.info("Bridge file watcher active")
     else:
@@ -342,6 +396,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     _durable_inbox_task = asyncio.create_task(_durable_inbox_loop())
 
     yield
+
+    bridge_cursor_task = _bridge_cursor_task
+    if bridge_cursor_task is not None:
+        bridge_cursor_task.cancel()
+        try:
+            await bridge_cursor_task
+        except asyncio.CancelledError:
+            pass
+        logger.info("BridgeDB cursor stopped")
+        _bridge_cursor_task = None
 
     durable_inbox_task = _durable_inbox_task
     assert durable_inbox_task is not None
@@ -1814,6 +1878,8 @@ async def create_event(event: Event) -> EventResponse:
     global _event_count
     try:
         stored = await asyncio.to_thread(_persist_event_for_processing, event)
+    except IdempotencyConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("Failed to persist accepted event")
         raise HTTPException(status_code=503, detail="event could not be persisted") from exc

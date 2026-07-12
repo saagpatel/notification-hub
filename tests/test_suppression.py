@@ -21,6 +21,7 @@ def _stored(
     title: str = "Test",
     body: str = "Test body",
     classified_level: Level | None = None,
+    semantic_dedupe_key: str | None = None,
 ) -> StoredEvent:
     return StoredEvent(
         source=source,
@@ -29,6 +30,7 @@ def _stored(
         body=body,
         project=project,
         classified_level=classified_level,
+        semantic_dedupe_key=semantic_dedupe_key,
     )
 
 
@@ -37,11 +39,11 @@ class TestDedup:
         engine = SuppressionEngine()
         assert engine.is_duplicate(_stored()) is False
 
-    def test_same_project_level_within_window_is_duplicate(self) -> None:
+    def test_same_project_level_without_semantic_key_is_not_duplicate(self) -> None:
         engine = SuppressionEngine()
         event = _stored()
         engine.is_duplicate(event)
-        assert engine.is_duplicate(_stored()) is True
+        assert engine.is_duplicate(_stored()) is False
 
     def test_different_project_not_duplicate(self) -> None:
         engine = SuppressionEngine()
@@ -53,34 +55,19 @@ class TestDedup:
         engine.is_duplicate(_stored(level="info"))
         assert engine.is_duplicate(_stored(level="urgent")) is False
 
-    def test_none_project_dedupes_separately(self) -> None:
+    def test_explicit_semantic_key_dedupes_and_returns_predecessor(self) -> None:
         engine = SuppressionEngine()
-        engine.is_duplicate(_stored(project=None))
-        assert engine.is_duplicate(_stored(project=None)) is True
-        assert engine.is_duplicate(_stored(project="some-proj")) is False
+        first = _stored(project=None, semantic_dedupe_key="approval:7")
+        second = _stored(project="some-proj", semantic_dedupe_key="approval:7")
+        assert engine.semantic_duplicate_predecessor(first) is None
+        assert engine.semantic_duplicate_predecessor(second) == first.event_id
 
-    def test_dedup_uses_classified_level_not_source_level(self) -> None:
-        """Events with same source level but different classified levels should NOT dedup."""
+    def test_semantic_key_is_scoped_by_source(self) -> None:
         engine = SuppressionEngine()
-        e1 = _stored(project="ink", level="info", classified_level="urgent")
-        e2 = _stored(project="ink", level="info", classified_level="normal")
+        e1 = _stored(source="cc", semantic_dedupe_key="same")
+        e2 = _stored(source="codex", semantic_dedupe_key="same")
         engine.is_duplicate(e1)
         assert engine.is_duplicate(e2) is False
-
-    def test_dedup_matches_on_classified_level(self) -> None:
-        """Events with same classified level should dedup even if source levels differ."""
-        engine = SuppressionEngine()
-        e1 = _stored(project="ink", level="info", classified_level="urgent")
-        e2 = _stored(project="ink", level="normal", classified_level="urgent")
-        engine.is_duplicate(e1)
-        assert engine.is_duplicate(e2) is True
-
-    def test_dedup_falls_back_to_source_level_when_no_classified(self) -> None:
-        engine = SuppressionEngine()
-        e1 = _stored(project="ink", level="info", classified_level=None)
-        engine.is_duplicate(e1)
-        e2 = _stored(project="ink", level="info", classified_level=None)
-        assert engine.is_duplicate(e2) is True
 
 
 class TestBurstDedup:
@@ -306,7 +293,7 @@ def test_uses_configured_quiet_hours_and_limits(monkeypatch: pytest.MonkeyPatch)
     engine.record_push()
     assert engine.check_push_rate() is False
 
-    engine.queue_for_morning(_stored(title="first"))
-    engine.queue_for_morning(_stored(title="second"))
-    engine.queue_for_morning(_stored(title="dropped"))
+    assert engine.queue_for_morning(_stored(title="first")) is True
+    assert engine.queue_for_morning(_stored(title="second")) is True
+    assert engine.queue_for_morning(_stored(title="dropped")) is False
     assert len(engine.drain_quiet_queue()) == 2

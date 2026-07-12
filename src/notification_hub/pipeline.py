@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
+import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Literal, cast
 
 from notification_hub.channels import send_push, send_slack, send_slack_digest, write_jsonl
@@ -53,6 +58,19 @@ class PipelineProcessResult:
 
 class DeliveryError(RuntimeError):
     """Raised when required channel delivery fails in durable-worker mode."""
+
+
+class DeliveryDeferred(RuntimeError):
+    """Raised when a durable delivery must wait without consuming retry budget."""
+
+    def __init__(self, retry_at: datetime, channel: str) -> None:
+        super().__init__(f"{channel} delivery deferred until {retry_at.isoformat()}")
+        self.retry_at = retry_at
+        self.channel = channel
+
+
+class QueueCapacityError(RuntimeError):
+    """Raised when a legacy in-memory buffer cannot accept an event."""
 
 
 def _resolve_routing(event: Event, classified_level: Level) -> RoutingDecision:
@@ -214,9 +232,19 @@ def reset_suppression_engine() -> None:
 def build_stored_event(event: Event) -> StoredEvent:
     """Assign server metadata and the current classified delivery level."""
     explanation = explain_event(event)
+    payload = event.model_dump()
+    requested_event_id = payload.pop("event_id", None)
+    # `timestamp` defaults at validation time, so excluding it keeps a producer retry
+    # idempotent even when the producer does not supply a logical timestamp.
+    digest_payload = event.model_dump(mode="json", exclude={"event_id", "timestamp"})
+    payload_digest = hashlib.sha256(
+        json.dumps(digest_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
     return StoredEvent(
-        **event.model_dump(),
+        **payload,
+        event_id=requested_event_id or uuid.uuid4().hex[:12],
         classified_level=explanation.routing.level,
+        payload_digest=payload_digest,
     )
 
 
@@ -250,7 +278,8 @@ def _flush_overflow() -> None:
 
         # Preserve overflow when digest delivery fails so a later event can retry.
         for event in overflow:
-            _suppression.add_to_overflow(event)
+            if not _suppression.add_to_overflow(event):
+                raise QueueCapacityError("overflow queue full while restoring failed digest")
         logger.warning(
             "Failed to flush overflow digest; returning %d events to buffer", len(overflow)
         )
@@ -266,7 +295,7 @@ def _drain_quiet_queue_if_needed() -> None:
         logger.info("Morning delivery: push for %s", event.event_id)
 
 
-def _deliver_push(event: StoredEvent) -> bool:
+def _deliver_push(event: StoredEvent, *, allow_memory_buffer: bool = True) -> bool:
     """Send a push notification with rate limiting. Overflow goes to buffer."""
     if _suppression.check_push_rate():
         if send_push(event):
@@ -275,18 +304,23 @@ def _deliver_push(event: StoredEvent) -> bool:
         logger.warning("Push delivery failed for %s", event.event_id)
         return False
     else:
-        _suppression.add_to_overflow(event)
+        if not allow_memory_buffer:
+            logger.info("Push rate-limited; durable event %s remains pending", event.event_id)
+            return False
+        if not _suppression.add_to_overflow(event):
+            raise QueueCapacityError("push overflow queue full")
         logger.debug("Push rate-limited, event %s added to overflow", event.event_id)
         return True
 
 
-def _deliver_slack(event: StoredEvent) -> bool:
+def _deliver_slack(event: StoredEvent, *, allow_memory_buffer: bool = True) -> bool:
     """Send a Slack message with rate limiting. Overflow goes to buffer."""
     if not _slack_delivery_enabled():
         return True
 
     # Try to flush any pending overflow first
-    _flush_overflow()
+    if allow_memory_buffer:
+        _flush_overflow()
 
     if _suppression.check_slack_rate():
         if send_slack(event):
@@ -295,7 +329,11 @@ def _deliver_slack(event: StoredEvent) -> bool:
         logger.warning("Slack delivery failed for %s", event.event_id)
         return False
     else:
-        _suppression.add_to_overflow(event)
+        if not allow_memory_buffer:
+            logger.info("Slack rate-limited; durable event %s remains pending", event.event_id)
+            return False
+        if not _suppression.add_to_overflow(event):
+            raise QueueCapacityError("slack overflow queue full")
         logger.debug("Slack rate-limited, event %s added to overflow", event.event_id)
         return True
 
@@ -305,6 +343,9 @@ def process_stored_event_with_result(
     *,
     raise_on_delivery_failure: bool = False,
     skip_duplicate_suppression: bool = False,
+    skip_channels: frozenset[str] = frozenset(),
+    channel_state_recorder: Callable[[str, str], None] | None = None,
+    durable_mode: bool = False,
 ) -> PipelineProcessResult:
     """Full pipeline for a durable event, returning the persistence outcome.
 
@@ -327,15 +368,32 @@ def process_stored_event_with_result(
 
     # Exact producer burst suppression happens before JSONL audit logging so
     # repeated local reminder fan-out does not flood processed-event history.
-    if not skip_duplicate_suppression and _suppression.is_burst_duplicate(stored):
+    burst_predecessor = (
+        None if skip_duplicate_suppression else _suppression.burst_duplicate_predecessor(stored)
+    )
+    if burst_predecessor is not None:
+        stored = stored.model_copy(
+            update={
+                "suppression_predecessor_id": burst_predecessor,
+                "suppression_policy": "explicit-noise-rule-exact-burst",
+            }
+        )
         logger.debug("Event %s suppressed by burst dedup before storage", stored.event_id)
         return PipelineProcessResult(event=stored, outcome="suppressed")
 
     # Check for morning delivery of queued events
     _drain_quiet_queue_if_needed()
 
-    # Dedup: stop delivery if duplicate (project, level) within window
-    if not skip_duplicate_suppression and _suppression.is_duplicate(stored):
+    semantic_predecessor = (
+        None if skip_duplicate_suppression else _suppression.semantic_duplicate_predecessor(stored)
+    )
+    if semantic_predecessor is not None:
+        stored = stored.model_copy(
+            update={
+                "suppression_predecessor_id": semantic_predecessor,
+                "suppression_policy": "producer-semantic-key-window",
+            }
+        )
         logger.debug("Event %s suppressed by dedup", stored.event_id)
         write_jsonl(stored)
         logger.info(
@@ -345,26 +403,62 @@ def process_stored_event_with_result(
             stored.level,
             routing.level,
         )
-        return PipelineProcessResult(event=stored, outcome="processed")
+        return PipelineProcessResult(event=stored, outcome="suppressed")
 
     delivery_failed = False
+    deferred: DeliveryDeferred | None = None
+
+    def deliver(channel: str, sender: Callable[[StoredEvent], bool]) -> bool:
+        if channel in skip_channels:
+            return True
+        if channel_state_recorder is not None:
+            channel_state_recorder(channel, "attempted")
+        success = sender(stored)
+        if channel_state_recorder is not None:
+            channel_state_recorder(channel, "accepted" if success else "failed")
+        return success
 
     # Route based on classified level
     if routing.level == "urgent":
         # Push: respect quiet hours
         if routing.allow_push and _suppression.is_quiet_hours():
-            _suppression.queue_for_morning(stored)
+            if durable_mode:
+                if channel_state_recorder is not None:
+                    channel_state_recorder("push", "buffered")
+                deferred = DeliveryDeferred(_suppression.next_quiet_end(), "push")
+            else:
+                if not _suppression.queue_for_morning(stored):
+                    raise QueueCapacityError("quiet-hours queue full")
         elif routing.allow_push:
-            delivery_failed = not _deliver_push(stored) or delivery_failed
+            delivery_failed = (
+                not deliver(
+                    "push", lambda value: _deliver_push(value, allow_memory_buffer=not durable_mode)
+                )
+                or delivery_failed
+            )
         # Slack: always (not affected by quiet hours)
         if routing.allow_slack:
-            delivery_failed = not _deliver_slack(stored) or delivery_failed
+            delivery_failed = (
+                not deliver(
+                    "slack",
+                    lambda value: _deliver_slack(value, allow_memory_buffer=not durable_mode),
+                )
+                or delivery_failed
+            )
 
     elif routing.level == "normal":
         if routing.allow_slack:
-            delivery_failed = not _deliver_slack(stored) or delivery_failed
+            delivery_failed = (
+                not deliver(
+                    "slack",
+                    lambda value: _deliver_slack(value, allow_memory_buffer=not durable_mode),
+                )
+                or delivery_failed
+            )
 
     # info: JSONL only.
+    if deferred is not None:
+        raise deferred
     if delivery_failed and raise_on_delivery_failure:
         raise DeliveryError(f"delivery failed for event {stored.event_id}")
 

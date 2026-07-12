@@ -41,10 +41,12 @@ class SuppressionEngine:
     """Manages dedup, quiet hours, and rate limiting for notification delivery."""
 
     def __init__(self) -> None:
-        # Dedup: (project, level) -> last event timestamp
-        self._dedup_log: dict[tuple[str | None, Level], datetime] = {}
+        # Semantic dedup is opt-in and records the predecessor event id.
+        self._dedup_log: dict[tuple[str, str], tuple[datetime, str]] = {}
         # Burst dedup: exact producer signature -> last event timestamp
-        self._burst_dedup_log: dict[tuple[int, str, str | None, str, str, Level], datetime] = {}
+        self._burst_dedup_log: dict[
+            tuple[int, str, str | None, str, str, Level], tuple[datetime, str]
+        ] = {}
         self._burst_duplicates = 0
         # Rate counters: channel -> list of timestamps
         self._push_times: list[datetime] = []
@@ -54,7 +56,7 @@ class SuppressionEngine:
         # Rate limit overflow buffer
         self._overflow_buffer: list[StoredEvent] = []
 
-    def is_burst_duplicate(self, event: StoredEvent) -> bool:
+    def burst_duplicate_predecessor(self, event: StoredEvent) -> str | None:
         """Suppress exact duplicate producer bursts before storage and delivery."""
         effective_level = event.classified_level or event.level
         rules = get_policy_config().noise.rules or DEFAULT_NOISE_RULES
@@ -64,40 +66,47 @@ class SuppressionEngine:
             if _noise_rule_matches(rule, event, effective_level)
         ]
         if not matching_rules:
-            return False
+            return None
 
         now = datetime.now(UTC)
         max_window = max(rule.window_minutes for _index, rule in matching_rules)
         cutoff = now - timedelta(minutes=max_window)
         self._burst_dedup_log = {
-            signature: seen_at
-            for signature, seen_at in self._burst_dedup_log.items()
-            if seen_at > cutoff
+            signature: receipt
+            for signature, receipt in self._burst_dedup_log.items()
+            if receipt[0] > cutoff
         }
         for index, rule in matching_rules:
             key = (index, event.source, event.project, event.title, event.body, effective_level)
-            last_seen = self._burst_dedup_log.get(key)
-            if last_seen and (now - last_seen) < timedelta(minutes=rule.window_minutes):
+            prior = self._burst_dedup_log.get(key)
+            if prior and (now - prior[0]) < timedelta(minutes=rule.window_minutes):
                 self._burst_duplicates += 1
                 logger.debug("Burst suppressed: %s/%s/%s", event.source, event.project, event.title)
-                return True
+                return prior[1]
         for index, _rule in matching_rules:
             key = (index, event.source, event.project, event.title, event.body, effective_level)
-            self._burst_dedup_log[key] = now
-        return False
+            self._burst_dedup_log[key] = (now, event.event_id)
+        return None
+
+    def is_burst_duplicate(self, event: StoredEvent) -> bool:
+        return self.burst_duplicate_predecessor(event) is not None
+
+    def semantic_duplicate_predecessor(self, event: StoredEvent) -> str | None:
+        """Return the predecessor for an explicit semantic key, never project/level alone."""
+        if event.semantic_dedupe_key is None:
+            return None
+        policy = get_policy_config().suppression
+        key = (event.source, event.semantic_dedupe_key)
+        now = datetime.now(UTC)
+        prior = self._dedup_log.get(key)
+        if prior and (now - prior[0]) < timedelta(minutes=policy.dedup_window_minutes):
+            logger.debug("Semantic dedup suppressed: %s/%s", event.source, key[1])
+            return prior[1]
+        self._dedup_log[key] = (now, event.event_id)
+        return None
 
     def is_duplicate(self, event: StoredEvent) -> bool:
-        """Check if this (project, classified_level) combo was seen within the dedup window."""
-        policy = get_policy_config().suppression
-        effective_level = event.classified_level or event.level
-        key = (event.project, effective_level)
-        now = datetime.now(UTC)
-        last_seen = self._dedup_log.get(key)
-        if last_seen and (now - last_seen) < timedelta(minutes=policy.dedup_window_minutes):
-            logger.debug("Dedup suppressed: %s/%s", event.project, effective_level)
-            return True
-        self._dedup_log[key] = now
-        return False
+        return self.semantic_duplicate_predecessor(event) is not None
 
     def is_quiet_hours(self, at: datetime | None = None) -> bool:
         """Check if current time is in configured quiet hours."""
@@ -110,7 +119,21 @@ class SuppressionEngine:
             return policy.quiet_start_hour <= hour < policy.quiet_end_hour
         return hour >= policy.quiet_start_hour or hour < policy.quiet_end_hour
 
-    def queue_for_morning(self, event: StoredEvent) -> None:
+    def next_quiet_end(self, at: datetime | None = None) -> datetime:
+        """Return the next configured quiet-hours end in UTC."""
+        policy = get_policy_config().suppression
+        now = (at or datetime.now(UTC)).astimezone(PACIFIC)
+        candidate = now.replace(
+            hour=policy.quiet_end_hour,
+            minute=0,
+            second=0,
+            microsecond=0,
+        )
+        if candidate <= now:
+            candidate += timedelta(days=1)
+        return candidate.astimezone(UTC)
+
+    def queue_for_morning(self, event: StoredEvent) -> bool:
         """Queue an event for delivery when quiet hours end."""
         policy = get_policy_config().suppression
         if len(self._quiet_queue) >= policy.max_quiet_queue:
@@ -119,9 +142,10 @@ class SuppressionEngine:
                 policy.max_quiet_queue,
                 event.event_id,
             )
-            return
+            return False
         self._quiet_queue.append(event)
         logger.info("Queued event %s for morning delivery", event.event_id)
+        return True
 
     def drain_quiet_queue(self) -> list[StoredEvent]:
         """Return and clear all queued events. Called when quiet hours end."""
@@ -173,7 +197,7 @@ class SuppressionEngine:
         self._push_times.clear()
         self._slack_times.clear()
 
-    def add_to_overflow(self, event: StoredEvent) -> None:
+    def add_to_overflow(self, event: StoredEvent) -> bool:
         """Add an event to the overflow buffer for later digest delivery."""
         policy = get_policy_config().suppression
         if len(self._overflow_buffer) >= policy.max_overflow_buffer:
@@ -182,13 +206,14 @@ class SuppressionEngine:
                 policy.max_overflow_buffer,
                 event.event_id,
             )
-            return
+            return False
         self._overflow_buffer.append(event)
         logger.debug(
             "Event %s added to overflow buffer (%d total)",
             event.event_id,
             len(self._overflow_buffer),
         )
+        return True
 
     def drain_overflow(self) -> list[StoredEvent]:
         """Return and clear the overflow buffer."""

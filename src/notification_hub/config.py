@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
 import time
 import tomllib
@@ -36,6 +37,18 @@ CLAUDE_HOOK_TEMPLATE = RUNTIME_TEMPLATE_DIR / "hooks" / "claude-notify.sh"
 CODEX_HOOK_TEMPLATE = RUNTIME_TEMPLATE_DIR / "hooks" / "codex-notify-local.py"
 
 BRIDGE_FILE = Path.home() / ".claude" / "projects" / "-Users-d" / "memory" / "claude_ai_context.md"
+BRIDGE_DB_PATH = Path.home() / ".local" / "share" / "bridge-db" / "bridge.db"
+
+
+def bridge_cursor_enabled() -> bool:
+    """Feature flag for the durable BridgeDB consumer; disabled by default."""
+    return os.environ.get("NOTIFICATION_HUB_BRIDGE_CURSOR_ENABLED", "").lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+
+
 _POLICY_LOAD_ERROR = "policy config could not be loaded"
 
 # Sections in the bridge file that trigger events when changed
