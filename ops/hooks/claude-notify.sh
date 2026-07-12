@@ -53,12 +53,15 @@ HUB_PAYLOAD=$(jq -n \
   --arg branch "$BRANCH" \
   --arg elapsed "$ELAPSED" \
   --arg event_id "$EVENT_ID" \
+  --arg source_revision "$FIRST_TS" \
   '{
     event_id: $event_id,
+    event_type: "claude.session.completed",
+    source_revision: $source_revision,
     source: $source,
     level: $level,
     title: $title,
-    body: (($repo + (if $branch == "" then "" else " (" + $branch + ")" end) + ": Done (" + $elapsed + "s)")[:2000]),
+    body: (($repo + (if $branch == "" then "" else " (" + $branch + ")" end) + ": Done")[:2000]),
     project: ($repo[:100]),
     session_label: ($session_label[:200])
   }')

@@ -181,6 +181,8 @@ def post_to_hub(
     project: str,
     session_label: str | None = None,
     event_id: str | None = None,
+    event_type: str | None = None,
+    source_revision: str | None = None,
 ) -> None:
     """Fire-and-forget POST to notification hub. Ignores all errors."""
     hub_level = "urgent" if level == "waiting" else "normal"
@@ -193,6 +195,10 @@ def post_to_hub(
     }
     if event_id is not None:
         payload["event_id"] = event_id
+    if event_type is not None:
+        payload["event_type"] = event_type
+    if source_revision is not None:
+        payload["source_revision"] = clamp_text(source_revision, 200)
     if session_label is not None:
         payload["session_label"] = clamp_text(session_label, MAX_SESSION_LABEL_LENGTH)
     producer = Path(__file__).with_name("notification-hub-producer.py")
@@ -213,6 +219,12 @@ def post_to_hub(
 def main() -> int:
     payload = parse_notification_payload()
     level, title, message = classify_notification(payload)
+    source_revision = None
+    for key in ("turn_id", "session_id", "thread_id"):
+        value = payload.get(key)
+        if isinstance(value, (str, int)) and str(value):
+            source_revision = str(value)
+            break
     sound_file = SOUNDS.get(level)
     if sound_file:
         sound_path = Path(sound_file)
@@ -233,6 +245,8 @@ def main() -> int:
         + hashlib.sha256(
             json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
         ).hexdigest()[:32],
+        f"codex.turn.{level}",
+        source_revision,
     )
     return 0
 

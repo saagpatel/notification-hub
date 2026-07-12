@@ -104,6 +104,8 @@ exit 1
     assert "saagpatel/repo-json-safe (feat/json safe): Done" in event.body
     assert event.event_id.startswith("cc:")
     assert len(event.event_id) == 35
+    assert event.event_type == "claude.session.completed"
+    assert event.source_revision == "2026-04-23T01:00:00.000Z"
 
 
 def test_codex_hook_template_posts_valid_payload_with_repo_project_from_cwd() -> None:
