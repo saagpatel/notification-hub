@@ -8,7 +8,8 @@ adoption; live delivery remains unknown until separately approved destination re
 
 | Requirement | Authoritative isolated evidence |
 | --- | --- |
-| Deterministic producer IDs | `test_hooks.py`, `test_bridge_cursor.py`; personal-ops feature commit `4f37f96` (`notification-hub.test.ts`) |
+| Deterministic producer IDs | `test_hooks.py`, `test_bridge_cursor.py`; personal-ops feature series `4f37f96..754e660` (`notification-hub.test.ts`) |
+| Correlated producer acceptance receipt | personal-ops commit `754e660` (`notification-hub.test.ts`): a 2xx response is accepted only when its nonempty `event_id` matches the submitted deterministic ID |
 | Identical retry / conflicting retry | `test_server.py`, `test_durable_inbox.py`, `test_producer_outbox.py` |
 | HTTP timeout after possible acceptance | `test_producer_outbox.py::test_http_timeout_after_possible_acceptance_retries_idempotently` |
 | Bridge downtime, cursor recovery, gaps, rewrite rejection | `test_bridge_cursor.py` |
@@ -25,8 +26,9 @@ adoption; live delivery remains unknown until separately approved destination re
 | Semantic suppression evidence | `test_suppression.py`, `test_pipeline.py` |
 | Privacy redaction | `test_channels.py` |
 | Additive migration and history preservation | `test_durable_inbox.py`, `test_producer_outbox.py` |
-| Producer terminal disposition without history deletion | personal-ops feature commit `4f37f96` (`notification-hub.test.ts`) |
-| CI and smoke isolation from the machine's live hub | personal-ops feature commit `4f37f96` (`verify-harness.ts`, `notification-hub.test.ts`) |
+| Producer terminal disposition without history deletion | personal-ops feature series `4f37f96..754e660` (`notification-hub.test.ts`) |
+| Producer timeout, network, HTTP, and receipt failures are bounded and secret-safe | personal-ops commit `754e660` (`notification-hub.test.ts`) |
+| CI and smoke isolation from the machine's live hub | personal-ops feature series `4f37f96..754e660` (`verify-harness.ts`, `notification-hub.test.ts`) |
 | No live test destinations or Keychain | `tests/conftest.py`, `test_channels.py`, `test_config.py` |
 | Full isolated chain | `test_delivery_e2e_fixture.py` |
 
@@ -76,12 +78,15 @@ dead letters, and channel receipts against the pre-rollout receipt.
 - Gate 1 is installed in the running LaunchAgent and machine hooks. Runtime wiring, additive schema
   migration, history reconciliation, local hook-producer acceptance, explicit producer identity,
   and safe per-channel acceptance/error evidence have been verified.
-- The personal-ops durable producer repair is published as the single clean feature commit `4f37f96`
-  on `origin/codex/personal-ops-delivery-reliability`. It is not merged, installed, or active; doing
+- The personal-ops durable producer repair is published as the two-commit feature series
+  `4f37f96..754e660` on `origin/codex/personal-ops-delivery-reliability`. It is not merged, installed,
+  or active; doing
   so is a separate rollout gate because it changes the personal-ops daemon and creates a producer
   outbox under live state.
 - The feature branch's test mode now blocks port 9199 and the verification harness uses an ephemeral
-  loopback hub. The isolated smoke passed with live deterministic personal-ops event counts unchanged.
+  loopback hub. The isolated smoke passed; fixture isolation was established from the harness wiring
+  and the absence of fixture-like rows in recent live state, not from a raw live-count delta while the
+  existing daemon continued producing unrelated events.
 - Current live health is degraded by unresolved historical and recent delivery failures. Those rows
   remain retained and actionable; this rollout did not replay, acknowledge, disposition, or clear
   them merely to improve health.
