@@ -194,6 +194,23 @@ async def test_health_details_propagates_delivery_degradation(client: AsyncClien
     assert data["durable_inbox"]["status"] == "degraded"
 
 
+async def test_health_distinguishes_bridge_cursor_from_markdown_watcher(
+    client: AsyncClient,
+) -> None:
+    with (
+        patch("notification_hub.server.bridge_cursor_enabled", return_value=True),
+        patch.object(server_mod, "_bridge_cursor_task") as cursor_task,
+    ):
+        cursor_task.done.return_value = False
+        response = await client.get("/health")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["watcher_active"] is False
+    assert data["bridge_cursor_enabled"] is True
+    assert data["bridge_cursor_active"] is True
+
+
 async def test_create_event_valid(client: AsyncClient) -> None:
     payload = {
         "source": "cc",

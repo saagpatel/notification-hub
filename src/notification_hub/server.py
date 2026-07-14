@@ -1929,6 +1929,8 @@ async def health() -> dict[str, object]:
         "uptime_seconds": round(uptime, 1),
         "events_processed": _event_count,
         "watcher_active": _observer is not None,
+        "bridge_cursor_enabled": bridge_cursor_enabled(),
+        "bridge_cursor_active": _bridge_cursor_task is not None and not _bridge_cursor_task.done(),
     }
 
 
