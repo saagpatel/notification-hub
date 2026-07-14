@@ -349,7 +349,7 @@ def process_stored_event_with_result(
     raise_on_delivery_failure: bool = False,
     skip_duplicate_suppression: bool = False,
     skip_channels: frozenset[str] = frozenset(),
-    channel_state_recorder: Callable[[str, str], None] | None = None,
+    channel_state_recorder: Callable[[str, str, str | None], None] | None = None,
     durable_mode: bool = False,
 ) -> PipelineProcessResult:
     """Full pipeline for a durable event, returning the persistence outcome.
@@ -417,10 +417,17 @@ def process_stored_event_with_result(
         if channel in skip_channels:
             return True
         if channel_state_recorder is not None:
-            channel_state_recorder(channel, "attempted")
+            channel_state_recorder(channel, "attempted", None)
         success = sender(stored)
         if channel_state_recorder is not None:
-            channel_state_recorder(channel, "accepted" if success else "failed")
+            evidence = (
+                "terminal-notifier:exit:0"
+                if success and channel == "push"
+                else "slack:webhook:http:2xx"
+                if success and channel == "slack"
+                else f"{channel}_transport_failed"
+            )
+            channel_state_recorder(channel, "accepted" if success else "failed", evidence)
         return success
 
     # Route based on classified level
@@ -429,7 +436,7 @@ def process_stored_event_with_result(
         if routing.allow_push and _suppression.is_quiet_hours():
             if durable_mode:
                 if channel_state_recorder is not None:
-                    channel_state_recorder("push", "buffered")
+                    channel_state_recorder("push", "buffered", "quiet_hours")
                 deferred = DeliveryDeferred(_suppression.next_quiet_end(), "push")
             else:
                 if not _suppression.queue_for_morning(stored):

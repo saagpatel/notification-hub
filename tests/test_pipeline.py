@@ -711,7 +711,7 @@ class TestRateLimiting:
 class TestPushFailureResilience:
     def test_durable_quiet_hour_delivery_is_deferred_not_memory_queued(self, tmp_log: Path) -> None:
         event = build_stored_event(_event(body="Approval needed for draft", project="ink"))
-        states: list[tuple[str, str]] = []
+        states: list[tuple[str, str, str | None]] = []
         with (
             patch("notification_hub.pipeline.send_slack", return_value=True),
             patch("notification_hub.pipeline.send_slack_digest", return_value=True),
@@ -727,10 +727,12 @@ class TestPushFailureResilience:
                 event,
                 raise_on_delivery_failure=True,
                 durable_mode=True,
-                channel_state_recorder=lambda channel, state: states.append((channel, state)),
+                channel_state_recorder=lambda channel, state, evidence: states.append(
+                    (channel, state, evidence)
+                ),
             )
 
-        assert ("push", "buffered") in states
+        assert ("push", "buffered", "quiet_hours") in states
         assert get_suppression_engine().snapshot()["queued_for_morning"] == 0
 
     def test_durable_rate_limit_does_not_use_memory_overflow(self, tmp_log: Path) -> None:
@@ -757,7 +759,7 @@ class TestPushFailureResilience:
 
     def test_retry_skips_channel_already_accepted_on_prior_attempt(self, tmp_log: Path) -> None:
         event = build_stored_event(_event(body="Approval needed for draft", project="ink"))
-        states: list[tuple[str, str]] = []
+        states: list[tuple[str, str, str | None]] = []
         with (
             patch("notification_hub.pipeline.send_push", return_value=True) as mock_push,
             patch("notification_hub.pipeline.send_slack", return_value=True) as mock_slack,
@@ -769,19 +771,24 @@ class TestPushFailureResilience:
                 raise_on_delivery_failure=True,
                 skip_duplicate_suppression=True,
                 skip_channels=frozenset({"slack"}),
-                channel_state_recorder=lambda channel, state: states.append((channel, state)),
+                channel_state_recorder=lambda channel, state, evidence: states.append(
+                    (channel, state, evidence)
+                ),
             )
 
         assert result.outcome == "processed"
         mock_push.assert_called_once()
         mock_slack.assert_not_called()
-        assert states == [("push", "attempted"), ("push", "accepted")]
+        assert states == [
+            ("push", "attempted", None),
+            ("push", "accepted", "terminal-notifier:exit:0"),
+        ]
 
     def test_one_channel_acceptance_and_other_channel_failure_are_distinct(
         self, tmp_log: Path
     ) -> None:
         event = build_stored_event(_event(body="Approval needed", project="ink"))
-        states: list[tuple[str, str]] = []
+        states: list[tuple[str, str, str | None]] = []
         with (
             patch("notification_hub.pipeline.send_push", return_value=True),
             patch("notification_hub.pipeline.send_slack", return_value=False),
@@ -793,11 +800,13 @@ class TestPushFailureResilience:
                 event,
                 raise_on_delivery_failure=True,
                 durable_mode=True,
-                channel_state_recorder=lambda channel, state: states.append((channel, state)),
+                channel_state_recorder=lambda channel, state, evidence: states.append(
+                    (channel, state, evidence)
+                ),
             )
 
-        assert ("push", "accepted") in states
-        assert ("slack", "failed") in states
+        assert ("push", "accepted", "terminal-notifier:exit:0") in states
+        assert ("slack", "failed", "slack_transport_failed") in states
         assert not tmp_log.exists()
 
     def test_push_failure_doesnt_break_pipeline(self, tmp_log: Path) -> None:

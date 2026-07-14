@@ -217,8 +217,14 @@ def _persist_event_for_processing(event: Event) -> StoredEvent:
 def _process_durable_record(record: DurableEventRecord) -> None:
     completed_channels = accepted_channels(record.event_id)
 
-    def record_state(channel: str, state: str) -> None:
-        record_channel_state(record.event_id, channel, state)
+    def record_state(channel: str, state: str, evidence: str | None) -> None:
+        record_channel_state(
+            record.event_id,
+            channel,
+            state,
+            destination_ref=evidence if state == "accepted" else None,
+            error_category=evidence if state in {"failed", "buffered"} else None,
+        )
 
     result = process_stored_event_with_result(
         record.event,

@@ -12,8 +12,8 @@ from httpx import ASGITransport, AsyncClient
 
 import notification_hub.server as server_mod
 from notification_hub.config import PolicyConfig, RetentionPolicy
-from notification_hub.durable_inbox import get_event
-from notification_hub.pipeline import reset_suppression_engine
+from notification_hub.durable_inbox import claim_next_due_event, get_channel_receipts, get_event
+from notification_hub.pipeline import get_suppression_engine, reset_suppression_engine
 from notification_hub.server import app
 
 
@@ -251,6 +251,36 @@ async def test_create_event_persists_explicit_producer(client: AsyncClient) -> N
     assert record.event.producer == "personal-ops"
     assert record.event.source_revision == "fixture-revision-1"
     assert record.event.event_type == "fixture.delivery"
+
+
+async def test_durable_worker_persists_transport_acceptance_receipts(
+    client: AsyncClient,
+) -> None:
+    payload = {
+        "event_id": "personal-ops:fixture:acceptance",
+        "source": "personal-ops",
+        "producer": "personal-ops",
+        "source_revision": "fixture-acceptance-1",
+        "event_type": "fixture.acceptance",
+        "level": "urgent",
+        "title": "Approval required",
+        "body": "Persist transport acceptance evidence.",
+    }
+    response = await client.post("/events", json=payload)
+    assert response.status_code == 201
+    claimed = claim_next_due_event()
+    assert claimed is not None
+
+    with (
+        _mock_channels(),
+        patch.object(get_suppression_engine(), "is_quiet_hours", return_value=False),
+    ):
+        server_mod._process_durable_record(claimed)
+
+    push = get_channel_receipts(claimed.event_id, "push")
+    slack = get_channel_receipts(claimed.event_id, "slack")
+    assert push["acceptance_receipt"] == "terminal-notifier:exit:0"
+    assert slack["acceptance_receipt"] == "slack:webhook:http:2xx"
 
 
 async def test_create_event_conflicting_retry_returns_409(client: AsyncClient) -> None:
