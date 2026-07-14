@@ -2,7 +2,8 @@
 
 This document is the rollout gate for the Project → BridgeDB → personal-ops producer →
 notification-hub → operator pathway. Source and isolated-fixture evidence can pass before runtime
-adoption; live delivery remains unknown until separately approved destination readback succeeds.
+adoption. Gate 2 now has one approved local-push acceptance and destination readback receipt;
+operator observation remains a separate explicit transition.
 
 ## Requirement evidence
 
@@ -75,7 +76,8 @@ dead letters, and channel receipts against the pre-rollout receipt.
 
 - Live Slack webhook success proves provider acceptance only; no live Slack readback adapter has been
   selected or approved.
-- A terminal-notifier zero exit proves local command acceptance, not display or operator observation.
+- A terminal-notifier zero exit proves local command acceptance only. Gate 2 supplements that receipt
+  with `terminal-notifier -list` destination readback; explicit operator observation is still pending.
 - Gate 1 is installed in the running LaunchAgent and machine hooks. Runtime wiring, additive schema
   migration, history reconciliation, local hook-producer acceptance, explicit producer identity,
   and safe per-channel acceptance/error evidence have been verified.
@@ -140,12 +142,31 @@ dead letters, and channel receipts against the pre-rollout receipt.
 - Historical channel rows keep their original generic `push_transport_failed` or
   `slack_transport_failed` evidence. Gate 1 does not rewrite history; future attempts persist bounded,
   secret-safe causes such as notifier timeout, HTTP class, network failure, or rate limiting.
-- The Bridge cursor remains intentionally disabled, so the runtime still uses the Markdown watcher.
-- No synthetic test notification was sent. One real lifecycle event was accidentally accepted by
-  Slack because of the validated destination-contract bypass described above; no destination
-  readback or operator-observation receipt exists.
+- Gate 2 was explicitly approved on 2026-07-14. Before cutover, SQLite-backup-API copies of the inbox
+  and BridgeDB plus the exact LaunchAgent plist were saved under
+  `~/.local/share/notification-hub/backups/2026-07-14T10-45-20Z-gate2-cursor/`; both database copies
+  pass `quick_check` when opened immutable. The cursor initialized at live BridgeDB maximum ID 5778
+  with `consumed=0`, so no historical row was replayed and no channel count changed during bootstrap.
+- The LaunchAgent now sets `NOTIFICATION_HUB_BRIDGE_CURSOR_ENABLED=1`. Runtime health reports
+  `watcher_active=false`, `bridge_cursor_enabled=true`, and `bridge_cursor_active=true`; launchd
+  confirms the flag and the cursor remains at the source maximum. The approved per-machine flag is
+  recognized without weakening detection of any other LaunchAgent drift. That observability repair
+  landed through PR #117 at merge commit `305e877` after 513 tests, Ruff, Pyright, CI, and CodeQL
+  passed.
+- Exactly one controlled local-push smoke was attempted. Deterministic event
+  `notification-hub:live-smoke:gate2-20260714T104520Z` was persisted before transport with
+  `max_attempts=1`, then terminally marked `processed` so it cannot retry. Its push row progressed
+  once through `attempted` and `accepted` with receipt `terminal-notifier:exit:0`, then to `delivered`
+  only after `terminal-notifier -list notification-hub` returned the matching event ID and delivery
+  timestamp `2026-07-14 10:55:08 +0000`. The durable delivery receipt is
+  `terminal-notifier:list:notification-hub:2026-07-14 10:55:08 +0000`; the matching JSONL audit row
+  is retained. No Slack smoke was sent, and no second push attempt was made after the reporting-only
+  script error.
+- The smoke's channel state is `delivered`, not `observed`. Its observation receipt remains null
+  until the operator explicitly confirms the visible notification; no inferred or log-only
+  observation will be written.
 
-The pathway must remain reported as Gate 1 deployed with serialized personal-ops runtime authority
-and the destination-contract bypass repaired. Overall notification-hub health remains degraded by
-retained historical failures and retry backlog. End-to-end destination delivery and operator observation
-remain unproven until separately approved live destination readback resolves those unknowns.
+The pathway is Gate 2 active: the durable Bridge cursor and one live local-push destination readback
+are proven. Overall notification-hub health remains degraded by retained historical failures and retry
+backlog. End-to-end operator observation remains unproven until the operator explicitly confirms the
+visible smoke and the matching observation receipt is recorded.
