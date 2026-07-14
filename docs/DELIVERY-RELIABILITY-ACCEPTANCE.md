@@ -70,9 +70,10 @@ dead letters, and channel receipts against the pre-rollout receipt.
 - Live Slack webhook success proves provider acceptance only; no live Slack readback adapter has been
   selected or approved.
 - A terminal-notifier zero exit proves local command acceptance, not display or operator observation.
-- The source changes are not installed in the running LaunchAgent or machine hooks.
-- The Bridge cursor remains disabled, so current runtime still uses the Markdown watcher.
+- Gate 1 is installed in the running LaunchAgent and machine hooks. Runtime wiring, additive schema
+  migration, history reconciliation, and local producer acceptance have been verified.
+- The Bridge cursor remains intentionally disabled, so the runtime still uses the Markdown watcher.
 - No synthetic live notification has been sent, and no live operator-observation receipt exists.
 
-The pathway must remain reported as staged, not healthy, until these runtime unknowns are resolved by
-an approved rollout and destination readback.
+The pathway must remain reported as Gate-1 deployed but end-to-end delivery unproven until a separately
+approved isolated destination test and live destination readback resolve these unknowns.
