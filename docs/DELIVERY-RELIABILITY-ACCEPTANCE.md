@@ -8,7 +8,7 @@ adoption; live delivery remains unknown until separately approved destination re
 
 | Requirement | Authoritative isolated evidence |
 | --- | --- |
-| Deterministic producer IDs | `test_hooks.py`, `test_bridge_cursor.py`; personal-ops feature commit `89d9b8b` (`notification-hub.test.ts`) |
+| Deterministic producer IDs | `test_hooks.py`, `test_bridge_cursor.py`; personal-ops feature commit `4f37f96` (`notification-hub.test.ts`) |
 | Identical retry / conflicting retry | `test_server.py`, `test_durable_inbox.py`, `test_producer_outbox.py` |
 | HTTP timeout after possible acceptance | `test_producer_outbox.py::test_http_timeout_after_possible_acceptance_retries_idempotently` |
 | Bridge downtime, cursor recovery, gaps, rewrite rejection | `test_bridge_cursor.py` |
@@ -24,7 +24,8 @@ adoption; live delivery remains unknown until separately approved destination re
 | Semantic suppression evidence | `test_suppression.py`, `test_pipeline.py` |
 | Privacy redaction | `test_channels.py` |
 | Additive migration and history preservation | `test_durable_inbox.py`, `test_producer_outbox.py` |
-| Producer terminal disposition without history deletion | personal-ops feature commit `89d9b8b` (`notification-hub.test.ts`) |
+| Producer terminal disposition without history deletion | personal-ops feature commit `4f37f96` (`notification-hub.test.ts`) |
+| CI and smoke isolation from the machine's live hub | personal-ops feature commit `4f37f96` (`verify-harness.ts`, `notification-hub.test.ts`) |
 | No live test destinations or Keychain | `tests/conftest.py`, `test_channels.py`, `test_config.py` |
 | Full isolated chain | `test_delivery_e2e_fixture.py` |
 
@@ -74,10 +75,12 @@ dead letters, and channel receipts against the pre-rollout receipt.
 - Gate 1 is installed in the running LaunchAgent and machine hooks. Runtime wiring, additive schema
   migration, history reconciliation, local hook-producer acceptance, explicit producer identity,
   and safe per-channel acceptance/error evidence have been verified.
-- The personal-ops durable producer repair is published as the single clean feature commit `89d9b8b`
+- The personal-ops durable producer repair is published as the single clean feature commit `4f37f96`
   on `origin/codex/personal-ops-delivery-reliability`. It is not merged, installed, or active; doing
   so is a separate rollout gate because it changes the personal-ops daemon and creates a producer
   outbox under live state.
+- The feature branch's test mode now blocks port 9199 and the verification harness uses an ephemeral
+  loopback hub. The isolated smoke passed with live deterministic personal-ops event counts unchanged.
 - Current live health is degraded by unresolved historical and recent delivery failures. Those rows
   remain retained and actionable; this rollout did not replay, acknowledge, disposition, or clear
   them merely to improve health.
