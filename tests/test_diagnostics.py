@@ -229,6 +229,45 @@ def test_collect_runtime_wiring_renders_home_token_before_comparing(
     )
 
 
+def test_collect_runtime_wiring_allows_only_bridge_cursor_launch_agent_override(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    home = str(Path.home())
+    template_text = f"""<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict>
+<key>Label</key><string>com.saagar.notification-hub</string>
+<key>WorkingDirectory</key><string>{home}/Projects/notification-hub</string>
+<key>EnvironmentVariables</key><dict>
+<key>HOME</key><string>{home}</string>
+</dict></dict></plist>
+"""
+    installed_text = template_text.replace(
+        "</dict></dict></plist>",
+        "<key>NOTIFICATION_HUB_BRIDGE_CURSOR_ENABLED</key><string>1</string>"
+        "</dict></dict></plist>",
+    )
+    launch_agent = tmp_path / "com.saagar.notification-hub.plist"
+    launch_agent_template = tmp_path / "template.plist"
+    launch_agent.write_text(installed_text, encoding="utf-8")
+    launch_agent_template.write_text(template_text, encoding="utf-8")
+
+    monkeypatch.setattr(config_mod, "LAUNCH_AGENT_PLIST", launch_agent)
+    monkeypatch.setattr(config_mod, "LAUNCH_AGENT_TEMPLATE", launch_agent_template)
+
+    result = collect_runtime_wiring()
+
+    assert result["launch_agent_matches_template"] is True
+
+    launch_agent.write_text(
+        installed_text.replace(
+            "</dict></dict></plist>",
+            "<key>UNAPPROVED_RUNTIME_OVERRIDE</key><string>1</string></dict></dict></plist>",
+        ),
+        encoding="utf-8",
+    )
+    assert collect_runtime_wiring()["launch_agent_matches_template"] is False
+
+
 def test_collect_doctor_report_handles_local_api_failure() -> None:
     with (
         patch(

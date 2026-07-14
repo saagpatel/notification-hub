@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import plistlib
 import re
 from pathlib import Path
 from typing import Any, TypedDict, cast
@@ -93,6 +94,38 @@ def _matches_template(installed_path: object, template_path: object) -> bool:
     return _normalize_template_text(installed) == _normalize_template_text(_render_template(template))
 
 
+def _matches_launch_agent_template(installed_path: object, template_path: object) -> bool:
+    """Allow only the approved per-machine Bridge cursor feature override.
+
+    The repo template must remain disabled-by-default.  After an operator approves
+    the live cutover, the installed LaunchAgent may add exactly one environment
+    variable enabling or disabling the cursor without being reported as generic
+    wiring drift.  Every other plist difference remains a mismatch.
+    """
+    installed = _path_text(installed_path)
+    template = _path_text(template_path)
+    if installed is None or template is None:
+        return False
+    try:
+        installed_plist = cast(
+            dict[str, object], plistlib.loads(installed.encode("utf-8"))
+        )
+        template_plist = cast(
+            dict[str, object], plistlib.loads(_render_template(template).encode("utf-8"))
+        )
+    except (plistlib.InvalidFileException, ValueError, TypeError):
+        return _matches_template(installed_path, template_path)
+
+    installed_env_value = installed_plist.get("EnvironmentVariables")
+    if not isinstance(installed_env_value, dict):
+        return installed_plist == template_plist
+    installed_env = cast(dict[str, object], installed_env_value)
+    cursor_value = installed_env.pop("NOTIFICATION_HUB_BRIDGE_CURSOR_ENABLED", None)
+    if cursor_value is not None and str(cursor_value).lower() not in {"0", "1", "false", "true"}:
+        return False
+    return installed_plist == template_plist
+
+
 def _path_executable(path: object) -> bool:
     try:
         return bool(getattr(path, "exists")()) and bool(getattr(path, "stat")().st_mode & 0o111)
@@ -106,7 +139,7 @@ def collect_runtime_wiring() -> RuntimeWiringStatus:
     claude_hook_text = _path_text(config_mod.CLAUDE_HOOK) or ""
     codex_hook_text = _path_text(config_mod.CODEX_HOOK) or ""
     return {
-        "launch_agent_matches_template": _matches_template(
+        "launch_agent_matches_template": _matches_launch_agent_template(
             config_mod.LAUNCH_AGENT_PLIST,
             config_mod.LAUNCH_AGENT_TEMPLATE,
         ),
