@@ -81,14 +81,16 @@ dead letters, and channel receipts against the pre-rollout receipt.
   and safe per-channel acceptance/error evidence have been verified.
 - The personal-ops durable producer, correlated acceptance receipt, isolated-smoke guard, and
   immutable-path health fixes are integrated at commit
-  `282102bb971b3ef77d1b9b66448dfe8603734d6a`. Immutable release
+  `282102bb971b3ef77d1b9b66448dfe8603734d6a` and landed through personal-ops PR #259 at merge
+  commit `5a220a1c04f811a101690a70a11840f3048aeb2c`; the active commit is an ancestor of `main`, and their
+  source trees match. Immutable release
   `579c2a313d39f07ed8eb11890762ebf13fd4253fb90cb9a86c34135ce1c35973` is current, source authority
-  points to that clean commit, activation receipt `4e45d31b-cbc0-4431-86a1-32383a182bb9` reports
+  points to that clean commit, final activation receipt `7f666658-8ef7-4ad1-94ef-00cfd2411d86` reports
   `readback_verified=true`, and CLI, daemon, Codex MCP, Claude MCP, LaunchAgent, and desktop all read
   back the same release with no stale helpers.
 - Pre-activation recovery snapshot `2026-07-14T09-21-28Z` captured schema v36 and passed SQLite
   integrity checks. Post-activation integrity remains `ok`; 56 application tables remain present;
-  sampled history counts were preserved or increased; and the producer outbox contains 10 accepted
+  sampled history counts were preserved or increased; and the producer outbox contains 13 accepted
   events with no queued, rejected, or dead-lettered row.
 - Test mode blocks port 9199, the generation LaunchAgent preserves only explicitly isolated test
   transport variables, and the verification harness uses an ephemeral loopback hub. The full
@@ -115,7 +117,7 @@ dead letters, and channel receipts against the pre-rollout receipt.
   `4e44d1159ac1aca08514fd87ae11a10847ef1f12` after 511 isolated tests, Ruff, Pyright, CI, and CodeQL
   passed. The LaunchAgent was restarted from that clean `main`; runtime wiring is current, and the
   running pure explanation path reports `{log: true, push: false, slack: false}` for the exact
-  normal+log-only daemon-stop shape. No event was posted to prove this runtime decision.
+  normal+log-only daemon-stop shape. That pure explanation proof did not post an event.
 - Pre-restart backups under
   `~/.local/share/notification-hub/backups/2026-07-14T09-34-23Z-required-destinations/` contain
   SQLite-backup-API copies of the inbox and producer outbox plus the exact LaunchAgent plist; both
@@ -123,8 +125,18 @@ dead letters, and channel receipts against the pre-rollout receipt.
   `archive/events-20260714-093512-514698.jsonl`; current plus archive line counts reconcile to 2052,
   so the rotation preserved rather than discarded history.
 - The restart created no channel acceptance. One legacy Codex row was Slack-rate-limited, and one
-  newly queued legacy personal-ops row was quiet-hours buffered for push and Slack-rate-limited;
-  neither has acceptance, delivery, or observation evidence.
+  legacy personal-ops row was initially quiet-hours buffered for push and Slack-rate-limited; neither
+  attempt produced acceptance, delivery, or observation evidence.
+- GitHub CLI briefly detached the authoritative personal-ops source worktree at the old default-branch
+  base after PR #259 merged. The serialized installer reacted by activating immutable release
+  `251646120f51900ed3b172654030530be00da984e53eabc38e8a708423690d0b` from stale commit `1648b91`.
+  The worktree was restored to `282102b`, the already-verified `579c2a...` release was reactivated with
+  six-surface readback, and no data restore or history rewrite was required.
+- That final reactivation supplied live local proof of the repaired contract without a destination
+  smoke: deterministic stop event `personal-ops:daemon.stopping:80b127e586c24e1c0d96c895` was
+  accepted once by the hub and processed with no channel row; deterministic start event
+  `personal-ops:daemon.started:285b8cac695bf70af72f1922` was accepted once and suppressed with no
+  channel row. The producer outbox has matching `http:201:<event-id>` receipts for both.
 - Historical channel rows keep their original generic `push_transport_failed` or
   `slack_transport_failed` evidence. Gate 1 does not rewrite history; future attempts persist bounded,
   secret-safe causes such as notifier timeout, HTTP class, network failure, or rate limiting.
