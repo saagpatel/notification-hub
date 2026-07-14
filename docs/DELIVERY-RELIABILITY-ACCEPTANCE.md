@@ -79,39 +79,29 @@ dead letters, and channel receipts against the pre-rollout receipt.
 - Gate 1 is installed in the running LaunchAgent and machine hooks. Runtime wiring, additive schema
   migration, history reconciliation, local hook-producer acceptance, explicit producer identity,
   and safe per-channel acceptance/error evidence have been verified.
-- The personal-ops durable producer repair and immutable-path health fix are published at integration
-  commit `543da29` on `origin/codex/personal-ops-delivery-activation`. Delivery commit `776c3c4`, based
-  on runtime commit `3f2cf5b`, was transiently activated as immutable release
-  `56a0611abe01687f7d2915ffd238beb3fa2fbcbc00d5bbfb791d70a6a295b14b` with readback verified across
-  CLI, daemon, Codex MCP, Claude MCP, LaunchAgent, and desktop.
-- That activation is historical evidence, not current runtime truth. A concurrent serialized installer
-  has replaced it repeatedly with commits that do not contain the integration branch. The latest
-  observed receipt was release `87f1b54d67afca422239ccce5ff09d98b2de0de444ee83325da822310783393e`
-  from commit `d9dbda8`; operators must consult `personal-ops install generation-status --json` for the
-  moving current value. The durable personal-ops producer must therefore be reported as published and
-  validated but **not currently deployed**.
-- Before activation, SQLite-backup snapshot `2026-07-14T07-10-53Z` captured schema v36 and the live
-  database passed `integrity_check`. After activation, schema v36, 55 application tables, and all
-  sampled append-only history counts were preserved or increased; the new producer outbox also
-  passed `integrity_check`.
+- The personal-ops durable producer, correlated acceptance receipt, isolated-smoke guard, and
+  immutable-path health fixes are integrated at commit
+  `282102bb971b3ef77d1b9b66448dfe8603734d6a`. Immutable release
+  `579c2a313d39f07ed8eb11890762ebf13fd4253fb90cb9a86c34135ce1c35973` is current, source authority
+  points to that clean commit, activation receipt `4e45d31b-cbc0-4431-86a1-32383a182bb9` reports
+  `readback_verified=true`, and CLI, daemon, Codex MCP, Claude MCP, LaunchAgent, and desktop all read
+  back the same release with no stale helpers.
+- Pre-activation recovery snapshot `2026-07-14T09-21-28Z` captured schema v36 and passed SQLite
+  integrity checks. Post-activation integrity remains `ok`; 56 application tables remain present;
+  sampled history counts were preserved or increased; and the producer outbox contains 10 accepted
+  events with no queued, rejected, or dead-lettered row.
 - Test mode blocks port 9199, the generation LaunchAgent preserves only explicitly isolated test
-  transport variables, and the verification harness uses an ephemeral loopback hub. The isolated
-  generation smoke and the directly affected 49-test delivery/generation/runtime matrix passed on
-  the final baseline without a live test destination; the broader matrix passed 105 tests on the
-  immediately preceding baseline.
+  transport variables, and the verification harness uses an ephemeral loopback hub. The full
+  personal-ops isolated suite passed 1188 tests; targeted delivery/generation/runtime tests passed;
+  normal-checkout and metadata-free end-to-end smoke both passed; and GitHub CI passed on the exact
+  activated commit. No test used a live destination.
+- `personal-ops install check --json` is ready at 66 pass / 0 warn / 0 fail, and deep health is ready
+  at 6 pass / 0 warn / 0 fail. The prior immutable-path false degradation is repaired.
 - Activation produced deterministic startup event
-  `personal-ops:daemon.started:06b0217c3ce9597961865175`. The producer stored one matching
-  `http:201:<event-id>` receipt; notification-hub classified it as log-only, recorded no channel rows,
-  and therefore made no push or Slack attempt. A repeated historical attention event reused
-  deterministic ID `personal-ops:operator.attention_item:2e9a32212f723163addcf78a` and was
-  suppressed without a channel row.
-- Current generation readback is current for the competing installer's own commit, but `personal-ops
-  install check --json`
-  reports a contradictory degraded result: immutable release-resolved wrapper targets are classified
-  as a different install layout, and the LaunchAgent's stable `install/current/app` working directory
-  is compared against the resolved release directory. Commit `543da29` repairs and regression-tests
-  this comparison, but it is not deployed. Treat install-check health as untrusted until the competing
-  runtime-authority lane incorporates and activates the integration branch.
+  `personal-ops:daemon.started:17c93b9fc4f34b62118b45db`. The producer stored one matching
+  `http:201:<event-id>` receipt, notification-hub processed it once, and no channel row exists because
+  its explicit destination contract is log-only. A repeated historical attention event still reuses
+  deterministic ID `personal-ops:operator.attention_item:2e9a32212f723163addcf78a`.
 - Current live health is degraded by unresolved historical and recent delivery failures. Those rows
   remain retained and actionable; this rollout did not replay, acknowledge, disposition, or clear
   them merely to improve health.
@@ -121,13 +111,29 @@ dead letters, and channel receipts against the pre-rollout receipt.
   acceptance. This is acceptance evidence only: no delivered or observed receipt exists. The source
   repair makes non-empty producer destination lists authoritative for external-channel eligibility;
   history is preserved and the accepted Slack row is not rewritten or dispositioned.
+- The destination-contract repair was merged through PR #114 at notification-hub commit
+  `4e44d1159ac1aca08514fd87ae11a10847ef1f12` after 511 isolated tests, Ruff, Pyright, CI, and CodeQL
+  passed. The LaunchAgent was restarted from that clean `main`; runtime wiring is current, and the
+  running pure explanation path reports `{log: true, push: false, slack: false}` for the exact
+  normal+log-only daemon-stop shape. No event was posted to prove this runtime decision.
+- Pre-restart backups under
+  `~/.local/share/notification-hub/backups/2026-07-14T09-34-23Z-required-destinations/` contain
+  SQLite-backup-API copies of the inbox and producer outbox plus the exact LaunchAgent plist; both
+  database copies passed integrity checks. Restart-time retention rotated 51 JSONL rows into
+  `archive/events-20260714-093512-514698.jsonl`; current plus archive line counts reconcile to 2052,
+  so the rotation preserved rather than discarded history.
+- The restart created no channel acceptance. One legacy Codex row was Slack-rate-limited, and one
+  newly queued legacy personal-ops row was quiet-hours buffered for push and Slack-rate-limited;
+  neither has acceptance, delivery, or observation evidence.
 - Historical channel rows keep their original generic `push_transport_failed` or
   `slack_transport_failed` evidence. Gate 1 does not rewrite history; future attempts persist bounded,
   secret-safe causes such as notifier timeout, HTTP class, network failure, or rate limiting.
 - The Bridge cursor remains intentionally disabled, so the runtime still uses the Markdown watcher.
-- No synthetic live notification has been sent, and no live operator-observation receipt exists.
+- No synthetic test notification was sent. One real lifecycle event was accidentally accepted by
+  Slack because of the validated destination-contract bypass described above; no destination
+  readback or operator-observation receipt exists.
 
-The pathway must remain reported as Gate-1 notification-hub deployed, with the personal-ops durable
-producer validated but displaced by a competing installer. End-to-end delivery and operator observation
-remain unproven until runtime authority is serialized, the integration branch is activated, and separately
-approved live destination readback resolves these unknowns.
+The pathway must remain reported as Gate 1 deployed with serialized personal-ops runtime authority
+and the destination-contract bypass repaired. Overall notification-hub health remains degraded by
+retained historical failures and retry backlog. End-to-end destination delivery and operator observation
+remain unproven until separately approved live destination readback resolves those unknowns.
