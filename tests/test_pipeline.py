@@ -57,6 +57,7 @@ def _event(
     source: Source = "cc",
     project: str | None = None,
     semantic_dedupe_key: str | None = None,
+    required_destinations: list[str] | None = None,
 ) -> Event:
     return Event(
         source=source,
@@ -65,6 +66,7 @@ def _event(
         body=body,
         project=project,
         semantic_dedupe_key=semantic_dedupe_key,
+        required_destinations=required_destinations or [],
     )
 
 
@@ -133,6 +135,84 @@ class TestClassificationRouting:
         assert stored.classified_level == "info"
         mock_push.assert_not_called()
         mock_slack.assert_not_called()
+
+    def test_required_log_destination_blocks_normal_slack(self, tmp_log: Path) -> None:
+        p1, p2, p3 = _patch_channels()
+        with p1 as mock_push, p2 as mock_slack, p3, _patch_daytime():
+            stored = process_event(
+                _event(
+                    title="Daemon Stopping",
+                    body="personal-ops received SIGTERM",
+                    level="normal",
+                    source="personal-ops",
+                    project="personal-ops",
+                    required_destinations=["log"],
+                )
+            )
+
+        assert stored.classified_level == "normal"
+        mock_push.assert_not_called()
+        mock_slack.assert_not_called()
+        assert tmp_log.exists()
+
+    def test_required_log_destination_blocks_urgent_external_channels(
+        self, tmp_log: Path
+    ) -> None:
+        p1, p2, p3 = _patch_channels()
+        with p1 as mock_push, p2 as mock_slack, p3, _patch_daytime():
+            stored = process_event(
+                _event(
+                    body="Verification failed on main",
+                    required_destinations=["log"],
+                )
+            )
+
+        assert stored.classified_level == "urgent"
+        mock_push.assert_not_called()
+        mock_slack.assert_not_called()
+        assert tmp_log.exists()
+
+    def test_explicit_slack_destination_routes_info_event_only_to_slack(
+        self, tmp_log: Path
+    ) -> None:
+        p1, p2, p3 = _patch_channels()
+        with p1 as mock_push, p2 as mock_slack, p3, _patch_daytime():
+            stored = process_event(
+                _event(
+                    body="Routine status update",
+                    required_destinations=["log", "slack"],
+                )
+            )
+
+        assert stored.classified_level == "info"
+        mock_push.assert_not_called()
+        mock_slack.assert_called_once_with(stored)
+
+    def test_explicit_push_destination_routes_info_event_only_to_push(
+        self, tmp_log: Path
+    ) -> None:
+        p1, p2, p3 = _patch_channels()
+        with p1 as mock_push, p2 as mock_slack, p3, _patch_daytime():
+            stored = process_event(
+                _event(
+                    body="Routine status update",
+                    required_destinations=["log", "push"],
+                )
+            )
+
+        assert stored.classified_level == "info"
+        mock_push.assert_called_once_with(stored)
+        mock_slack.assert_not_called()
+
+    def test_required_destination_contract_is_visible_in_explanation(self) -> None:
+        report = build_event_explanation_report(
+            _event(
+                body="Session complete for ink",
+                required_destinations=["log"],
+            )
+        )
+
+        assert report["delivery"] == {"log": True, "push": False, "slack": False}
 
     def test_keyword_overrides_source_level(self, tmp_log: Path) -> None:
         p1, p2, p3 = _patch_channels()

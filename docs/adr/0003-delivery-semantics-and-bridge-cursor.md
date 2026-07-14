@@ -30,6 +30,11 @@ Delivery is recorded per event and channel with these distinct meanings:
 - `failed`: the last transport attempt failed and remains retryable until exhausted.
 - `dispositioned`: an operator explicitly resolved the channel outcome.
 
+A non-empty producer `required_destinations` list is the exact external-channel contract for that
+event. `push` and `slack` are attempted only when listed and still remain subject to local routing,
+quiet-hours, and rate-limit policy. An empty list preserves legacy severity routing. JSONL audit is
+always retained as the mandatory local evidence boundary, so omitting `log` cannot erase history.
+
 Retries skip channels already in `accepted`, `delivered`, `observed`, or `dispositioned`. Receipt
 state is monotonic, and acceptance, delivery, observation, and terminal-disposition references are
 stored separately so later evidence cannot overwrite earlier evidence. Exhausted events stay
