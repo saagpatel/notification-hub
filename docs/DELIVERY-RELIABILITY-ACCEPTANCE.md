@@ -165,6 +165,34 @@ dead letters, and channel receipts against the pre-rollout receipt.
 - The smoke's channel state is `delivered`, not `observed`. Its observation receipt remains null
   until the operator explicitly confirms the visible notification; no inferred or log-only
   observation will be written.
+- The completion audit found that personal-ops verification fixtures had reused the production
+  `com.d.personal-ops` LaunchAgent label. Temporary fixture paths could therefore replace the live
+  job and disappear after cleanup. The isolation repair landed through personal-ops PR #260 at
+  merge commit `401649119f0e6eadd53e4bd3fd4e3432dd3dc3cd`: fixture plists must match the explicitly
+  isolated label before any `launchctl` mutation, cleanup preserves that label, and readback proves
+  it. The exact landed commit passed the full application suite and verify-smoke without replacing
+  the production label.
+- While the producer was unavailable, deterministic event
+  `personal-ops:daemon.stopping:f38dd82f4969454cc064f627` remained queued with zero attempts. It
+  was not replayed manually. Restoring the daemon drained it once, recording
+  `http:201:personal-ops:daemon.stopping:f38dd82f4969454cc064f627`; notification-hub processed the
+  matching event once with no channel row because `required_destinations=["log"]`. The producer
+  outbox now contains 25 accepted events and no queued, rejected, or dead-lettered row.
+- The restored pre-fix generation repeatedly terminated when a retained meeting-prep packet
+  referenced a deleted calendar event. The runtime repair landed through personal-ops PR #262 at
+  merge commit `b701d3671b2e6341a0d73fd5d926aef8ea4bd1d6`: only the exact stale-event condition is skipped
+  while deriving the current review overlay, and every nonblocking background refresh now has an
+  explicit logged rejection handler. The merge commit and the fully green tested PR commit share
+  source tree `16c166485cc6a136e922e187c1657aad9d044301`.
+- Immutable release `f3725a48aafec4004d366f409c5b21769b7c8792abdfe1b7bb7da5d2779b7526`
+  was reconciled from that clean merge commit. Activation receipt
+  `7b26310f-95e8-48de-8d01-c307d3672614` reports `readback_verified=true`; CLI, daemon, Codex MCP,
+  Claude MCP, LaunchAgent, and desktop all read back the same release with no stale helpers. Deep
+  health is ready at 6 pass / 0 warn / 0 fail. Activation stop event
+  `personal-ops:daemon.stopping:295b5496b5297d58faa2f8fe` and start event
+  `personal-ops:daemon.started:392d80ad728e7ccd05c771a5` each have one matching producer
+  `http:201:<event-id>` receipt and no channel row; history was preserved and no live destination was
+  used during repair or verification.
 
 The pathway is Gate 2 active: the durable Bridge cursor and one live local-push destination readback
 are proven. Overall notification-hub health remains degraded by retained historical failures and retry
