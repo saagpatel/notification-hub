@@ -33,6 +33,7 @@ from notification_hub.durable_inbox import (
     get_event,
     mark_delivered,
     prune_retained_events,
+    recent_channel_acceptance_times,
     reclaim_stale_processing,
     record_channel_state,
     record_processing_deferred,
@@ -397,6 +398,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     _start_time = time.monotonic()
     _configure_retention_status()
     await asyncio.to_thread(init_durable_inbox_schema)
+    recent_acceptances = await asyncio.to_thread(recent_channel_acceptance_times)
+    get_suppression_engine().restore_rate_history(
+        push_times=recent_acceptances["push"],
+        slack_times=recent_acceptances["slack"],
+    )
+    logger.info(
+        "Restored durable channel rate history (push=%d, slack=%d)",
+        len(recent_acceptances["push"]),
+        len(recent_acceptances["slack"]),
+    )
     reclaimed = await asyncio.to_thread(reclaim_stale_processing)
     if reclaimed:
         logger.warning("Reclaimed %d stale durable inbox processing lease(s)", reclaimed)

@@ -197,6 +197,13 @@ class SuppressionEngine:
         self._push_times.clear()
         self._slack_times.clear()
 
+    def restore_rate_history(
+        self, *, push_times: tuple[datetime, ...], slack_times: tuple[datetime, ...]
+    ) -> None:
+        """Restore recent durable acceptance times after a process restart."""
+        self._push_times = self._prune_old(list(push_times), timedelta(hours=1))
+        self._slack_times = self._prune_old(list(slack_times), timedelta(hours=1))
+
     def add_to_overflow(self, event: StoredEvent) -> bool:
         """Add an event to the overflow buffer for later digest delivery."""
         policy = get_policy_config().suppression

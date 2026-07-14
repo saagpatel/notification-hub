@@ -239,6 +239,19 @@ class TestRateLimiting:
             engine.record_slack_at(old)
         assert engine.check_slack_rate() is True
 
+    def test_rate_history_restores_across_restart(self) -> None:
+        now = datetime.now(UTC)
+        after_restart = SuppressionEngine()
+        after_restart.restore_rate_history(
+            push_times=tuple(now for _ in range(5)),
+            slack_times=tuple(now for _ in range(20)),
+        )
+
+        assert after_restart.snapshot()["pushes_last_hour"] == 5
+        assert after_restart.snapshot()["slacks_last_hour"] == 20
+        assert after_restart.check_push_rate() is False
+        assert after_restart.check_slack_rate() is False
+
 
 class TestOverflowBuffer:
     def test_empty_by_default(self) -> None:

@@ -22,6 +22,7 @@ from notification_hub.durable_inbox import (
     init_schema,
     mark_delivered,
     prune_retained_events,
+    recent_channel_acceptance_times,
     reclaim_stale_processing,
     record_channel_state,
     record_processing_deferred,
@@ -188,6 +189,23 @@ def test_channel_receipts_remain_distinct_across_lifecycle(tmp_path: Path) -> No
     assert health["accepted_count"] == 0
     assert health["delivered_count"] == 0
     assert health["dispositioned_count"] == 0
+
+
+def test_recent_channel_acceptance_times_reconstructs_restart_rate_history(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "inbox.sqlite3"
+    now = datetime.now(UTC)
+    for event_id, channel in (("recent-push", "push"), ("recent-slack", "slack")):
+        enqueue_event(_event(event_id), path=db_path)
+        record_channel_state(event_id, channel, "accepted", path=db_path)
+
+    restored = recent_channel_acceptance_times(path=db_path, at=now + timedelta(seconds=1))
+
+    assert len(restored["push"]) == 1
+    assert len(restored["slack"]) == 1
+    assert all(now <= value <= now + timedelta(seconds=1) for value in restored["push"])
+    assert all(now <= value <= now + timedelta(seconds=1) for value in restored["slack"])
 
 
 def test_reclaim_stale_processing_lease(tmp_path: Path) -> None:

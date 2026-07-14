@@ -373,6 +373,27 @@ def get_channel_receipts(
     return {key: cast(str | None, row[key]) for key in row.keys()}
 
 
+def recent_channel_acceptance_times(
+    *, path: Path | None = None, at: datetime | None = None
+) -> dict[str, tuple[datetime, ...]]:
+    """Return accepted push/Slack timestamps from the preceding hour."""
+    end = at or datetime.now(UTC)
+    start = end - timedelta(hours=1)
+    init_schema(path)
+    with _connect(path) as conn:
+        rows = conn.execute(
+            "SELECT channel, accepted_at FROM channel_deliveries "
+            "WHERE channel IN ('push', 'slack') AND accepted_at > ? AND accepted_at <= ? "
+            "ORDER BY accepted_at",
+            (start.isoformat(), end.isoformat()),
+        ).fetchall()
+    result: dict[str, list[datetime]] = {"push": [], "slack": []}
+    for row in rows:
+        channel = str(row["channel"])
+        result[channel].append(datetime.fromisoformat(str(row["accepted_at"])))
+    return {channel: tuple(timestamps) for channel, timestamps in result.items()}
+
+
 def disposition_dead_letter(
     event_id: str,
     disposition: str,

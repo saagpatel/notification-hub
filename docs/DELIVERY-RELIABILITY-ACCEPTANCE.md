@@ -14,6 +14,7 @@ adoption; live delivery remains unknown until separately approved destination re
 | Bridge downtime, cursor recovery, gaps, rewrite rejection | `test_bridge_cursor.py` |
 | Restart before attempt | `test_durable_inbox.py::test_restart_before_first_attempt_preserves_queued_event` |
 | Restart after channel acceptance | `test_durable_inbox.py::test_restart_after_acceptance_before_terminal_receipt_skips_accepted_channel` |
+| Restart preserves hourly channel rate limits | `test_durable_inbox.py::test_recent_channel_acceptance_times_reconstructs_restart_rate_history`, `test_suppression.py::test_rate_history_restores_across_restart` |
 | Quiet-hour and overflow restart | `test_durable_inbox.py`, `test_pipeline.py` |
 | Queue-full honesty | `test_pipeline.py::test_full_quiet_queue_fails_honestly_without_processed_log` |
 | Bounded retry and poison handling | `test_durable_inbox.py`, `test_producer_outbox.py` |
