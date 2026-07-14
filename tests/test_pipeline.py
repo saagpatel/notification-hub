@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
@@ -77,6 +79,33 @@ def _patch_channels():
 def _patch_daytime():
     """Patch suppression engine to report NOT quiet hours (daytime)."""
     return patch.object(get_suppression_engine(), "is_quiet_hours", return_value=False)
+
+
+def test_build_stored_event_preserves_explicit_producer() -> None:
+    stored = build_stored_event(
+        Event(
+            source="personal-ops",
+            producer="personal-ops",
+            level="info",
+            title="Producer envelope",
+            body="Canonical producer field.",
+        )
+    )
+    assert stored.producer == "personal-ops"
+
+
+def test_legacy_producer_digest_contract_is_unchanged() -> None:
+    event = Event(source="codex", level="info", title="Legacy", body="No producer field.")
+    digest_payload = event.model_dump(mode="json", exclude={"event_id", "timestamp"})
+    digest_payload.pop("producer", None)
+    expected = hashlib.sha256(
+        json.dumps(digest_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+    stored = build_stored_event(event)
+
+    assert stored.producer == "codex"
+    assert stored.payload_digest == expected
 
 
 class TestClassificationRouting:

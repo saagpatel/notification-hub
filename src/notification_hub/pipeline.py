@@ -234,9 +234,14 @@ def build_stored_event(event: Event) -> StoredEvent:
     explanation = explain_event(event)
     payload = event.model_dump()
     requested_event_id = payload.pop("event_id", None)
+    payload["producer"] = payload.get("producer") or event.source
     # `timestamp` defaults at validation time, so excluding it keeps a producer retry
     # idempotent even when the producer does not supply a logical timestamp.
     digest_payload = event.model_dump(mode="json", exclude={"event_id", "timestamp"})
+    # Preserve the pre-producer-field digest contract for legacy callers while retaining an
+    # explicit producer in the canonical stored envelope.
+    if digest_payload.get("producer") is None:
+        digest_payload.pop("producer", None)
     payload_digest = hashlib.sha256(
         json.dumps(digest_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()

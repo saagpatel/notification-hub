@@ -231,6 +231,28 @@ async def test_create_event_identical_retry_returns_original_receipt(client: Asy
     assert second.json() == first.json()
 
 
+async def test_create_event_persists_explicit_producer(client: AsyncClient) -> None:
+    payload = {
+        "event_id": "personal-ops:fixture:0001",
+        "source": "personal-ops",
+        "producer": "personal-ops",
+        "source_revision": "fixture-revision-1",
+        "event_type": "fixture.delivery",
+        "level": "info",
+        "title": "Producer envelope",
+        "body": "Producer identity must survive intake.",
+    }
+
+    response = await client.post("/events", json=payload)
+
+    assert response.status_code == 201
+    record = get_event("personal-ops:fixture:0001")
+    assert record is not None
+    assert record.event.producer == "personal-ops"
+    assert record.event.source_revision == "fixture-revision-1"
+    assert record.event.event_type == "fixture.delivery"
+
+
 async def test_create_event_conflicting_retry_returns_409(client: AsyncClient) -> None:
     payload = {
         "event_id": "producer:stable:0002",

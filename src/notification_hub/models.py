@@ -68,6 +68,12 @@ class Event(BaseModel):
         pattern=r"^[A-Za-z0-9._:-]+$",
     )
     causal_parent_id: str | None = Field(default=None, max_length=128)
+    producer: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=100,
+        pattern=r"^[A-Za-z0-9._:-]+$",
+    )
     source_revision: str | None = Field(default=None, max_length=200)
     event_type: str | None = Field(default=None, max_length=100)
     sequence: int | None = Field(default=None, ge=0)
