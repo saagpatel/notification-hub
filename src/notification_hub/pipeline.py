@@ -163,11 +163,26 @@ def explain_event(event: Event) -> EventExplanation:
     """Explain how an event would classify, route, and deliver without side effects."""
     classification = explain_classification(event)
     routing = _resolve_routing(event, classification.output_level)
-    push_delivery = routing.level == "urgent" and routing.allow_push
-    slack_delivery = routing.level in ("urgent", "normal") and routing.allow_slack
+    required_destinations = frozenset(event.required_destinations)
+    has_explicit_destination_contract = bool(required_destinations)
+    push_requested = (
+        "push" in required_destinations
+        if has_explicit_destination_contract
+        else routing.level == "urgent"
+    )
+    slack_requested = (
+        "slack" in required_destinations
+        if has_explicit_destination_contract
+        else routing.level in ("urgent", "normal")
+    )
+    push_delivery = push_requested and routing.allow_push
+    slack_delivery = slack_requested and routing.allow_slack
     return EventExplanation(
         classification=classification,
         routing=routing,
+        # JSONL is the mandatory local audit boundary. A non-empty producer
+        # destination contract constrains external channels; it cannot disable
+        # durable local evidence.
         log_delivery=True,
         push_delivery=push_delivery,
         slack_delivery=slack_delivery,
@@ -475,52 +490,39 @@ def process_stored_event_with_result(
             channel_state_recorder(channel, "accepted" if result.accepted else "failed", evidence)
         return result.accepted
 
-    # Route based on classified level
-    if routing.level == "urgent":
-        # Push: respect quiet hours
-        if routing.allow_push and _suppression.is_quiet_hours():
-            if durable_mode:
-                if channel_state_recorder is not None:
-                    channel_state_recorder("push", "buffered", "quiet_hours")
-                deferred = DeliveryDeferred(_suppression.next_quiet_end(), "push")
-            else:
-                if not _suppression.queue_for_morning(stored):
-                    raise QueueCapacityError("quiet-hours queue full")
-        elif routing.allow_push:
-            delivery_failed = (
-                not deliver(
-                    "push",
-                    _deliver_push_durable
-                    if durable_mode
-                    else lambda value: _deliver_push(value, allow_memory_buffer=True),
-                )
-                or delivery_failed
+    # A non-empty required_destinations list is an exact external-channel
+    # contract. Empty lists retain legacy severity routing. Local routing rules
+    # can still disable a requested channel, and JSONL audit remains mandatory.
+    if explanation.push_delivery and _suppression.is_quiet_hours():
+        if durable_mode:
+            if channel_state_recorder is not None:
+                channel_state_recorder("push", "buffered", "quiet_hours")
+            deferred = DeliveryDeferred(_suppression.next_quiet_end(), "push")
+        else:
+            if not _suppression.queue_for_morning(stored):
+                raise QueueCapacityError("quiet-hours queue full")
+    elif explanation.push_delivery:
+        delivery_failed = (
+            not deliver(
+                "push",
+                _deliver_push_durable
+                if durable_mode
+                else lambda value: _deliver_push(value, allow_memory_buffer=True),
             )
-        # Slack: always (not affected by quiet hours)
-        if routing.allow_slack and (not durable_mode or _slack_delivery_enabled()):
-            delivery_failed = (
-                not deliver(
-                    "slack",
-                    _deliver_slack_durable
-                    if durable_mode
-                    else lambda value: _deliver_slack(value, allow_memory_buffer=True),
-                )
-                or delivery_failed
-            )
+            or delivery_failed
+        )
 
-    elif routing.level == "normal":
-        if routing.allow_slack and (not durable_mode or _slack_delivery_enabled()):
-            delivery_failed = (
-                not deliver(
-                    "slack",
-                    _deliver_slack_durable
-                    if durable_mode
-                    else lambda value: _deliver_slack(value, allow_memory_buffer=True),
-                )
-                or delivery_failed
+    if explanation.slack_delivery and (not durable_mode or _slack_delivery_enabled()):
+        delivery_failed = (
+            not deliver(
+                "slack",
+                _deliver_slack_durable
+                if durable_mode
+                else lambda value: _deliver_slack(value, allow_memory_buffer=True),
             )
+            or delivery_failed
+        )
 
-    # info: JSONL only.
     if deferred is not None:
         raise deferred
     if delivery_failed and raise_on_delivery_failure:

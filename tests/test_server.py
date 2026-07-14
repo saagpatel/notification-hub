@@ -13,7 +13,12 @@ from httpx import ASGITransport, AsyncClient
 import notification_hub.server as server_mod
 from notification_hub.channels import ChannelDeliveryResult
 from notification_hub.config import PolicyConfig, RetentionPolicy
-from notification_hub.durable_inbox import claim_next_due_event, get_channel_receipts, get_event
+from notification_hub.durable_inbox import (
+    claim_next_due_event,
+    get_channel_receipts,
+    get_channel_state,
+    get_event,
+)
 from notification_hub.pipeline import (
     DeliveryError,
     get_suppression_engine,
@@ -295,6 +300,42 @@ async def test_durable_worker_persists_transport_acceptance_receipts(
     slack = get_channel_receipts(claimed.event_id, "slack")
     assert push["acceptance_receipt"] == "terminal-notifier:exit:0"
     assert slack["acceptance_receipt"] == "slack:webhook:http:2xx"
+
+
+async def test_durable_worker_honors_log_only_destination_contract(
+    client: AsyncClient,
+) -> None:
+    payload = {
+        "event_id": "personal-ops:daemon.stopping:fixture",
+        "source": "personal-ops",
+        "producer": "personal-ops",
+        "source_revision": "fixture-stop-1",
+        "event_type": "daemon.stopping",
+        "level": "normal",
+        "title": "Daemon Stopping",
+        "body": "personal-ops received SIGTERM",
+        "project": "personal-ops",
+        "required_destinations": ["log"],
+    }
+    response = await client.post("/events", json=payload)
+    assert response.status_code == 201
+    claimed = claim_next_due_event()
+    assert claimed is not None
+
+    with (
+        patch("notification_hub.pipeline.has_slack_webhook_configured", return_value=True),
+        patch("notification_hub.pipeline.send_push_with_result") as mock_push,
+        patch("notification_hub.pipeline.send_slack_with_result") as mock_slack,
+    ):
+        server_mod._process_durable_record(claimed)
+
+    assert get_channel_state(claimed.event_id, "push") is None
+    assert get_channel_state(claimed.event_id, "slack") is None
+    mock_push.assert_not_called()
+    mock_slack.assert_not_called()
+    record = get_event(claimed.event_id)
+    assert record is not None
+    assert record.status == "processed"
 
 
 async def test_durable_worker_persists_secret_safe_transport_failure_category(
