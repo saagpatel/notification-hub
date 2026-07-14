@@ -8,8 +8,8 @@ adoption; live delivery remains unknown until separately approved destination re
 
 | Requirement | Authoritative isolated evidence |
 | --- | --- |
-| Deterministic producer IDs | `test_hooks.py`, `test_bridge_cursor.py`; personal-ops feature series `4f37f96..754e660` (`notification-hub.test.ts`) |
-| Correlated producer acceptance receipt | personal-ops commit `754e660` (`notification-hub.test.ts`): a 2xx response is accepted only when its nonempty `event_id` matches the submitted deterministic ID |
+| Deterministic producer IDs | `test_hooks.py`, `test_bridge_cursor.py`; personal-ops integration commit `edd0fdd` (`notification-hub.test.ts`) |
+| Correlated producer acceptance receipt | personal-ops integration commit `edd0fdd` (`notification-hub.test.ts`): a 2xx response is accepted only when its nonempty `event_id` matches the submitted deterministic ID |
 | Identical retry / conflicting retry | `test_server.py`, `test_durable_inbox.py`, `test_producer_outbox.py` |
 | HTTP timeout after possible acceptance | `test_producer_outbox.py::test_http_timeout_after_possible_acceptance_retries_idempotently` |
 | Bridge downtime, cursor recovery, gaps, rewrite rejection | `test_bridge_cursor.py` |
@@ -26,9 +26,9 @@ adoption; live delivery remains unknown until separately approved destination re
 | Semantic suppression evidence | `test_suppression.py`, `test_pipeline.py` |
 | Privacy redaction | `test_channels.py` |
 | Additive migration and history preservation | `test_durable_inbox.py`, `test_producer_outbox.py` |
-| Producer terminal disposition without history deletion | personal-ops feature series `4f37f96..754e660` (`notification-hub.test.ts`) |
-| Producer timeout, network, HTTP, and receipt failures are bounded and secret-safe | personal-ops commit `754e660` (`notification-hub.test.ts`) |
-| CI and smoke isolation from the machine's live hub | personal-ops feature series `4f37f96..754e660` (`verify-harness.ts`, `notification-hub.test.ts`) |
+| Producer terminal disposition without history deletion | personal-ops integration commit `edd0fdd` (`notification-hub.test.ts`) |
+| Producer timeout, network, HTTP, and receipt failures are bounded and secret-safe | personal-ops integration commit `edd0fdd` (`notification-hub.test.ts`) |
+| CI and smoke isolation from the machine's live hub | personal-ops integration commit `edd0fdd` (`verify-harness.ts`, `generation-reconcile.test.ts`, `notification-hub.test.ts`) |
 | No live test destinations or Keychain | `tests/conftest.py`, `test_channels.py`, `test_config.py` |
 | Full isolated chain | `test_delivery_e2e_fixture.py` |
 
@@ -78,15 +78,23 @@ dead letters, and channel receipts against the pre-rollout receipt.
 - Gate 1 is installed in the running LaunchAgent and machine hooks. Runtime wiring, additive schema
   migration, history reconciliation, local hook-producer acceptance, explicit producer identity,
   and safe per-channel acceptance/error evidence have been verified.
-- The personal-ops durable producer repair is published as the two-commit feature series
-  `4f37f96..754e660` on `origin/codex/personal-ops-delivery-reliability`. It is not merged, installed,
-  or active; doing
-  so is a separate rollout gate because it changes the personal-ops daemon and creates a producer
-  outbox under live state.
-- The feature branch's test mode now blocks port 9199 and the verification harness uses an ephemeral
-  loopback hub. The isolated smoke passed; fixture isolation was established from the harness wiring
-  and the absence of fixture-like rows in recent live state, not from a raw live-count delta while the
-  existing daemon continued producing unrelated events.
+- The personal-ops durable producer repair is published at integration commit `edd0fdd` on
+  `origin/codex/personal-ops-delivery-activation`, based on the exact pre-activation runtime commit
+  `19adbf6`. Immutable release `63ec6147a86ce29eee7ee1cd0f8ba68111ff38c16cfc2aedbb2c382ede2448f0`
+  was activated with readback verified across CLI, daemon, Codex MCP, Claude MCP, LaunchAgent, and
+  desktop. Rollback points to prior release
+  `83fa46ac74cb47652971a59b623d96417b212f115f08ce8d3068e72cde37cc82`.
+- Before activation, SQLite-backup snapshot `2026-07-14T07-10-53Z` captured schema v36 and the live
+  database passed `integrity_check`. After activation, schema v36, 55 application tables, and all
+  sampled append-only history counts were preserved or increased; the new producer outbox also
+  passed `integrity_check`.
+- Test mode blocks port 9199, the generation LaunchAgent preserves only explicitly isolated test
+  transport variables, and the verification harness uses an ephemeral loopback hub. The isolated
+  generation smoke and the 91-test delivery/generation/database matrix passed without a live test
+  destination.
+- Activation produced one deterministic `daemon.started` event. The producer stored one matching
+  `http:201:<event-id>` receipt; notification-hub classified it as log-only, recorded no channel rows,
+  and therefore made no push or Slack attempt.
 - Current live health is degraded by unresolved historical and recent delivery failures. Those rows
   remain retained and actionable; this rollout did not replay, acknowledge, disposition, or clear
   them merely to improve health.
@@ -96,6 +104,6 @@ dead letters, and channel receipts against the pre-rollout receipt.
 - The Bridge cursor remains intentionally disabled, so the runtime still uses the Markdown watcher.
 - No synthetic live notification has been sent, and no live operator-observation receipt exists.
 
-The pathway must remain reported as Gate-1 notification-hub deployed, personal-ops producer staged,
-and end-to-end delivery unproven until separately approved producer activation and live destination
-readback resolve these unknowns.
+The pathway must remain reported as Gate-1 notification-hub and personal-ops producer deployed, with
+end-to-end delivery and operator observation still unproven until separately approved live destination
+readback resolves these unknowns.
