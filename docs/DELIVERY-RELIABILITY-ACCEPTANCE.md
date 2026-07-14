@@ -2,8 +2,8 @@
 
 This document is the rollout gate for the Project → BridgeDB → personal-ops producer →
 notification-hub → operator pathway. Source and isolated-fixture evidence can pass before runtime
-adoption. Gate 2 now has one approved local-push acceptance and destination readback receipt;
-operator observation remains a separate explicit transition.
+adoption. Gate 2 now has one approved local-push acceptance and destination readback receipt plus
+an explicit operator non-observation disposition.
 
 ## Requirement evidence
 
@@ -162,9 +162,13 @@ dead letters, and channel receipts against the pre-rollout receipt.
   `terminal-notifier:list:notification-hub:2026-07-14 10:55:08 +0000`; the matching JSONL audit row
   is retained. No Slack smoke was sent, and no second push attempt was made after the reporting-only
   script error.
-- The smoke's channel state is `delivered`, not `observed`. Its observation receipt remains null
-  until the operator explicitly confirms the visible notification; no inferred or log-only
-  observation will be written.
+- The operator explicitly reported `not seen`. The smoke therefore transitioned monotonically from
+  `delivered` to `dispositioned` with terminal reference
+  `operator:not-seen:notification-hub:live-smoke:gate2-20260714T104520Z`; it was not marked
+  `observed`, and its observation receipt remains null. The acceptance and destination-readback
+  receipts are unchanged. A SQLite-backup-API snapshot taken immediately before this transition is
+  retained under `~/.local/share/notification-hub/backups/2026-07-14T12-20-24Z-gate2-not-seen/`
+  and passes `quick_check`.
 - The completion audit found that personal-ops verification fixtures had reused the production
   `com.d.personal-ops` LaunchAgent label. Temporary fixture paths could therefore replace the live
   job and disappear after cleanup. The isolation repair landed through personal-ops PR #260 at
@@ -195,6 +199,7 @@ dead letters, and channel receipts against the pre-rollout receipt.
   used during repair or verification.
 
 The pathway is Gate 2 active: the durable Bridge cursor and one live local-push destination readback
-are proven. Overall notification-hub health remains degraded by retained historical failures and retry
-backlog. End-to-end operator observation remains unproven until the operator explicitly confirms the
-visible smoke and the matching observation receipt is recorded.
+are proven. The terminal human outcome is also proven: the operator did not see the smoke, so the
+channel is dispositioned without an observation claim. Overall notification-hub health remains
+degraded by retained historical failures and retry backlog. No second live smoke was authorized or
+sent.
