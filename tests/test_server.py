@@ -142,6 +142,39 @@ async def test_health_details_endpoint(client: AsyncClient) -> None:
     assert data["durable_inbox"]["status"] == "ok"
 
 
+async def test_health_details_propagates_delivery_degradation(client: AsyncClient) -> None:
+    with (
+        patch(
+            "notification_hub.server.collect_runtime_readiness",
+            return_value={
+                "retention": {},
+                "producer_outbox": {"status": "ok"},
+            },
+        ),
+        patch(
+            "notification_hub.server.collect_durable_inbox_health",
+            return_value={"status": "degraded", "unresolved_dead_letter_count": 1},
+        ),
+        patch("notification_hub.server.get_suppression_engine") as mock_engine,
+        patch(
+            "notification_hub.server.get_retention_runtime_status",
+            return_value={
+                "last_checked_at": None,
+                "last_status": "ok",
+                "last_rotated": False,
+                "last_archive_path": None,
+            },
+        ),
+    ):
+        mock_engine.return_value.snapshot.return_value = {}
+        resp = await client.get("/health/details")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "degraded"
+    assert data["durable_inbox"]["status"] == "degraded"
+
+
 async def test_create_event_valid(client: AsyncClient) -> None:
     payload = {
         "source": "cc",

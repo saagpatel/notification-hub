@@ -1936,6 +1936,15 @@ async def _collect_health_details() -> dict[str, object]:
         _durable_inbox_task is not None and not _durable_inbox_task.done()
     )
     base["durable_inbox"] = durable_inbox
+    raw_producer_outbox = readiness.get("producer_outbox")
+    producer_outbox = (
+        cast(dict[str, object], raw_producer_outbox)
+        if isinstance(raw_producer_outbox, dict)
+        else {}
+    )
+    producer_degraded = producer_outbox.get("status", "ok") != "ok"
+    if durable_inbox.get("status") != "ok" or producer_degraded:
+        base["status"] = "degraded"
     return base
 
 
