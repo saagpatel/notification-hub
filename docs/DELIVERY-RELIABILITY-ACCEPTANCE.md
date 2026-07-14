@@ -18,7 +18,7 @@ adoption; live delivery remains unknown until separately approved destination re
 | Queue-full honesty | `test_pipeline.py::test_full_quiet_queue_fails_honestly_without_processed_log` |
 | Bounded retry and poison handling | `test_durable_inbox.py`, `test_producer_outbox.py` |
 | Partial downstream failure | `test_pipeline.py::test_one_channel_acceptance_and_other_channel_failure_are_distinct` |
-| Transport timeout and non-zero exit | `test_channels.py` |
+| Secret-safe transport failure categories and durable persistence | `test_channels.py::test_detailed_result_*`, `test_server.py::test_durable_worker_persists_secret_safe_transport_failure_category` |
 | Acceptance without readback | `test_delivery_readback.py` |
 | Readback and explicit observation | `test_delivery_readback.py`, `test_delivery_e2e_fixture.py` |
 | Semantic suppression evidence | `test_suppression.py`, `test_pipeline.py` |
@@ -84,6 +84,9 @@ dead letters, and channel receipts against the pre-rollout receipt.
 - Current live health is degraded by unresolved historical and recent delivery failures. Those rows
   remain retained and actionable; this rollout did not replay, acknowledge, disposition, or clear
   them merely to improve health.
+- Historical channel rows keep their original generic `push_transport_failed` or
+  `slack_transport_failed` evidence. Gate 1 does not rewrite history; future attempts persist bounded,
+  secret-safe causes such as notifier timeout, HTTP class, network failure, or rate limiting.
 - The Bridge cursor remains intentionally disabled, so the runtime still uses the Markdown watcher.
 - No synthetic live notification has been sent, and no live operator-observation receipt exists.
 

@@ -210,6 +210,7 @@ def init_schema(path: Path | None = None) -> None:
             "observation_receipt",
             "terminal_disposition",
             "backoff_until",
+            "last_error_category",
         ):
             if name not in channel_columns:
                 conn.execute(f"ALTER TABLE channel_deliveries ADD COLUMN {name} TEXT")  # noqa: S608
@@ -362,7 +363,8 @@ def get_channel_receipts(
     with _connect(path) as conn:
         row = conn.execute(
             "SELECT acceptance_receipt, delivery_receipt, observation_receipt, "
-            "terminal_disposition, backoff_until FROM channel_deliveries "
+            "terminal_disposition, last_error_category AS error_category, backoff_until "
+            "FROM channel_deliveries "
             "WHERE event_id = ? AND channel = ?",
             (event_id, channel),
         ).fetchone()

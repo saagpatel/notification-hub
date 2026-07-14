@@ -9,6 +9,7 @@ import re
 import shutil
 import subprocess
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TypedDict
 
@@ -123,6 +124,15 @@ class SlackPayload(TypedDict):
     text: str
 
 
+@dataclass(frozen=True)
+class ChannelDeliveryResult:
+    """Secret-safe transport result suitable for durable delivery evidence."""
+
+    accepted: bool
+    receipt: str | None = None
+    error_category: str | None = None
+
+
 def ensure_log_dir() -> None:
     """Create the events log directory with restricted permissions."""
     EVENTS_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -171,15 +181,15 @@ def read_jsonl(path: Path | None = None) -> list[StoredEvent]:
     return events
 
 
-def send_push(event: StoredEvent) -> bool:
-    """Send a macOS push notification via terminal-notifier. Returns True if sent."""
+def send_push_with_result(event: StoredEvent) -> ChannelDeliveryResult:
+    """Attempt macOS push and return secret-safe durable evidence."""
     if _live_transport_blocked():
         logger.warning("Push blocked by notification-hub test mode for %s", event.event_id)
-        return False
+        return ChannelDeliveryResult(False, error_category="test_transport_blocked")
     notifier = find_push_notifier()
     if notifier is None:
         logger.warning("terminal-notifier not found, skipping push for %s", event.event_id)
-        return False
+        return ChannelDeliveryResult(False, error_category="push_notifier_missing")
 
     event = redact_for_external_delivery(event)
     subtitle = _SOURCE_LABELS.get(event.source, event.source)
@@ -219,15 +229,20 @@ def send_push(event: StoredEvent) -> bool:
                 event.event_id,
                 returncode,
             )
-            return False
+            return ChannelDeliveryResult(False, error_category="push_notifier_nonzero_exit")
         logger.info("Push accepted by terminal-notifier for event %s", event.event_id)
-        return True
+        return ChannelDeliveryResult(True, receipt="terminal-notifier:exit:0")
     except subprocess.TimeoutExpired:
         logger.warning("terminal-notifier timed out for %s", event.event_id)
-        return False
+        return ChannelDeliveryResult(False, error_category="push_notifier_timeout")
     except OSError as exc:
-        logger.warning("Push failed for %s: %s", event.event_id, exc)
-        return False
+        logger.warning("Push failed for %s (%s)", event.event_id, type(exc).__name__)
+        return ChannelDeliveryResult(False, error_category="push_os_error")
+
+
+def send_push(event: StoredEvent) -> bool:
+    """Send a macOS push notification via terminal-notifier. Returns True if accepted."""
+    return send_push_with_result(event).accepted
 
 
 def format_slack_message(event: StoredEvent) -> SlackPayload:
@@ -293,7 +308,9 @@ def _parse_retry_after(resp: httpx.Response) -> float | None:
     return min(max(seconds, 0.0), _SLACK_RETRY_MAX_SECONDS)
 
 
-def _post_to_slack(webhook_url: str, payload: SlackPayload, description: str) -> bool:
+def _post_to_slack_with_result(
+    webhook_url: str, payload: SlackPayload, description: str
+) -> ChannelDeliveryResult:
     """POST a payload to a Slack webhook with bounded retry on transient failures.
 
     Retries network errors, timeouts, HTTP 429, and 5xx with exponential backoff
@@ -308,23 +325,33 @@ def _post_to_slack(webhook_url: str, payload: SlackPayload, description: str) ->
             # Covers all timeout + network variants; retry these.
             transient = True
             reason = type(exc).__name__
+            error_category = (
+                "slack_timeout" if isinstance(exc, httpx.TimeoutException) else "slack_network_error"
+            )
         except Exception as exc:
             # Permanent/setup error (bad URL, unsupported protocol). Log the type
             # only — exception messages can embed the webhook URL (a bearer token).
             logger.warning("Slack %s failed (%s); not retrying", description, type(exc).__name__)
-            return False
+            return ChannelDeliveryResult(False, error_category="slack_configuration_error")
         else:
             if resp.status_code == 200:
                 logger.info("Slack %s sent (attempt %d)", description, attempt)
-                return True
+                return ChannelDeliveryResult(True, receipt="slack:webhook:http:2xx")
             transient = resp.status_code == 429 or resp.status_code >= 500
             reason = f"HTTP {resp.status_code}"
+            error_category = (
+                "slack_http_429"
+                if resp.status_code == 429
+                else "slack_http_5xx"
+                if resp.status_code >= 500
+                else "slack_http_4xx"
+            )
             if resp.status_code == 429:
                 retry_after = _parse_retry_after(resp)
 
         if not transient or attempt == _SLACK_MAX_ATTEMPTS:
             logger.warning("Slack %s failed (%s) after %d attempt(s)", description, reason, attempt)
-            return False
+            return ChannelDeliveryResult(False, error_category=error_category)
 
         delay = (
             retry_after
@@ -340,19 +367,31 @@ def _post_to_slack(webhook_url: str, payload: SlackPayload, description: str) ->
             _SLACK_MAX_ATTEMPTS,
         )
         time.sleep(delay)
-    return False  # defensive: the loop always returns on the final attempt
+    return ChannelDeliveryResult(False, error_category="slack_transport_error")
 
 
-def send_slack(event: StoredEvent) -> bool:
-    """Send a single event to Slack via webhook. Returns True if sent."""
+def _post_to_slack(webhook_url: str, payload: SlackPayload, description: str) -> bool:
+    """Compatibility wrapper returning whether Slack accepted the payload."""
+    return _post_to_slack_with_result(webhook_url, payload, description).accepted
+
+
+def send_slack_with_result(event: StoredEvent) -> ChannelDeliveryResult:
+    """Attempt one Slack delivery and return secret-safe durable evidence."""
     if _live_transport_blocked():
         logger.warning("Slack blocked by notification-hub test mode for %s", event.event_id)
-        return False
+        return ChannelDeliveryResult(False, error_category="test_transport_blocked")
     webhook_url = get_slack_webhook_url()
     if webhook_url is None:
         logger.warning("No Slack webhook configured, skipping event %s", event.event_id)
-        return False
-    return _post_to_slack(webhook_url, format_slack_message(event), f"event {event.event_id}")
+        return ChannelDeliveryResult(False, error_category="slack_not_configured")
+    return _post_to_slack_with_result(
+        webhook_url, format_slack_message(event), f"event {event.event_id}"
+    )
+
+
+def send_slack(event: StoredEvent) -> bool:
+    """Send a single event to Slack via webhook. Returns True if accepted."""
+    return send_slack_with_result(event).accepted
 
 
 def send_slack_digest(events: list[StoredEvent]) -> bool:

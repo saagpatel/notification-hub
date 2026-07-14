@@ -12,6 +12,7 @@ from unittest.mock import patch
 import pytest
 
 import notification_hub.channels as channels_mod
+from notification_hub.channels import ChannelDeliveryResult
 from notification_hub.config import PolicyConfig, RoutingPolicy, RoutingRule, SuppressionPolicy
 from notification_hub.models import Event, Level, Source
 from notification_hub.pipeline import (
@@ -790,8 +791,16 @@ class TestPushFailureResilience:
         event = build_stored_event(_event(body="Approval needed", project="ink"))
         states: list[tuple[str, str, str | None]] = []
         with (
-            patch("notification_hub.pipeline.send_push", return_value=True),
-            patch("notification_hub.pipeline.send_slack", return_value=False),
+            patch(
+                "notification_hub.pipeline.send_push_with_result",
+                return_value=ChannelDeliveryResult(
+                    True, receipt="terminal-notifier:exit:0"
+                ),
+            ),
+            patch(
+                "notification_hub.pipeline.send_slack_with_result",
+                return_value=ChannelDeliveryResult(False, error_category="slack_http_4xx"),
+            ),
             patch("notification_hub.pipeline.send_slack_digest", return_value=True),
             _patch_daytime(),
             pytest.raises(DeliveryError),
@@ -806,8 +815,26 @@ class TestPushFailureResilience:
             )
 
         assert ("push", "accepted", "terminal-notifier:exit:0") in states
-        assert ("slack", "failed", "slack_transport_failed") in states
+        assert ("slack", "failed", "slack_http_4xx") in states
         assert not tmp_log.exists()
+
+    def test_durable_unconfigured_slack_is_not_declared_accepted(self, tmp_log: Path) -> None:
+        event = build_stored_event(_event(body="Session complete", project="ink"))
+        states: list[tuple[str, str, str | None]] = []
+        with patch(
+            "notification_hub.pipeline.has_slack_webhook_configured", return_value=False
+        ):
+            result = process_stored_event_with_result(
+                event,
+                raise_on_delivery_failure=True,
+                durable_mode=True,
+                channel_state_recorder=lambda channel, state, evidence: states.append(
+                    (channel, state, evidence)
+                ),
+            )
+
+        assert result.outcome == "processed"
+        assert states == []
 
     def test_push_failure_doesnt_break_pipeline(self, tmp_log: Path) -> None:
         with (

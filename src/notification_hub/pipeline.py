@@ -11,7 +11,15 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal, cast
 
-from notification_hub.channels import send_push, send_slack, send_slack_digest, write_jsonl
+from notification_hub.channels import (
+    ChannelDeliveryResult,
+    send_push,
+    send_push_with_result,
+    send_slack,
+    send_slack_digest,
+    send_slack_with_result,
+    write_jsonl,
+)
 from notification_hub.classifier import ClassificationDecision, explain_classification
 from notification_hub.config import (
     RoutingRule,
@@ -343,6 +351,32 @@ def _deliver_slack(event: StoredEvent, *, allow_memory_buffer: bool = True) -> b
         return True
 
 
+def _deliver_push_durable(event: StoredEvent) -> ChannelDeliveryResult:
+    """Attempt push without memory buffering and preserve transport evidence."""
+    if not _suppression.check_push_rate():
+        logger.info("Push rate-limited; durable event %s remains pending", event.event_id)
+        return ChannelDeliveryResult(False, error_category="push_rate_limited")
+    result = send_push_with_result(event)
+    if result.accepted:
+        _suppression.record_push()
+    else:
+        logger.warning("Push delivery failed for %s", event.event_id)
+    return result
+
+
+def _deliver_slack_durable(event: StoredEvent) -> ChannelDeliveryResult:
+    """Attempt Slack without memory buffering and preserve transport evidence."""
+    if not _suppression.check_slack_rate():
+        logger.info("Slack rate-limited; durable event %s remains pending", event.event_id)
+        return ChannelDeliveryResult(False, error_category="slack_rate_limited")
+    result = send_slack_with_result(event)
+    if result.accepted:
+        _suppression.record_slack()
+    else:
+        logger.warning("Slack delivery failed for %s", event.event_id)
+    return result
+
+
 def process_stored_event_with_result(
     event: StoredEvent,
     *,
@@ -413,22 +447,33 @@ def process_stored_event_with_result(
     delivery_failed = False
     deferred: DeliveryDeferred | None = None
 
-    def deliver(channel: str, sender: Callable[[StoredEvent], bool]) -> bool:
+    def deliver(
+        channel: str, sender: Callable[[StoredEvent], bool | ChannelDeliveryResult]
+    ) -> bool:
         if channel in skip_channels:
             return True
         if channel_state_recorder is not None:
             channel_state_recorder(channel, "attempted", None)
-        success = sender(stored)
-        if channel_state_recorder is not None:
-            evidence = (
-                "terminal-notifier:exit:0"
-                if success and channel == "push"
-                else "slack:webhook:http:2xx"
-                if success and channel == "slack"
-                else f"{channel}_transport_failed"
+        raw_result = sender(stored)
+        result = (
+            raw_result
+            if isinstance(raw_result, ChannelDeliveryResult)
+            else ChannelDeliveryResult(
+                raw_result,
+                receipt=(
+                    "terminal-notifier:exit:0"
+                    if raw_result and channel == "push"
+                    else "slack:webhook:http:2xx"
+                    if raw_result and channel == "slack"
+                    else None
+                ),
+                error_category=None if raw_result else f"{channel}_transport_failed",
             )
-            channel_state_recorder(channel, "accepted" if success else "failed", evidence)
-        return success
+        )
+        if channel_state_recorder is not None:
+            evidence = result.receipt if result.accepted else result.error_category
+            channel_state_recorder(channel, "accepted" if result.accepted else "failed", evidence)
+        return result.accepted
 
     # Route based on classified level
     if routing.level == "urgent":
@@ -444,26 +489,33 @@ def process_stored_event_with_result(
         elif routing.allow_push:
             delivery_failed = (
                 not deliver(
-                    "push", lambda value: _deliver_push(value, allow_memory_buffer=not durable_mode)
+                    "push",
+                    _deliver_push_durable
+                    if durable_mode
+                    else lambda value: _deliver_push(value, allow_memory_buffer=True),
                 )
                 or delivery_failed
             )
         # Slack: always (not affected by quiet hours)
-        if routing.allow_slack:
+        if routing.allow_slack and (not durable_mode or _slack_delivery_enabled()):
             delivery_failed = (
                 not deliver(
                     "slack",
-                    lambda value: _deliver_slack(value, allow_memory_buffer=not durable_mode),
+                    _deliver_slack_durable
+                    if durable_mode
+                    else lambda value: _deliver_slack(value, allow_memory_buffer=True),
                 )
                 or delivery_failed
             )
 
     elif routing.level == "normal":
-        if routing.allow_slack:
+        if routing.allow_slack and (not durable_mode or _slack_delivery_enabled()):
             delivery_failed = (
                 not deliver(
                     "slack",
-                    lambda value: _deliver_slack(value, allow_memory_buffer=not durable_mode),
+                    _deliver_slack_durable
+                    if durable_mode
+                    else lambda value: _deliver_slack(value, allow_memory_buffer=True),
                 )
                 or delivery_failed
             )

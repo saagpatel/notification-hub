@@ -415,6 +415,7 @@ def test_schema_migration_is_additive_and_preserves_existing_rows(tmp_path: Path
         "observation_receipt",
         "terminal_disposition",
         "backoff_until",
+        "last_error_category",
     } <= channel_columns
     assert version == ("5",)
 

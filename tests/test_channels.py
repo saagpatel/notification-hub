@@ -14,13 +14,16 @@ import pytest
 
 import notification_hub.channels as channels_mod
 from notification_hub.channels import (
+    ChannelDeliveryResult,
     format_slack_digest,
     format_slack_message,
     read_jsonl,
     redact_for_external_delivery,
     send_push,
+    send_push_with_result,
     send_slack,
     send_slack_digest,
+    send_slack_with_result,
     write_jsonl,
 )
 from notification_hub.models import Level, Source, StoredEvent
@@ -227,6 +230,36 @@ class TestSendPush:
             result = send_push(event)
         assert result is False
 
+    @pytest.mark.parametrize(
+        ("side_effect", "return_value", "category"),
+        [
+            (subprocess.TimeoutExpired("tn", 5), None, "push_notifier_timeout"),
+            (OSError("private path must not persist"), None, "push_os_error"),
+            (
+                None,
+                subprocess.CompletedProcess(["/usr/bin/tn"], 7),
+                "push_notifier_nonzero_exit",
+            ),
+        ],
+    )
+    def test_detailed_result_has_secret_safe_failure_category(
+        self,
+        side_effect: Exception | None,
+        return_value: subprocess.CompletedProcess[str] | None,
+        category: str,
+    ) -> None:
+        with (
+            patch("notification_hub.channels.find_push_notifier", return_value="/usr/bin/tn"),
+            patch(
+                "notification_hub.channels.subprocess.run",
+                side_effect=side_effect,
+                return_value=return_value,
+            ),
+        ):
+            result = send_push_with_result(_make_event())
+
+        assert result == ChannelDeliveryResult(False, error_category=category)
+
     def test_truncates_long_body(self) -> None:
         long_body = "x" * 300
         event = _make_event(body=long_body)
@@ -385,6 +418,56 @@ class TestSendSlack:
             result = send_slack(event)
         assert result is False
         assert mock_post.call_count == channels_mod._SLACK_MAX_ATTEMPTS
+
+    @pytest.mark.parametrize(
+        ("status_code", "category", "attempts"),
+        [
+            (400, "slack_http_4xx", 1),
+            (429, "slack_http_429", channels_mod._SLACK_MAX_ATTEMPTS),
+            (503, "slack_http_5xx", channels_mod._SLACK_MAX_ATTEMPTS),
+        ],
+    )
+    def test_detailed_result_categorizes_http_failure_without_response_content(
+        self, status_code: int, category: str, attempts: int
+    ) -> None:
+        response = MagicMock(status_code=status_code)
+        response.headers = {}
+        response.text = "secret response body"
+        with (
+            patch(
+                "notification_hub.channels.get_slack_webhook_url",
+                return_value="https://hooks.slack.com/services/secret-token",
+            ),
+            patch("notification_hub.channels.httpx.post", return_value=response) as mock_post,
+            patch("notification_hub.channels.time.sleep"),
+        ):
+            result = send_slack_with_result(_make_event())
+
+        assert result == ChannelDeliveryResult(False, error_category=category)
+        assert "secret" not in (result.error_category or "")
+        assert mock_post.call_count == attempts
+
+    @pytest.mark.parametrize(
+        ("error", "category"),
+        [
+            (httpx.ReadTimeout("slow"), "slack_timeout"),
+            (httpx.ConnectError("refused"), "slack_network_error"),
+        ],
+    )
+    def test_detailed_result_categorizes_transport_failure(
+        self, error: httpx.TransportError, category: str
+    ) -> None:
+        with (
+            patch(
+                "notification_hub.channels.get_slack_webhook_url",
+                return_value="https://hooks.slack.com/services/secret-token",
+            ),
+            patch("notification_hub.channels.httpx.post", side_effect=error),
+            patch("notification_hub.channels.time.sleep"),
+        ):
+            result = send_slack_with_result(_make_event())
+
+        assert result == ChannelDeliveryResult(False, error_category=category)
 
     @pytest.mark.parametrize(
         "error",

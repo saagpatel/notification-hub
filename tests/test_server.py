@@ -11,9 +11,14 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 import notification_hub.server as server_mod
+from notification_hub.channels import ChannelDeliveryResult
 from notification_hub.config import PolicyConfig, RetentionPolicy
 from notification_hub.durable_inbox import claim_next_due_event, get_channel_receipts, get_event
-from notification_hub.pipeline import get_suppression_engine, reset_suppression_engine
+from notification_hub.pipeline import (
+    DeliveryError,
+    get_suppression_engine,
+    reset_suppression_engine,
+)
 from notification_hub.server import app
 
 
@@ -21,8 +26,17 @@ from notification_hub.server import app
 def _mock_channels():
     """Mock all delivery channels so server tests don't fire real notifications."""
     with (
+        patch("notification_hub.pipeline.has_slack_webhook_configured", return_value=True),
         patch("notification_hub.pipeline.send_push", return_value=True),
+        patch(
+            "notification_hub.pipeline.send_push_with_result",
+            return_value=ChannelDeliveryResult(True, receipt="terminal-notifier:exit:0"),
+        ),
         patch("notification_hub.pipeline.send_slack", return_value=True),
+        patch(
+            "notification_hub.pipeline.send_slack_with_result",
+            return_value=ChannelDeliveryResult(True, receipt="slack:webhook:http:2xx"),
+        ),
         patch("notification_hub.pipeline.send_slack_digest", return_value=True),
     ):
         yield
@@ -281,6 +295,39 @@ async def test_durable_worker_persists_transport_acceptance_receipts(
     slack = get_channel_receipts(claimed.event_id, "slack")
     assert push["acceptance_receipt"] == "terminal-notifier:exit:0"
     assert slack["acceptance_receipt"] == "slack:webhook:http:2xx"
+
+
+async def test_durable_worker_persists_secret_safe_transport_failure_category(
+    client: AsyncClient,
+) -> None:
+    payload = {
+        "event_id": "personal-ops:fixture:slack-400",
+        "source": "personal-ops",
+        "producer": "personal-ops",
+        "source_revision": "fixture-slack-400-1",
+        "event_type": "fixture.failure",
+        "level": "normal",
+        "title": "Fixture only",
+        "body": "Persist a bounded failure category.",
+    }
+    response = await client.post("/events", json=payload)
+    assert response.status_code == 201
+    claimed = claim_next_due_event()
+    assert claimed is not None
+
+    with (
+        patch("notification_hub.pipeline.has_slack_webhook_configured", return_value=True),
+        patch(
+            "notification_hub.pipeline.send_slack_with_result",
+            return_value=ChannelDeliveryResult(False, error_category="slack_http_4xx"),
+        ),
+        pytest.raises(DeliveryError),
+    ):
+        server_mod._process_durable_record(claimed)
+
+    receipts = get_channel_receipts(claimed.event_id, "slack")
+    assert receipts["acceptance_receipt"] is None
+    assert receipts["error_category"] == "slack_http_4xx"
 
 
 async def test_create_event_conflicting_retry_returns_409(client: AsyncClient) -> None:
