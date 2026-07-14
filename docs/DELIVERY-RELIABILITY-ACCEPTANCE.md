@@ -84,9 +84,11 @@ dead letters, and channel receipts against the pre-rollout receipt.
   `56a0611abe01687f7d2915ffd238beb3fa2fbcbc00d5bbfb791d70a6a295b14b` with readback verified across
   CLI, daemon, Codex MCP, Claude MCP, LaunchAgent, and desktop.
 - That activation is historical evidence, not current runtime truth. A concurrent serialized installer
-  later replaced it with release `3de64a4436ee1cd7fa860cfe40a3b208c1334cb7b11c1e3147760e564ba321c2`
-  from commit `24511b8`, which contains neither integration commit. The durable personal-ops producer
-  must therefore be reported as published and validated but **not currently deployed**.
+  has replaced it repeatedly with commits that do not contain the integration branch. The latest
+  observed receipt was release `87f1b54d67afca422239ccce5ff09d98b2de0de444ee83325da822310783393e`
+  from commit `d9dbda8`; operators must consult `personal-ops install generation-status --json` for the
+  moving current value. The durable personal-ops producer must therefore be reported as published and
+  validated but **not currently deployed**.
 - Before activation, SQLite-backup snapshot `2026-07-14T07-10-53Z` captured schema v36 and the live
   database passed `integrity_check`. After activation, schema v36, 55 application tables, and all
   sampled append-only history counts were preserved or increased; the new producer outbox also
@@ -102,7 +104,8 @@ dead letters, and channel receipts against the pre-rollout receipt.
   and therefore made no push or Slack attempt. A repeated historical attention event reused
   deterministic ID `personal-ops:operator.attention_item:2e9a32212f723163addcf78a` and was
   suppressed without a channel row.
-- Current generation readback is current for commit `24511b8`, but `personal-ops install check --json`
+- Current generation readback is current for the competing installer's own commit, but `personal-ops
+  install check --json`
   reports a contradictory degraded result: immutable release-resolved wrapper targets are classified
   as a different install layout, and the LaunchAgent's stable `install/current/app` working directory
   is compared against the resolved release directory. Commit `543da29` repairs and regression-tests
