@@ -29,8 +29,8 @@ provider was contacted, and no notification or provider retry was performed.
 - Full repository suite after merging current `main`: `567 passed`.
 - Ruff: `All checks passed`.
 - Pyright: `0 errors, 0 warnings, 0 informations`.
-- Codex ops smoke, isolated disposable `CODEX_HOME`: `3 passed`, `0 failed`,
-  `0 errors`.
+- Post-merge Codex ops smoke, isolated disposable `CODEX_HOME`: `3 passed`,
+  `0 failed`, `0 errors`.
 - Hook health, isolated report path: `PASS`.
 - Hook tests with read-only control inputs linked into an isolated home:
   `313 tests`, `OK`.
@@ -39,6 +39,9 @@ provider was contacted, and no notification or provider retry was performed.
 - Engraph MCP health/readback: responsive. The vault index was stale and the
   `notification-hub` project bundle was empty; those are operating-state
   warnings, not evidence of this source repair.
+- BridgeDB MCP activity, health, and status calls returned `Transport closed`;
+  current bridge health is therefore `UNKNOWN`. No bridge write or restart was
+  attempted.
 - MCP process posture: `attention` because the report-only sweep observed 532
   live-parent-owned MCP-like processes. It found zero orphan suspects and zero
   stale apply candidates. No cleanup was attempted.
