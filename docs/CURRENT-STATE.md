@@ -1,5 +1,13 @@
 # Current State
 
+## Health Authority Update (2026-07-17)
+
+`GET /health` now includes the durable inbox, producer outbox, and BridgeDB
+cursor runtime state. It returns `status: degraded` when unresolved dead
+letters, stale delivery backlog, producer failures, or cursor polling failures
+make delivery unready. `/health/details` remains the richer diagnostic surface,
+but no longer disagrees with the compact endpoint about top-level status.
+
 Last updated: 2026-07-03 (hook project identity now uses canonical repo names)
 
 ## Project Identity Update (2026-07-03)

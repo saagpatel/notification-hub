@@ -68,6 +68,46 @@ async def test_health_endpoint(client: AsyncClient) -> None:
     assert "events_processed" in data
 
 
+async def test_health_endpoint_propagates_delivery_degradation(client: AsyncClient) -> None:
+    with patch(
+        "notification_hub.server.collect_durable_inbox_health",
+        return_value={"status": "degraded", "unresolved_dead_letter_count": 1},
+    ):
+        resp = await client.get("/health")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "degraded"
+    assert data["durable_inbox"]["unresolved_dead_letter_count"] == 1
+
+
+async def test_health_endpoint_propagates_bridge_cursor_failure(
+    client: AsyncClient,
+) -> None:
+    with (
+        patch("notification_hub.server.bridge_cursor_enabled", return_value=True),
+        patch.object(server_mod, "_bridge_cursor_task") as cursor_task,
+        patch.dict(
+            server_mod._bridge_cursor_status,
+            {
+                "consecutive_failures": 2,
+                "last_success_at": "2026-07-17T00:00:00Z",
+                "last_error_at": "2026-07-17T00:00:04Z",
+                "last_error_type": "OperationalError",
+            },
+            clear=True,
+        ),
+    ):
+        cursor_task.done.return_value = False
+        resp = await client.get("/health")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "degraded"
+    assert data["bridge_cursor_health"]["status"] == "degraded"
+    assert data["bridge_cursor_health"]["consecutive_failures"] == 2
+
+
 async def test_health_details_endpoint(client: AsyncClient) -> None:
     with (
         patch(

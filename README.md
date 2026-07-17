@@ -657,7 +657,9 @@ Runtime change checklist:
   and the durable producer helper are the source of truth for machine-local wiring. Failed hook
   posts remain queued in `~/.local/share/notification-hub/producer-outbox.sqlite3` and retry on a
   later hook invocation; accepted producer receipts remain as history.
-- `GET /health/details` reports whether push delivery is available, whether Slack is configured,
+- `GET /health` reports degraded status when durable inbox delivery, the producer outbox, or the
+  enabled BridgeDB cursor is unhealthy; it is the compact fleet-readiness authority.
+- `GET /health/details` adds whether push delivery is available, whether Slack is configured,
   whether key local files exist, whether a policy config file was loaded, how many policy warnings
   were found, the current retention settings plus the last retention result, and current
   suppression queue counters, and whether runtime wiring matches the checked-in templates, without

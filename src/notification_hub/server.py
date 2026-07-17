@@ -88,6 +88,7 @@ from notification_hub.pipeline import (
     get_suppression_engine,
     process_stored_event_with_result,
 )
+from notification_hub.producer_health import collect_producer_health
 from notification_hub.watcher import ObserverHandle, start_watcher
 
 logger = logging.getLogger(__name__)
@@ -133,6 +134,36 @@ _retention_status: RetentionRuntimeStatus = {
     "last_rotated": False,
     "last_archive_path": None,
 }
+
+
+class BridgeCursorRuntimeStatus(TypedDict):
+    consecutive_failures: int
+    last_success_at: str | None
+    last_error_at: str | None
+    last_error_type: str | None
+
+
+_bridge_cursor_status: BridgeCursorRuntimeStatus = {
+    "consecutive_failures": 0,
+    "last_success_at": None,
+    "last_error_at": None,
+    "last_error_type": None,
+}
+
+
+def _utc_timestamp() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def reset_bridge_cursor_runtime_status() -> None:
+    _bridge_cursor_status.update(
+        {
+            "consecutive_failures": 0,
+            "last_success_at": None,
+            "last_error_at": None,
+            "last_error_type": None,
+        }
+    )
 
 
 def reset_retention_runtime_state() -> None:
@@ -302,6 +333,14 @@ async def _bridge_cursor_loop() -> None:
     while True:
         try:
             result = await asyncio.to_thread(poll_bridge_protected_activity, BRIDGE_DB_PATH)
+            _bridge_cursor_status.update(
+                {
+                    "consecutive_failures": 0,
+                    "last_success_at": _utc_timestamp(),
+                    "last_error_at": None,
+                    "last_error_type": None,
+                }
+            )
             if result.consumed:
                 logger.info(
                     "BridgeDB cursor accepted %d protected event(s); cursor=%d",
@@ -314,7 +353,14 @@ async def _bridge_cursor_loop() -> None:
                     len(result.gap_ranges),
                     result.gap_ranges,
                 )
-        except (OSError, sqlite3.Error, ValueError):
+        except (OSError, sqlite3.Error, ValueError) as exc:
+            _bridge_cursor_status.update(
+                {
+                    "consecutive_failures": _bridge_cursor_status["consecutive_failures"] + 1,
+                    "last_error_at": _utc_timestamp(),
+                    "last_error_type": type(exc).__name__,
+                }
+            )
             logger.exception("BridgeDB cursor poll failed; cursor remains retryable")
         await asyncio.sleep(2)
 
@@ -1933,15 +1979,38 @@ async def create_event(event: Event) -> EventResponse:
 
 @app.get("/health")
 async def health() -> dict[str, object]:
-    """Server health check."""
+    """Server health check including durable delivery and cursor readiness."""
     uptime = time.monotonic() - _start_time if _start_time else 0
+    cursor_enabled = bridge_cursor_enabled()
+    cursor_active = _bridge_cursor_task is not None and not _bridge_cursor_task.done()
+    cursor_healthy = (
+        not cursor_enabled
+        or (cursor_active and _bridge_cursor_status["consecutive_failures"] == 0)
+    )
+    durable_inbox = dict(collect_durable_inbox_health(create=True))
+    producer_outbox = dict(collect_producer_health())
+    status = (
+        "ok"
+        if (
+            cursor_healthy
+            and durable_inbox.get("status") == "ok"
+            and producer_outbox.get("status") == "ok"
+        )
+        else "degraded"
+    )
     return {
-        "status": "ok",
+        "status": status,
         "uptime_seconds": round(uptime, 1),
         "events_processed": _event_count,
         "watcher_active": _observer is not None,
-        "bridge_cursor_enabled": bridge_cursor_enabled(),
-        "bridge_cursor_active": _bridge_cursor_task is not None and not _bridge_cursor_task.done(),
+        "bridge_cursor_enabled": cursor_enabled,
+        "bridge_cursor_active": cursor_active,
+        "bridge_cursor_health": {
+            "status": "ok" if cursor_healthy else "degraded",
+            **_bridge_cursor_status,
+        },
+        "durable_inbox": durable_inbox,
+        "producer_outbox": producer_outbox,
     }
 
 
@@ -1961,17 +2030,16 @@ async def _collect_health_details() -> dict[str, object]:
         "last_rotated": runtime_retention["last_rotated"],
         "last_archive_path": runtime_retention["last_archive_path"],
     }
-    durable_inbox: dict[str, object] = dict(collect_durable_inbox_health(create=True))
+    durable_inbox = cast(dict[str, object], base["durable_inbox"])
     durable_inbox["worker_running"] = (
         _durable_inbox_task is not None and not _durable_inbox_task.done()
     )
     base["durable_inbox"] = durable_inbox
     raw_producer_outbox = readiness.get("producer_outbox")
-    producer_outbox = (
-        cast(dict[str, object], raw_producer_outbox)
-        if isinstance(raw_producer_outbox, dict)
-        else {}
-    )
+    producer_outbox = cast(dict[str, object], base["producer_outbox"])
+    if isinstance(raw_producer_outbox, dict):
+        producer_outbox = cast(dict[str, object], raw_producer_outbox)
+        base["producer_outbox"] = producer_outbox
     producer_degraded = producer_outbox.get("status", "ok") != "ok"
     if durable_inbox.get("status") != "ok" or producer_degraded:
         base["status"] = "degraded"
