@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -127,9 +128,20 @@ def _connect(path: Path | None = None) -> sqlite3.Connection:
     return conn
 
 
+@contextmanager
+def _managed_connection(path: Path | None = None):
+    """Run one transaction and always release its SQLite file descriptors."""
+    conn = _connect(path)
+    try:
+        with conn:
+            yield conn
+    finally:
+        conn.close()
+
+
 def init_schema(path: Path | None = None) -> None:
     """Create the durable inbox schema if it does not exist."""
-    with _connect(path) as conn:
+    with _managed_connection(path) as conn:
         conn.executescript(
             """
             CREATE TABLE IF NOT EXISTS durable_events (
@@ -221,7 +233,7 @@ def init_schema(path: Path | None = None) -> None:
 
 def accepted_channels(event_id: str, *, path: Path | None = None) -> frozenset[str]:
     init_schema(path)
-    with _connect(path) as conn:
+    with _managed_connection(path) as conn:
         rows = conn.execute(
             "SELECT channel FROM channel_deliveries WHERE event_id = ? "
             "AND state IN ('accepted', 'delivered', 'observed', 'dispositioned')",
@@ -261,7 +273,7 @@ def record_channel_state(
         "dispositioned": "dispositioned_at",
     }.get(state)
     init_schema(path)
-    with _connect(path) as conn:
+    with _managed_connection(path) as conn:
         existing = conn.execute(
             "SELECT state FROM channel_deliveries WHERE event_id = ? AND channel = ?",
             (event_id, channel),
@@ -329,7 +341,7 @@ def record_channel_state(
 
 def channel_state_counts(*, path: Path | None = None) -> dict[str, int]:
     init_schema(path)
-    with _connect(path) as conn:
+    with _managed_connection(path) as conn:
         rows = conn.execute(
             "SELECT state, COUNT(*) AS count FROM channel_deliveries GROUP BY state"
         ).fetchall()
@@ -338,7 +350,7 @@ def channel_state_counts(*, path: Path | None = None) -> dict[str, int]:
 
 def channels_in_state(event_id: str, state: str, *, path: Path | None = None) -> frozenset[str]:
     init_schema(path)
-    with _connect(path) as conn:
+    with _managed_connection(path) as conn:
         rows = conn.execute(
             "SELECT channel FROM channel_deliveries WHERE event_id = ? AND state = ?",
             (event_id, state),
@@ -348,7 +360,7 @@ def channels_in_state(event_id: str, state: str, *, path: Path | None = None) ->
 
 def get_channel_state(event_id: str, channel: str, *, path: Path | None = None) -> str | None:
     init_schema(path)
-    with _connect(path) as conn:
+    with _managed_connection(path) as conn:
         row = conn.execute(
             "SELECT state FROM channel_deliveries WHERE event_id = ? AND channel = ?",
             (event_id, channel),
@@ -360,7 +372,7 @@ def get_channel_receipts(
     event_id: str, channel: str, *, path: Path | None = None
 ) -> dict[str, str | None]:
     init_schema(path)
-    with _connect(path) as conn:
+    with _managed_connection(path) as conn:
         row = conn.execute(
             "SELECT acceptance_receipt, delivery_receipt, observation_receipt, "
             "terminal_disposition, last_error_category AS error_category, backoff_until "
@@ -380,7 +392,7 @@ def recent_channel_acceptance_times(
     end = at or datetime.now(UTC)
     start = end - timedelta(hours=1)
     init_schema(path)
-    with _connect(path) as conn:
+    with _managed_connection(path) as conn:
         rows = conn.execute(
             "SELECT channel, accepted_at FROM channel_deliveries "
             "WHERE channel IN ('push', 'slack') AND accepted_at > ? AND accepted_at <= ? "
@@ -405,7 +417,7 @@ def disposition_dead_letter(
     if not disposition.strip() or not disposition_ref.strip():
         raise ValueError("dead-letter disposition and reference must be non-empty")
     init_schema(path)
-    with _connect(path) as conn:
+    with _managed_connection(path) as conn:
         row = conn.execute(
             "SELECT status FROM durable_events WHERE event_id = ?", (event_id,)
         ).fetchone()
@@ -423,7 +435,7 @@ def disposition_dead_letter(
 
 def get_consumer_cursor(consumer: str, *, path: Path | None = None) -> int | None:
     init_schema(path)
-    with _connect(path) as conn:
+    with _managed_connection(path) as conn:
         row = conn.execute(
             "SELECT cursor_value FROM consumer_cursors WHERE consumer = ?", (consumer,)
         ).fetchone()
@@ -433,7 +445,7 @@ def get_consumer_cursor(consumer: str, *, path: Path | None = None) -> int | Non
 def advance_consumer_cursor(consumer: str, cursor_value: int, *, path: Path | None = None) -> None:
     """Advance monotonically; retries after a crash remain safe by event id."""
     init_schema(path)
-    with _connect(path) as conn:
+    with _managed_connection(path) as conn:
         current = conn.execute(
             "SELECT cursor_value FROM consumer_cursors WHERE consumer = ?", (consumer,)
         ).fetchone()
@@ -458,7 +470,7 @@ def enqueue_event(
     now = isoformat()
     payload_json = event.model_dump_json()
     payload_digest = event_payload_digest(event)
-    with _connect(path) as conn:
+    with _managed_connection(path) as conn:
         existing = conn.execute(
             "SELECT payload_json, payload_digest FROM durable_events WHERE event_id = ?",
             (event.event_id,),
@@ -539,7 +551,7 @@ def _record_from_row(row: sqlite3.Row) -> DurableEventRecord:
 
 def get_event(event_id: str, *, path: Path | None = None) -> DurableEventRecord | None:
     init_schema(path)
-    with _connect(path) as conn:
+    with _managed_connection(path) as conn:
         row = conn.execute(
             "SELECT * FROM durable_events WHERE event_id = ?",
             (event_id,),
@@ -623,7 +635,7 @@ def mark_delivered(
     path: Path | None = None,
 ) -> None:
     now = isoformat()
-    with _connect(path) as conn:
+    with _managed_connection(path) as conn:
         conn.execute(
             """
             UPDATE durable_events
@@ -658,7 +670,7 @@ def record_processing_failure(
     now = isoformat(now_dt)
     error_text = str(error)[:1000] or error.__class__.__name__
     error_type = error.__class__.__name__
-    with _connect(path) as conn:
+    with _managed_connection(path) as conn:
         if record.attempt_count >= record.max_attempts:
             conn.execute(
                 """
@@ -702,7 +714,7 @@ def record_processing_deferred(
 ) -> DurableEventStatus:
     """Durably defer without consuming the delivery failure budget."""
     now = isoformat()
-    with _connect(path) as conn:
+    with _managed_connection(path) as conn:
         conn.execute(
             """
             UPDATE durable_events
@@ -728,7 +740,7 @@ def reclaim_stale_processing(
     """Move expired processing leases back to retry so restarts do not drop events."""
     init_schema(path)
     now_iso = isoformat(now)
-    with _connect(path) as conn:
+    with _managed_connection(path) as conn:
         cursor = conn.execute(
             """
             UPDATE durable_events
@@ -758,7 +770,7 @@ def prune_retained_events(
     now_dt = now or utc_now()
     processed_cutoff = isoformat(now_dt - timedelta(days=processed_retention_days))
     dead_letter_cutoff = isoformat(now_dt - timedelta(days=dead_letter_retention_days))
-    with _connect(path) as conn:
+    with _managed_connection(path) as conn:
         deleted_processed = conn.execute(
             """
             DELETE FROM durable_events
@@ -843,7 +855,7 @@ def collect_health(*, path: Path | None = None, create: bool = False) -> Durable
         recent_dead_cutoff = isoformat(
             now_dt - timedelta(seconds=DEAD_LETTER_DEGRADED_AFTER_SECONDS)
         )
-        with _connect(path) as conn:
+        with _managed_connection(path) as conn:
             rows = conn.execute(
                 "SELECT status, COUNT(*) AS count FROM durable_events GROUP BY status"
             ).fetchall()

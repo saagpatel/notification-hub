@@ -251,6 +251,8 @@ class TestRateLimiting:
         assert after_restart.snapshot()["slacks_last_hour"] == 20
         assert after_restart.check_push_rate() is False
         assert after_restart.check_slack_rate() is False
+        assert after_restart.next_push_rate_available() > now + timedelta(minutes=59)
+        assert after_restart.next_slack_rate_available() > now + timedelta(minutes=59)
 
 
 class TestOverflowBuffer:

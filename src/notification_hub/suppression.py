@@ -167,6 +167,24 @@ class SuppressionEngine:
             return False
         return True
 
+    @staticmethod
+    def _next_rate_available(timestamps: list[datetime], limit: int) -> datetime:
+        """Return when one rate-limit slot is guaranteed to be available."""
+        now = datetime.now(UTC)
+        recent = sorted(timestamp for timestamp in timestamps if timestamp > now - timedelta(hours=1))
+        if len(recent) < limit:
+            return now
+        if limit <= 0:
+            return now + timedelta(hours=1)
+        # If policy tightened below the restored history count, wait until enough
+        # entries expire to leave one slot rather than immediately churning backlog.
+        return recent[len(recent) - limit] + timedelta(hours=1, microseconds=1)
+
+    def next_push_rate_available(self) -> datetime:
+        """Return the next time a durable push attempt may proceed."""
+        policy = get_policy_config().suppression
+        return self._next_rate_available(self._push_times, policy.max_push_per_hour)
+
     def record_push(self) -> None:
         """Record a push notification send."""
         self.record_push_at(datetime.now(UTC))
@@ -183,6 +201,11 @@ class SuppressionEngine:
             logger.debug("Slack rate limit reached (%d/hr)", policy.max_slack_per_hour)
             return False
         return True
+
+    def next_slack_rate_available(self) -> datetime:
+        """Return the next time a durable Slack attempt may proceed."""
+        policy = get_policy_config().suppression
+        return self._next_rate_available(self._slack_times, policy.max_slack_per_hour)
 
     def record_slack(self) -> None:
         """Record a Slack message send."""

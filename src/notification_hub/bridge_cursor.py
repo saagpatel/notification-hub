@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from contextlib import closing
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -52,7 +53,7 @@ def poll_bridge_protected_activity(
 ) -> BridgePollResult:
     """Persist protected Bridge rows, advancing only after idempotent acceptance."""
     cursor_before = get_consumer_cursor(CONSUMER_NAME, path=inbox_path)
-    with _connect_read_only(bridge_db_path) as bridge:
+    with closing(_connect_read_only(bridge_db_path)) as bridge:
         max_row = bridge.execute(
             "SELECT COALESCE(MAX(id), 0) AS value FROM activity_log"
         ).fetchone()
