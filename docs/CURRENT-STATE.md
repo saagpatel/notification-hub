@@ -28,6 +28,19 @@ addition to replacing title/body and clearing context. The regression corpus
 checks the real Slack formatters and mocked push arguments; it does not invoke
 an external transport.
 
+## Health Authority Update (2026-07-17)
+
+`GET /health` now includes the durable inbox, producer outbox, and BridgeDB
+cursor runtime state. It returns `status: degraded` when unresolved dead
+letters, stale delivery backlog, producer failures, or cursor polling failures
+make delivery unready. `/health/details` remains the richer diagnostic surface,
+but no longer disagrees with the compact endpoint about top-level status.
+
+Future rate-limit deferrals remain healthy regardless of event age. A scheduled
+retry becomes stale only after its `next_attempt_at` deadline has been overdue
+beyond the backlog threshold; queued events and stale processing leases retain
+their existing degradation behavior.
+
 Last updated: 2026-07-03 (hook project identity now uses canonical repo names)
 
 ## Project Identity Update (2026-07-03)

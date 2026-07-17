@@ -641,7 +641,9 @@ Runtime change checklist:
   /events` returns 201.
 - Local push or Slack rate limits move durable events to `retry_scheduled` until a channel slot is
   available without consuming the event's failure-attempt budget. A channel that was already
-  accepted remains accepted and is skipped on the later retry.
+  accepted remains accepted and is skipped on the later retry. Health treats a future scheduled
+  retry as a healthy deferral and reports degradation only when a due retry remains stuck beyond
+  the backlog threshold.
 - The JSONL event log is processed-event audit history at
   `~/.local/share/notification-hub/events.jsonl`; it is not the durability layer.
 - Slack webhook secrets are read from macOS Keychain and are never stored in repo files.
@@ -657,7 +659,9 @@ Runtime change checklist:
   and the durable producer helper are the source of truth for machine-local wiring. Failed hook
   posts remain queued in `~/.local/share/notification-hub/producer-outbox.sqlite3` and retry on a
   later hook invocation; accepted producer receipts remain as history.
-- `GET /health/details` reports whether push delivery is available, whether Slack is configured,
+- `GET /health` reports degraded status when durable inbox delivery, the producer outbox, or the
+  enabled BridgeDB cursor is unhealthy; it is the compact fleet-readiness authority.
+- `GET /health/details` adds whether push delivery is available, whether Slack is configured,
   whether key local files exist, whether a policy config file was loaded, how many policy warnings
   were found, the current retention settings plus the last retention result, and current
   suppression queue counters, and whether runtime wiring matches the checked-in templates, without

@@ -25,8 +25,8 @@ provider was contacted, and no notification or provider retry was performed.
 
 ## Verification
 
-- Focused notification controls: `195 passed`.
-- Full repository suite: `563 passed`.
+- Focused notification controls: `199 passed`.
+- Full repository suite after merging current `main`: `567 passed`.
 - Ruff: `All checks passed`.
 - Pyright: `0 errors, 0 warnings, 0 informations`.
 - Codex ops smoke, isolated disposable `CODEX_HOME`: `3 passed`, `0 failed`,
@@ -50,8 +50,9 @@ home/cache/database/report state to disposable locations under `/private/tmp`.
 
 - Live daemon activation and external provider acceptance/readback remain
   untested by design.
-- The worktree base predates two current-main health-reporting commits. Those
-  unrelated changes were not merged into this repair.
+- The branch contains current `main` through `12f7df3`; the upstream
+  health-reporting behavior and security controls passed together. The
+  checkpoint remains local and unpublished.
 - Slack incoming webhooks do not expose a provider-side idempotency mechanism or
   unique provider receipt in this integration. A successful HTTP response is
   retained as provider-specific acceptance evidence, not proof of observation.

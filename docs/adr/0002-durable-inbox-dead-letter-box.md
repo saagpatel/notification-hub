@@ -48,8 +48,10 @@ terminal rows. Dead-letter rows are retained for 90 days. Manual redrive is inte
 
 `/health/details`, `notification-hub status`, `logs`, `burn-in`, `verify-runtime`, and `/review`
 surface durable inbox status. Dead letters, stale processing leases, and old queued backlog degrade
-operator health. The JSONL event log remains processed-event audit history and existing JSONL readers
-continue to work.
+operator health. A `retry_scheduled` row with a future `next_attempt_at` is a healthy deferral, even
+when the event itself is old; it degrades health only after its scheduled retry has been overdue
+beyond the backlog threshold. The JSONL event log remains processed-event audit history and
+existing JSONL readers continue to work.
 
 ## Consequences
 
