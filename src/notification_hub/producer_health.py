@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 import time
+from contextlib import closing
 from pathlib import Path
 from typing import TypedDict
 
@@ -43,7 +44,7 @@ def collect_producer_health(path: Path | None = None) -> ProducerOutboxHealth:
             "error": None,
         }
     try:
-        with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as conn:
+        with closing(sqlite3.connect(f"file:{path}?mode=ro", uri=True)) as conn:
             row = conn.execute(
                 "SELECT "
                 "SUM(CASE WHEN state = 'queued' THEN 1 ELSE 0 END), "
