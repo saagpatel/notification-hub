@@ -552,3 +552,60 @@ def test_health_degrades_for_stale_backlog(tmp_path: Path) -> None:
 
     assert health["status"] == "degraded"
     assert health["oldest_pending_age_seconds"] is not None
+
+
+def test_health_ignores_old_retry_scheduled_for_a_future_deferral(tmp_path: Path) -> None:
+    db_path = tmp_path / "inbox.sqlite3"
+    enqueue_event(_event("future-deferral"), path=db_path)
+    claimed = claim_next_due_event(path=db_path)
+    assert claimed is not None
+    retry_at = datetime.now(UTC) + timedelta(minutes=10)
+    record_processing_deferred(claimed, retry_at, path=db_path)
+    old_created_at = (datetime.now(UTC) - timedelta(minutes=10)).isoformat()
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "UPDATE durable_events SET created_at = ? WHERE event_id = ?",
+            (old_created_at, claimed.event_id),
+        )
+
+    health = collect_health(path=db_path)
+
+    assert health["status"] == "ok"
+    assert health["retry_scheduled_count"] == 1
+    assert health["oldest_pending_age_seconds"] is not None
+    assert (
+        health["oldest_pending_age_seconds"]
+        > durable_inbox.BACKLOG_DEGRADED_AFTER_SECONDS
+    )
+    assert health["next_action"] == (
+        "Deferred events are waiting for their scheduled retry times."
+    )
+
+
+def test_health_degrades_for_retry_overdue_beyond_backlog_threshold(tmp_path: Path) -> None:
+    db_path = tmp_path / "inbox.sqlite3"
+    enqueue_event(_event("overdue-retry"), path=db_path)
+    claimed = claim_next_due_event(path=db_path)
+    assert claimed is not None
+    record_processing_deferred(
+        claimed,
+        datetime.now(UTC) + timedelta(minutes=10),
+        path=db_path,
+    )
+    overdue_at = (
+        datetime.now(UTC)
+        - timedelta(seconds=durable_inbox.BACKLOG_DEGRADED_AFTER_SECONDS + 1)
+    ).isoformat()
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "UPDATE durable_events SET next_attempt_at = ? WHERE event_id = ?",
+            (overdue_at, claimed.event_id),
+        )
+
+    health = collect_health(path=db_path)
+
+    assert health["status"] == "degraded"
+    assert health["retry_scheduled_count"] == 1
+    assert health["next_action"] == (
+        "Inspect the durable inbox worker; due events are not draining."
+    )

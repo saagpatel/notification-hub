@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -219,16 +219,25 @@ def test_restart_backlog_pressure_cannot_create_dead_letter_storm(
                 backoff_until=raised.value.retry_at.isoformat(),
             )
 
-    health = collect_health(path=inbox)
-    assert health["retry_scheduled_count"] == backlog_size
-    assert health["dead_letter_count"] == 0
-    assert channel_state_counts(path=inbox) == {"buffered": backlog_size * 2}
     with sqlite3.connect(inbox) as conn:
+        conn.execute(
+            "UPDATE durable_events SET created_at = ? WHERE status = 'retry_scheduled'",
+            ((datetime.now(UTC) - timedelta(minutes=10)).isoformat(),),
+        )
         event_attempts = conn.execute(
             "SELECT COALESCE(SUM(attempt_count), 0) FROM durable_events"
         ).fetchone()[0]
         channel_attempts = conn.execute(
             "SELECT COALESCE(SUM(attempt_count), 0) FROM channel_deliveries"
         ).fetchone()[0]
+
+    health = collect_health(path=inbox)
+    assert health["status"] == "ok"
+    assert health["retry_scheduled_count"] == backlog_size
+    assert health["dead_letter_count"] == 0
+    assert health["next_action"] == (
+        "Deferred events are waiting for their scheduled retry times."
+    )
+    assert channel_state_counts(path=inbox) == {"buffered": backlog_size * 2}
     assert event_attempts == 0
     assert channel_attempts == 0
