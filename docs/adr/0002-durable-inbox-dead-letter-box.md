@@ -32,6 +32,12 @@ JSONL only for processed non-burst events, and then marks terminal state. Transi
 to 5 attempts with exponential backoff capped around 10 minutes. Exhausted events move to the
 dead-letter state.
 
+Local channel throttling is a deferral, not a delivery failure. Rate-limited rows return to
+`retry_scheduled` at the next available channel slot without consuming the event failure budget or
+recording a transport attempt. Per-channel acceptance remains monotonic, so a retry skips any
+channel that already supplied an acceptance receipt. If another channel has a real transport
+failure in the same pass, that failure still consumes one attempt and retains its own backoff.
+
 On startup, expired `processing` leases are reclaimed to `retry_scheduled`, so a restart during
 delivery becomes retryable backlog instead of silent loss.
 

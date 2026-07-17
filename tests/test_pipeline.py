@@ -794,7 +794,12 @@ class TestPushFailureResilience:
         event = build_stored_event(_event(body="Approval needed for draft", project="ink"))
         states: list[tuple[str, str, str | None]] = []
         with (
-            patch("notification_hub.pipeline.send_slack", return_value=True),
+            patch(
+                "notification_hub.pipeline.send_slack_with_result",
+                return_value=ChannelDeliveryResult(
+                    True, receipt="slack:webhook:http:2xx"
+                ),
+            ),
             patch("notification_hub.pipeline.send_slack_digest", return_value=True),
             patch.object(get_suppression_engine(), "is_quiet_hours", return_value=True),
             patch.object(
@@ -821,21 +826,26 @@ class TestPushFailureResilience:
         engine = get_suppression_engine()
         for _ in range(20):
             engine.record_slack()
+        states: list[tuple[str, str, str | None]] = []
 
         with (
-            patch("notification_hub.pipeline.send_slack") as mock_slack,
+            patch("notification_hub.pipeline.send_slack_with_result") as mock_slack,
             patch("notification_hub.pipeline.send_slack_digest") as mock_digest,
             _patch_daytime(),
-            pytest.raises(DeliveryError),
+            pytest.raises(DeliveryDeferred),
         ):
             process_stored_event_with_result(
                 event,
                 raise_on_delivery_failure=True,
                 durable_mode=True,
+                channel_state_recorder=lambda channel, state, evidence: states.append(
+                    (channel, state, evidence)
+                ),
             )
 
         mock_slack.assert_not_called()
         mock_digest.assert_not_called()
+        assert states == [("slack", "buffered", "slack_rate_limited")]
         assert engine.snapshot()["overflow_buffered"] == 0
 
     def test_retry_skips_channel_already_accepted_on_prior_attempt(self, tmp_log: Path) -> None:

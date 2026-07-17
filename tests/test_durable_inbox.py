@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+import notification_hub.durable_inbox as durable_inbox
 from notification_hub.durable_inbox import (
     IdempotencyConflictError,
     accepted_channels,
@@ -30,6 +31,47 @@ from notification_hub.durable_inbox import (
     retry_delay_seconds,
 )
 from notification_hub.models import StoredEvent
+
+
+def test_init_schema_closes_connection(monkeypatch: pytest.MonkeyPatch) -> None:
+    class TrackingConnection:
+        closed = False
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def executescript(self, _sql: str) -> None:
+            pass
+
+        def execute(self, _sql: str):
+            return self
+
+        def fetchall(self):
+            return [
+                (0, "payload_digest"),
+                (1, "dead_letter_disposition"),
+                (2, "dead_letter_disposition_ref"),
+                (3, "dead_letter_dispositioned_at"),
+                (4, "acceptance_receipt"),
+                (5, "delivery_receipt"),
+                (6, "observation_receipt"),
+                (7, "terminal_disposition"),
+                (8, "backoff_until"),
+                (9, "last_error_category"),
+            ]
+
+        def close(self) -> None:
+            self.closed = True
+
+    connection = TrackingConnection()
+    monkeypatch.setattr(durable_inbox, "_connect", lambda _path=None: connection)
+
+    durable_inbox.init_schema()
+
+    assert connection.closed is True
 
 
 def _event(event_id: str = "evt1") -> StoredEvent:

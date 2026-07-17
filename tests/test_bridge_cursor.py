@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+import notification_hub.bridge_cursor as bridge_cursor
 from notification_hub.bridge_cursor import CONSUMER_NAME, poll_bridge_protected_activity
 from notification_hub.durable_inbox import collect_health, get_consumer_cursor, get_event
 
@@ -29,6 +30,44 @@ def _bridge(path: Path) -> None:
               (20, 'codex', '2026-07-12', 'beta', 'shipped row', 'org/beta', '["SHIPPED"]');
             """
         )
+
+
+def test_bridge_poll_closes_read_only_connection(monkeypatch: pytest.MonkeyPatch) -> None:
+    class Cursor:
+        def __init__(self, row=None, rows=None):
+            self.row = row
+            self.rows = rows or []
+
+        def fetchone(self):
+            return self.row
+
+        def fetchall(self):
+            return self.rows
+
+    class TrackingConnection:
+        closed = False
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def execute(self, sql: str, *_args):
+            if "MAX(id)" in sql:
+                return Cursor({"value": 0})
+            return Cursor(rows=[])
+
+        def close(self) -> None:
+            self.closed = True
+
+    connection = TrackingConnection()
+    monkeypatch.setattr(bridge_cursor, "get_consumer_cursor", lambda *_args, **_kwargs: 0)
+    monkeypatch.setattr(bridge_cursor, "_connect_read_only", lambda _path: connection)
+
+    poll_bridge_protected_activity(Path("unused"))
+
+    assert connection.closed is True
 
 
 def test_first_run_bootstraps_without_replaying_history(tmp_path: Path) -> None:

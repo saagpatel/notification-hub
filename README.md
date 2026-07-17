@@ -639,6 +639,9 @@ Runtime change checklist:
   target.
 - Accepted events are committed to `~/.local/share/notification-hub/inbox.sqlite3` before `POST
   /events` returns 201.
+- Local push or Slack rate limits move durable events to `retry_scheduled` until a channel slot is
+  available without consuming the event's failure-attempt budget. A channel that was already
+  accepted remains accepted and is skipped on the later retry.
 - The JSONL event log is processed-event audit history at
   `~/.local/share/notification-hub/events.jsonl`; it is not the durability layer.
 - Slack webhook secrets are read from macOS Keychain and are never stored in repo files.

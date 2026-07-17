@@ -258,6 +258,17 @@ async def _durable_inbox_loop() -> None:
             await asyncio.to_thread(_process_durable_record, record)
         except DeliveryDeferred as exc:
             status = await asyncio.to_thread(record_processing_deferred, record, exc.retry_at)
+            buffered_channels = await asyncio.to_thread(
+                channels_in_state, record.event_id, "buffered"
+            )
+            for channel in buffered_channels:
+                await asyncio.to_thread(
+                    record_channel_state,
+                    record.event_id,
+                    channel,
+                    "buffered",
+                    backoff_until=exc.retry_at.isoformat(),
+                )
             logger.info(
                 "Durable event %s deferred for %s; status=%s retry_at=%s",
                 record.event_id,

@@ -368,9 +368,6 @@ def _deliver_slack(event: StoredEvent, *, allow_memory_buffer: bool = True) -> b
 
 def _deliver_push_durable(event: StoredEvent) -> ChannelDeliveryResult:
     """Attempt push without memory buffering and preserve transport evidence."""
-    if not _suppression.check_push_rate():
-        logger.info("Push rate-limited; durable event %s remains pending", event.event_id)
-        return ChannelDeliveryResult(False, error_category="push_rate_limited")
     result = send_push_with_result(event)
     if result.accepted:
         _suppression.record_push()
@@ -381,9 +378,6 @@ def _deliver_push_durable(event: StoredEvent) -> ChannelDeliveryResult:
 
 def _deliver_slack_durable(event: StoredEvent) -> ChannelDeliveryResult:
     """Attempt Slack without memory buffering and preserve transport evidence."""
-    if not _suppression.check_slack_rate():
-        logger.info("Slack rate-limited; durable event %s remains pending", event.event_id)
-        return ChannelDeliveryResult(False, error_category="slack_rate_limited")
     result = send_slack_with_result(event)
     if result.accepted:
         _suppression.record_slack()
@@ -462,6 +456,14 @@ def process_stored_event_with_result(
     delivery_failed = False
     deferred: DeliveryDeferred | None = None
 
+    def defer_until(retry_at: datetime, channel: str, reason: str) -> None:
+        nonlocal deferred
+        if channel_state_recorder is not None:
+            channel_state_recorder(channel, "buffered", reason)
+        candidate = DeliveryDeferred(retry_at, channel)
+        if deferred is None or candidate.retry_at > deferred.retry_at:
+            deferred = candidate
+
     def deliver(
         channel: str, sender: Callable[[StoredEvent], bool | ChannelDeliveryResult]
     ) -> bool:
@@ -495,38 +497,52 @@ def process_stored_event_with_result(
     # can still disable a requested channel, and JSONL audit remains mandatory.
     if explanation.push_delivery and _suppression.is_quiet_hours():
         if durable_mode:
-            if channel_state_recorder is not None:
-                channel_state_recorder("push", "buffered", "quiet_hours")
-            deferred = DeliveryDeferred(_suppression.next_quiet_end(), "push")
+            defer_until(_suppression.next_quiet_end(), "push", "quiet_hours")
         else:
             if not _suppression.queue_for_morning(stored):
                 raise QueueCapacityError("quiet-hours queue full")
     elif explanation.push_delivery:
-        delivery_failed = (
-            not deliver(
+        if durable_mode and not _suppression.check_push_rate():
+            logger.info("Push rate-limited; durable event %s remains pending", stored.event_id)
+            defer_until(
+                _suppression.next_push_rate_available(),
                 "push",
-                _deliver_push_durable
-                if durable_mode
-                else lambda value: _deliver_push(value, allow_memory_buffer=True),
+                "push_rate_limited",
             )
-            or delivery_failed
-        )
+        else:
+            delivery_failed = (
+                not deliver(
+                    "push",
+                    _deliver_push_durable
+                    if durable_mode
+                    else lambda value: _deliver_push(value, allow_memory_buffer=True),
+                )
+                or delivery_failed
+            )
 
     if explanation.slack_delivery and (not durable_mode or _slack_delivery_enabled()):
-        delivery_failed = (
-            not deliver(
+        if durable_mode and not _suppression.check_slack_rate():
+            logger.info("Slack rate-limited; durable event %s remains pending", stored.event_id)
+            defer_until(
+                _suppression.next_slack_rate_available(),
                 "slack",
-                _deliver_slack_durable
-                if durable_mode
-                else lambda value: _deliver_slack(value, allow_memory_buffer=True),
+                "slack_rate_limited",
             )
-            or delivery_failed
-        )
+        else:
+            delivery_failed = (
+                not deliver(
+                    "slack",
+                    _deliver_slack_durable
+                    if durable_mode
+                    else lambda value: _deliver_slack(value, allow_memory_buffer=True),
+                )
+                or delivery_failed
+            )
 
-    if deferred is not None:
-        raise deferred
     if delivery_failed and raise_on_delivery_failure:
         raise DeliveryError(f"delivery failed for event {stored.event_id}")
+    if deferred is not None:
+        raise deferred
 
     write_jsonl(stored)
     logger.info(
