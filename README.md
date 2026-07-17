@@ -641,7 +641,9 @@ Runtime change checklist:
   /events` returns 201.
 - Local push or Slack rate limits move durable events to `retry_scheduled` until a channel slot is
   available without consuming the event's failure-attempt budget. A channel that was already
-  accepted remains accepted and is skipped on the later retry.
+  accepted remains accepted and is skipped on the later retry. Health treats a future scheduled
+  retry as a healthy deferral and reports degradation only when a due retry remains stuck beyond
+  the backlog threshold.
 - The JSONL event log is processed-event audit history at
   `~/.local/share/notification-hub/events.jsonl`; it is not the durability layer.
 - Slack webhook secrets are read from macOS Keychain and are never stored in repo files.

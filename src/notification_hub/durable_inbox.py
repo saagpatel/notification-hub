@@ -865,6 +865,12 @@ def collect_health(*, path: Path | None = None, create: bool = False) -> Durable
                 SELECT
                     MIN(CASE WHEN status IN ('queued', 'processing', 'retry_scheduled')
                         THEN created_at END) AS oldest_pending_at,
+                    MIN(CASE
+                        WHEN status = 'queued' THEN created_at
+                        WHEN status = 'retry_scheduled'
+                            AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+                            THEN COALESCE(next_attempt_at, created_at)
+                        END) AS oldest_actionable_at,
                     MAX(created_at) AS last_accepted_at,
                     MAX(processed_at) AS last_processed_at,
                     MAX(dead_lettered_at) AS last_dead_lettered_at,
@@ -881,7 +887,7 @@ def collect_health(*, path: Path | None = None, create: bool = False) -> Durable
                         THEN 1 ELSE 0 END) AS stale_processing_count
                 FROM durable_events
                 """,
-                (recent_dead_cutoff, now),
+                (now, recent_dead_cutoff, now),
             ).fetchone()
             delivery_rows = conn.execute(
                 "SELECT state, COUNT(*) AS count FROM channel_deliveries GROUP BY state"
@@ -932,15 +938,17 @@ def collect_health(*, path: Path | None = None, create: bool = False) -> Durable
     unresolved_dead = int(aggregate["unresolved_dead_letter_count"] or 0)
     recent_dead = int(aggregate["recent_dead_letter_count"] or 0)
     oldest_pending_at = cast(str | None, aggregate["oldest_pending_at"])
+    oldest_actionable_at = cast(str | None, aggregate["oldest_actionable_at"])
     stale_processing = int(aggregate["stale_processing_count"] or 0)
     oldest_pending_dt = _parse_iso(oldest_pending_at)
+    oldest_actionable_dt = _parse_iso(oldest_actionable_at)
     oldest_pending_age_seconds: float | None = None
     if oldest_pending_dt is not None:
-        oldest_pending_age_seconds = max(0.0, (utc_now() - oldest_pending_dt).total_seconds())
+        oldest_pending_age_seconds = max(0.0, (now_dt - oldest_pending_dt).total_seconds())
 
     stale_backlog = (
-        oldest_pending_age_seconds is not None
-        and oldest_pending_age_seconds > BACKLOG_DEGRADED_AFTER_SECONDS
+        oldest_actionable_dt is not None
+        and (now_dt - oldest_actionable_dt).total_seconds() > BACKLOG_DEGRADED_AFTER_SECONDS
     )
     if unresolved_dead > 0:
         status = "degraded"
@@ -950,7 +958,10 @@ def collect_health(*, path: Path | None = None, create: bool = False) -> Durable
         next_action = "Reclaim stale processing leases, then verify the worker drains the inbox."
     elif stale_backlog:
         status = "degraded"
-        next_action = "Inspect the durable inbox worker; queued events are not draining."
+        next_action = "Inspect the durable inbox worker; due events are not draining."
+    elif retry_scheduled > 0:
+        status = "ok"
+        next_action = "Deferred events are waiting for their scheduled retry times."
     else:
         status = "ok"
         next_action = "Durable inbox is clear."
