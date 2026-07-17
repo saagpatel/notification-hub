@@ -1,5 +1,33 @@
 # Current State
 
+## Durable Authorization and Ambiguous-Outcome Update (source tree only)
+
+Newly accepted durable events retain the exact destination set authorized at
+intake. Delivery may become more restrictive after a policy reload, but it
+cannot add push or Slack authority that was absent when the producer request
+was accepted. The authenticated producer identity and authorized destination
+ceiling are also bound into the durable idempotency digest, so an event ID
+cannot be replayed under a different principal or a widened route.
+
+Crash recovery now distinguishes a stale lease with no channel attempt from a
+stale lease whose external delivery had already started. The former remains
+retryable. The latter is recorded as `outcome_unknown`, moved to the dead-letter
+queue, and requires reconciliation or an explicit disposition before any
+further delivery action. A stale local-log attempt remains retryable because it
+cannot duplicate an external side effect.
+
+These controls are verified in the source-tree fixture suite only. They have
+not been activated in the live daemon and no notification was sent during
+verification.
+
+External delivery copies now remove complete Authorization bearer values,
+credential-shaped standalone bearer values, recognized Slack and Discord
+webhook URLs, and generic `webhook=` assignments from every free-text field.
+Secret-class copies clear caller-controlled project and session metadata in
+addition to replacing title/body and clearing context. The regression corpus
+checks the real Slack formatters and mocked push arguments; it does not invoke
+an external transport.
+
 Last updated: 2026-07-03 (hook project identity now uses canonical repo names)
 
 ## Project Identity Update (2026-07-03)

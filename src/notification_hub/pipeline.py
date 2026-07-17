@@ -6,7 +6,7 @@ import hashlib
 import json
 import logging
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal, cast
@@ -66,6 +66,10 @@ class PipelineProcessResult:
 
 class DeliveryError(RuntimeError):
     """Raised when required channel delivery fails in durable-worker mode."""
+
+
+class DeliveryOutcomeUnknown(DeliveryError):
+    """Raised when provider acceptance is ambiguous and automatic retry is unsafe."""
 
 
 class DeliveryDeferred(RuntimeError):
@@ -252,9 +256,20 @@ def reset_suppression_engine() -> None:
     _slack_unconfigured_logged = False
 
 
-def build_stored_event(event: Event) -> StoredEvent:
+def build_stored_event(
+    event: Event,
+    *,
+    authorization_principal: str | None = None,
+    authorized_destinations: Collection[str] | None = None,
+) -> StoredEvent:
     """Assign server metadata and the current classified delivery level."""
     explanation = explain_event(event)
+    if authorized_destinations is None:
+        authorized_destinations = {
+            "log",
+            *(("push",) if explanation.push_delivery else ()),
+            *(("slack",) if explanation.slack_delivery else ()),
+        }
     payload = event.model_dump()
     requested_event_id = payload.pop("event_id", None)
     payload["producer"] = payload.get("producer") or event.source
@@ -273,6 +288,8 @@ def build_stored_event(event: Event) -> StoredEvent:
         event_id=requested_event_id or uuid.uuid4().hex[:12],
         classified_level=explanation.routing.level,
         payload_digest=payload_digest,
+        authorization_principal=authorization_principal,
+        authorized_destinations=sorted(set(authorized_destinations)),
     )
 
 
@@ -409,6 +426,19 @@ def process_stored_event_with_result(
     - Rate limit: max 5 push/hr, max 20 Slack/hr, overflow batched into digest
     """
     explanation = explain_event(event)
+    if event.authorized_destinations is not None:
+        authorized_destinations = frozenset(event.authorized_destinations)
+        explanation = EventExplanation(
+            classification=explanation.classification,
+            routing=explanation.routing,
+            log_delivery=True,
+            push_delivery=(
+                explanation.push_delivery and "push" in authorized_destinations
+            ),
+            slack_delivery=(
+                explanation.slack_delivery and "slack" in authorized_destinations
+            ),
+        )
     routing = explanation.routing
     payload = event.model_dump()
     payload["classified_level"] = routing.level
@@ -477,6 +507,7 @@ def process_stored_event_with_result(
             if isinstance(raw_result, ChannelDeliveryResult)
             else ChannelDeliveryResult(
                 raw_result,
+                "accepted" if raw_result else "failed",
                 receipt=(
                     "terminal-notifier:exit:0"
                     if raw_result and channel == "push"
@@ -489,7 +520,19 @@ def process_stored_event_with_result(
         )
         if channel_state_recorder is not None:
             evidence = result.receipt if result.accepted else result.error_category
-            channel_state_recorder(channel, "accepted" if result.accepted else "failed", evidence)
+            state = (
+                "accepted"
+                if result.accepted
+                else "outcome_unknown"
+                if result.outcome == "outcome_unknown"
+                else "failed"
+            )
+            channel_state_recorder(channel, state, evidence)
+        if result.outcome == "outcome_unknown":
+            raise DeliveryOutcomeUnknown(
+                f"{channel} provider outcome is unknown for event {stored.event_id}; "
+                "reconciliation is required before retry"
+            )
         return result.accepted
 
     # A non-empty required_destinations list is an exact external-channel

@@ -11,7 +11,7 @@ import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TypedDict
+from typing import Literal, TypedDict
 
 import httpx
 
@@ -65,8 +65,19 @@ _PUSH_NOTIFIER_CANDIDATES: tuple[str, ...] = (
     "/usr/local/bin/terminal-notifier",
 )
 _LOCAL_PATH_RE = re.compile(r"/(?:Users|private|var|tmp)/[^\s)\]}]+")
+_AUTH_BEARER_RE = re.compile(
+    r"(?i)\bauthorization\b\s*[:=]\s*bearer\s+[^\s,;]+"
+)
+_STANDALONE_BEARER_RE = re.compile(
+    r"(?i)\bbearer\s+[\"']?[A-Za-z0-9._~+/=-]{8,}[\"']?"
+)
+_WEBHOOK_URL_RE = re.compile(
+    r"(?i)https://(?:hooks\.slack\.com/services|"
+    r"(?:discord(?:app)?\.com)/api/webhooks)/[^\s)\]}>'\"]+"
+)
 _SECRET_ASSIGNMENT_RE = re.compile(
-    r"(?i)\b(token|secret|password|api[_-]?key|authorization)\b\s*[:=]\s*[^\s,;]+"
+    r"(?i)\b(token|secret|password|api[_-]?key|authorization|webhook)"
+    r"\b\s*[:=]\s*(?:bearer\s+)?[^\s,;]+"
 )
 
 
@@ -84,12 +95,17 @@ def redact_for_external_delivery(event: StoredEvent) -> StoredEvent:
             update={
                 "title": "Sensitive notification",
                 "body": "Secret-bearing details are available only in the local event record.",
+                "project": None,
+                "session_label": None,
                 "context": {},
             }
         )
 
     def redact_text(value: str) -> str:
         value = _LOCAL_PATH_RE.sub("[local-path-redacted]", value)
+        value = _AUTH_BEARER_RE.sub("authorization=[redacted]", value)
+        value = _STANDALONE_BEARER_RE.sub("bearer [redacted]", value)
+        value = _WEBHOOK_URL_RE.sub("[webhook-redacted]", value)
         return _SECRET_ASSIGNMENT_RE.sub(lambda match: f"{match.group(1)}=[redacted]", value)
 
     return event.model_copy(
@@ -129,8 +145,13 @@ class ChannelDeliveryResult:
     """Secret-safe transport result suitable for durable delivery evidence."""
 
     accepted: bool
+    outcome: Literal["accepted", "failed", "outcome_unknown"] | None = None
     receipt: str | None = None
     error_category: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.outcome is None:
+            object.__setattr__(self, "outcome", "accepted" if self.accepted else "failed")
 
 
 def ensure_log_dir() -> None:
@@ -185,11 +206,11 @@ def send_push_with_result(event: StoredEvent) -> ChannelDeliveryResult:
     """Attempt macOS push and return secret-safe durable evidence."""
     if _live_transport_blocked():
         logger.warning("Push blocked by notification-hub test mode for %s", event.event_id)
-        return ChannelDeliveryResult(False, error_category="test_transport_blocked")
+        return ChannelDeliveryResult(False, "failed", error_category="test_transport_blocked")
     notifier = find_push_notifier()
     if notifier is None:
         logger.warning("terminal-notifier not found, skipping push for %s", event.event_id)
-        return ChannelDeliveryResult(False, error_category="push_notifier_missing")
+        return ChannelDeliveryResult(False, "failed", error_category="push_notifier_missing")
 
     event = redact_for_external_delivery(event)
     subtitle = _SOURCE_LABELS.get(event.source, event.source)
@@ -229,15 +250,17 @@ def send_push_with_result(event: StoredEvent) -> ChannelDeliveryResult:
                 event.event_id,
                 returncode,
             )
-            return ChannelDeliveryResult(False, error_category="push_notifier_nonzero_exit")
+            return ChannelDeliveryResult(
+                False, "failed", error_category="push_notifier_nonzero_exit"
+            )
         logger.info("Push accepted by terminal-notifier for event %s", event.event_id)
-        return ChannelDeliveryResult(True, receipt="terminal-notifier:exit:0")
+        return ChannelDeliveryResult(True, "accepted", receipt="terminal-notifier:exit:0")
     except subprocess.TimeoutExpired:
         logger.warning("terminal-notifier timed out for %s", event.event_id)
-        return ChannelDeliveryResult(False, error_category="push_notifier_timeout")
+        return ChannelDeliveryResult(False, "outcome_unknown", error_category="push_notifier_timeout")
     except OSError as exc:
         logger.warning("Push failed for %s (%s)", event.event_id, type(exc).__name__)
-        return ChannelDeliveryResult(False, error_category="push_os_error")
+        return ChannelDeliveryResult(False, "outcome_unknown", error_category="push_os_error")
 
 
 def send_push(event: StoredEvent) -> bool:
@@ -309,20 +332,42 @@ def _parse_retry_after(resp: httpx.Response) -> float | None:
 
 
 def _post_to_slack_with_result(
-    webhook_url: str, payload: SlackPayload, description: str
+    webhook_url: str,
+    payload: SlackPayload,
+    description: str,
+    *,
+    provider_idempotency_key: str = "legacy-no-provider-key",
 ) -> ChannelDeliveryResult:
-    """POST a payload to a Slack webhook with bounded retry on transient failures.
+    """POST once unless the failure proves provider acceptance was impossible.
 
-    Retries network errors, timeouts, HTTP 429, and 5xx with exponential backoff
-    (honoring Retry-After on 429). Returns immediately on a 200 or a permanent
-    client error (other 4xx). Returns True only when Slack accepts the payload.
+    Connection-establishment failures and HTTP 429 remain bounded-retry cases.
+    Read/write/protocol failures plus HTTP 408/5xx are outcome-unknown and return
+    immediately for reconciliation. Other 4xx responses are terminal failures.
     """
     for attempt in range(1, _SLACK_MAX_ATTEMPTS + 1):
         retry_after: float | None = None
         try:
             resp = httpx.post(webhook_url, json=payload, timeout=_SLACK_TIMEOUT_SECONDS)
+        except (
+            httpx.ReadTimeout,
+            httpx.WriteTimeout,
+            httpx.ReadError,
+            httpx.WriteError,
+            httpx.RemoteProtocolError,
+        ) as exc:
+            logger.warning(
+                "Slack %s has ambiguous transport outcome (%s); reconciliation required",
+                description,
+                type(exc).__name__,
+            )
+            return ChannelDeliveryResult(
+                False,
+                "outcome_unknown",
+                error_category="slack_outcome_unknown",
+            )
         except httpx.TransportError as exc:
-            # Covers all timeout + network variants; retry these.
+            # Connection establishment failures are safe to retry because no
+            # provider acceptance could have occurred.
             transient = True
             reason = type(exc).__name__
             error_category = (
@@ -332,12 +377,29 @@ def _post_to_slack_with_result(
             # Permanent/setup error (bad URL, unsupported protocol). Log the type
             # only — exception messages can embed the webhook URL (a bearer token).
             logger.warning("Slack %s failed (%s); not retrying", description, type(exc).__name__)
-            return ChannelDeliveryResult(False, error_category="slack_configuration_error")
+            return ChannelDeliveryResult(
+                False, "failed", error_category="slack_configuration_error"
+            )
         else:
             if resp.status_code == 200:
                 logger.info("Slack %s sent (attempt %d)", description, attempt)
-                return ChannelDeliveryResult(True, receipt="slack:webhook:http:2xx")
-            transient = resp.status_code == 429 or resp.status_code >= 500
+                return ChannelDeliveryResult(
+                    True,
+                    "accepted",
+                    receipt=f"slack:webhook:http:2xx:{provider_idempotency_key}",
+                )
+            if resp.status_code == 408 or resp.status_code >= 500:
+                logger.warning(
+                    "Slack %s returned ambiguous HTTP %d; reconciliation required",
+                    description,
+                    resp.status_code,
+                )
+                return ChannelDeliveryResult(
+                    False,
+                    "outcome_unknown",
+                    error_category="slack_outcome_unknown",
+                )
+            transient = resp.status_code == 429
             reason = f"HTTP {resp.status_code}"
             error_category = (
                 "slack_http_429"
@@ -351,7 +413,7 @@ def _post_to_slack_with_result(
 
         if not transient or attempt == _SLACK_MAX_ATTEMPTS:
             logger.warning("Slack %s failed (%s) after %d attempt(s)", description, reason, attempt)
-            return ChannelDeliveryResult(False, error_category=error_category)
+            return ChannelDeliveryResult(False, "failed", error_category=error_category)
 
         delay = (
             retry_after
@@ -367,7 +429,7 @@ def _post_to_slack_with_result(
             _SLACK_MAX_ATTEMPTS,
         )
         time.sleep(delay)
-    return ChannelDeliveryResult(False, error_category="slack_transport_error")
+    return ChannelDeliveryResult(False, "failed", error_category="slack_transport_error")
 
 
 def _post_to_slack(webhook_url: str, payload: SlackPayload, description: str) -> bool:
@@ -379,13 +441,16 @@ def send_slack_with_result(event: StoredEvent) -> ChannelDeliveryResult:
     """Attempt one Slack delivery and return secret-safe durable evidence."""
     if _live_transport_blocked():
         logger.warning("Slack blocked by notification-hub test mode for %s", event.event_id)
-        return ChannelDeliveryResult(False, error_category="test_transport_blocked")
+        return ChannelDeliveryResult(False, "failed", error_category="test_transport_blocked")
     webhook_url = get_slack_webhook_url()
     if webhook_url is None:
         logger.warning("No Slack webhook configured, skipping event %s", event.event_id)
-        return ChannelDeliveryResult(False, error_category="slack_not_configured")
+        return ChannelDeliveryResult(False, "failed", error_category="slack_not_configured")
     return _post_to_slack_with_result(
-        webhook_url, format_slack_message(event), f"event {event.event_id}"
+        webhook_url,
+        format_slack_message(event),
+        f"event {event.event_id}",
+        provider_idempotency_key=event.event_id,
     )
 
 

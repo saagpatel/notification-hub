@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 
@@ -23,7 +24,14 @@ from notification_hub.pipeline import reset_suppression_engine
 @pytest.fixture
 async def client() -> AsyncIterator[AsyncClient]:
     transport = ASGITransport(app=server_mod.app)
-    async with AsyncClient(transport=transport, base_url="http://test") as c:
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        headers={
+            "Authorization": "Bearer fixture-producer-token",
+            "X-Notification-Producer": "fixture-producer",
+        },
+    ) as c:
         yield c
 
 
@@ -36,6 +44,41 @@ def isolate_runtime_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> It
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
     monkeypatch.setenv("NOTIFICATION_HUB_TEST_MODE", "1")
+    monkeypatch.setenv(
+        "NOTIFICATION_HUB_PRODUCERS_JSON",
+        json.dumps(
+            {
+                "fixture-producer": {
+                    "token": "fixture-producer-token",
+                    "sources": [
+                        "codex",
+                        "cc",
+                        "claude_ai",
+                        "bridge_watcher",
+                        "personal-ops",
+                        "notion-os",
+                    ],
+                    "destinations": ["log", "push", "slack"],
+                }
+            }
+        ),
+    )
+    for source in (
+        "CODEX",
+        "CC",
+        "CLAUDE_AI",
+        "BRIDGE_WATCHER",
+        "PERSONAL_OPS",
+        "NOTION_OS",
+    ):
+        monkeypatch.setenv(
+            f"NOTIFICATION_HUB_PRODUCER_TOKEN_{source}",
+            "fixture-producer-token",
+        )
+        monkeypatch.setenv(
+            f"NOTIFICATION_HUB_PRODUCER_ID_{source}",
+            "fixture-producer",
+        )
     events_dir = tmp_path / "notification-hub"
     events_log = events_dir / "events.jsonl"
     durable_inbox_db = events_dir / "inbox.sqlite3"

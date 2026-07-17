@@ -14,7 +14,6 @@ import pytest
 
 import notification_hub.channels as channels_mod
 from notification_hub.channels import (
-    ChannelDeliveryResult,
     format_slack_digest,
     format_slack_message,
     read_jsonl,
@@ -258,7 +257,8 @@ class TestSendPush:
         ):
             result = send_push_with_result(_make_event())
 
-        assert result == ChannelDeliveryResult(False, error_category=category)
+        assert result.accepted is False
+        assert result.error_category == category
 
     def test_truncates_long_body(self) -> None:
         long_body = "x" * 300
@@ -272,6 +272,30 @@ class TestSendPush:
         msg_idx = cmd.index("-message") + 1
         assert len(cmd[msg_idx]) == 200
         assert cmd[msg_idx].endswith("...")
+
+    def test_external_push_arguments_contain_no_credential_markers(self) -> None:
+        event = _make_event(
+            title="Authorization: Bearer fixture-authz-secret",
+            body="Retry https://hooks.slack.com/services/T/B/fixture-slack-secret",
+            project="webhook=https://example.test/hooks/fixture-generic-secret",
+        )
+        with (
+            patch("notification_hub.channels.find_push_notifier", return_value="/usr/bin/tn"),
+            patch(
+                "notification_hub.channels.subprocess.run",
+                return_value=subprocess.CompletedProcess(args=[], returncode=0),
+            ) as mock_run,
+        ):
+            result = send_push_with_result(event)
+
+        assert result.accepted is True
+        serialized_args = json.dumps(mock_run.call_args.args[0])
+        for marker in (
+            "fixture-authz-secret",
+            "fixture-slack-secret",
+            "fixture-generic-secret",
+        ):
+            assert marker not in serialized_args
 
 
 class TestSlackFormatting:
@@ -300,6 +324,76 @@ class TestSlackFormatting:
         assert redacted.title == "Sensitive notification"
         assert "hunter2" not in redacted.body
         assert redacted.context == {}
+
+    @pytest.mark.parametrize(
+        ("value", "marker"),
+        [
+            ("Authorization: Bearer fixture-authz-secret", "fixture-authz-secret"),
+            ("AUTHORIZATION=BEARER fixture-equals-secret", "fixture-equals-secret"),
+            ("Mixed case BeArEr fixture-standalone-secret", "fixture-standalone-secret"),
+            ("Quoted BeArEr 'fixture-quoted-secret'", "fixture-quoted-secret"),
+            ("Authorization: Bearer\nfixture-line-secret", "fixture-line-secret"),
+            (
+                "https://hooks.slack.com/services/T/B/fixture-slack-secret?x=1",
+                "fixture-slack-secret",
+            ),
+            (
+                "https://discord.com/api/webhooks/123/fixture-discord-secret",
+                "fixture-discord-secret",
+            ),
+            (
+                "webhook=https://example.test/hooks/fixture-generic-secret",
+                "fixture-generic-secret",
+            ),
+        ],
+    )
+    @pytest.mark.parametrize("field", ["title", "body", "project", "session_label"])
+    def test_external_redaction_corpus_is_removed_from_all_free_text_fields(
+        self,
+        field: str,
+        value: str,
+        marker: str,
+    ) -> None:
+        event = _make_event().model_copy(update={field: value})
+
+        redacted = redact_for_external_delivery(event)
+        message = json.dumps(format_slack_message(event))
+        digest = json.dumps(format_slack_digest([event]))
+
+        assert marker not in str(getattr(redacted, field))
+        assert marker not in message
+        assert marker not in digest
+
+    def test_secret_event_clears_all_caller_controlled_external_fields(self) -> None:
+        marker = "fixture-secret-class-marker"
+        event = _make_event(
+            title=marker,
+            body=marker,
+            project=marker,
+        ).model_copy(
+            update={
+                "privacy_class": "secret",
+                "session_label": marker,
+                "context": {"token": marker},
+            }
+        )
+
+        redacted = redact_for_external_delivery(event)
+        message = json.dumps(format_slack_message(event))
+        digest = json.dumps(format_slack_digest([event]))
+
+        assert redacted.project is None
+        assert redacted.session_label is None
+        assert redacted.context == {}
+        assert marker not in message
+        assert marker not in digest
+
+    def test_standalone_bearer_word_without_credential_is_preserved(self) -> None:
+        event = _make_event(body="The bearer is responsible for this document.")
+
+        redacted = redact_for_external_delivery(event)
+
+        assert redacted.body == event.body
 
     def test_message_includes_level_emoji(self) -> None:
         event = _make_event(classified_level="urgent")
@@ -387,6 +481,22 @@ class TestSendSlack:
             result = send_slack(event)
         assert result is False
 
+    def test_success_receipt_is_stably_bound_to_event_id(self) -> None:
+        event = _make_event()
+        response = MagicMock(status_code=200)
+        response.headers = {}
+        with (
+            patch(
+                "notification_hub.channels.get_slack_webhook_url",
+                return_value="https://hooks.slack.com/test",
+            ),
+            patch("notification_hub.channels.httpx.post", return_value=response),
+        ):
+            result = send_slack_with_result(event)
+
+        assert result.outcome == "accepted"
+        assert result.receipt == f"slack:webhook:http:2xx:{event.event_id}"
+
     def test_returns_false_on_non_200(self) -> None:
         event = _make_event()
         mock_resp = MagicMock()
@@ -401,7 +511,7 @@ class TestSendSlack:
         ):
             result = send_slack(event)
         assert result is False
-        assert mock_post.call_count == channels_mod._SLACK_MAX_ATTEMPTS
+        assert mock_post.call_count == 1
 
     def test_returns_false_on_http_error(self) -> None:
         event = _make_event()
@@ -424,7 +534,7 @@ class TestSendSlack:
         [
             (400, "slack_http_4xx", 1),
             (429, "slack_http_429", channels_mod._SLACK_MAX_ATTEMPTS),
-            (503, "slack_http_5xx", channels_mod._SLACK_MAX_ATTEMPTS),
+            (503, "slack_outcome_unknown", 1),
         ],
     )
     def test_detailed_result_categorizes_http_failure_without_response_content(
@@ -443,31 +553,43 @@ class TestSendSlack:
         ):
             result = send_slack_with_result(_make_event())
 
-        assert result == ChannelDeliveryResult(False, error_category=category)
+        assert result.accepted is False
+        assert result.error_category == category
         assert "secret" not in (result.error_category or "")
         assert mock_post.call_count == attempts
 
     @pytest.mark.parametrize(
-        ("error", "category"),
+        ("error", "category", "outcome", "attempts"),
         [
-            (httpx.ReadTimeout("slow"), "slack_timeout"),
-            (httpx.ConnectError("refused"), "slack_network_error"),
+            (httpx.ReadTimeout("slow"), "slack_outcome_unknown", "outcome_unknown", 1),
+            (
+                httpx.ConnectError("refused"),
+                "slack_network_error",
+                "failed",
+                channels_mod._SLACK_MAX_ATTEMPTS,
+            ),
         ],
     )
     def test_detailed_result_categorizes_transport_failure(
-        self, error: httpx.TransportError, category: str
+        self,
+        error: httpx.TransportError,
+        category: str,
+        outcome: str,
+        attempts: int,
     ) -> None:
         with (
             patch(
                 "notification_hub.channels.get_slack_webhook_url",
                 return_value="https://hooks.slack.com/services/secret-token",
             ),
-            patch("notification_hub.channels.httpx.post", side_effect=error),
+            patch("notification_hub.channels.httpx.post", side_effect=error) as mock_post,
             patch("notification_hub.channels.time.sleep"),
         ):
             result = send_slack_with_result(_make_event())
 
-        assert result == ChannelDeliveryResult(False, error_category=category)
+        assert result.error_category == category
+        assert result.outcome == outcome
+        assert mock_post.call_count == attempts
 
     @pytest.mark.parametrize(
         "error",
@@ -573,7 +695,7 @@ class TestSendSlackRetry:
         assert mock_post.call_count == 2
         assert mock_sleep.call_count == 1
 
-    def test_retries_on_5xx_then_succeeds(self) -> None:
+    def test_does_not_retry_ambiguous_5xx(self) -> None:
         event = _make_event()
         with (
             patch(self._WEBHOOK, return_value=self._URL),
@@ -581,10 +703,10 @@ class TestSendSlackRetry:
             patch(self._SLEEP),
         ):
             result = send_slack(event)
-        assert result is True
-        assert mock_post.call_count == 2
+        assert result is False
+        assert mock_post.call_count == 1
 
-    def test_gives_up_after_max_attempts_on_persistent_5xx(self) -> None:
+    def test_persistent_5xx_is_quarantined_after_one_attempt(self) -> None:
         event = _make_event()
         with (
             patch(self._WEBHOOK, return_value=self._URL),
@@ -593,8 +715,8 @@ class TestSendSlackRetry:
         ):
             result = send_slack(event)
         assert result is False
-        assert mock_post.call_count == channels_mod._SLACK_MAX_ATTEMPTS
-        assert mock_sleep.call_count == channels_mod._SLACK_MAX_ATTEMPTS - 1
+        assert mock_post.call_count == 1
+        mock_sleep.assert_not_called()
 
     def test_no_retry_on_permanent_4xx(self) -> None:
         event = _make_event()

@@ -19,6 +19,8 @@ from notification_hub.bridge_cursor import poll_bridge_protected_activity
 from notification_hub.config import (
     BRIDGE_DB_PATH,
     BRIDGE_FILE,
+    ProducerAuthorizationError,
+    authorize_producer,
     bridge_cursor_enabled,
     get_policy_config,
 )
@@ -38,6 +40,7 @@ from notification_hub.durable_inbox import (
     record_channel_state,
     record_processing_deferred,
     record_processing_failure,
+    record_processing_outcome_unknown,
 )
 from notification_hub.durable_inbox import (
     collect_health as collect_durable_inbox_health,
@@ -84,7 +87,9 @@ from notification_hub.operations import (
 )
 from notification_hub.pipeline import (
     DeliveryDeferred,
+    DeliveryOutcomeUnknown,
     build_stored_event,
+    explain_event,
     get_suppression_engine,
     process_stored_event_with_result,
 )
@@ -209,9 +214,18 @@ async def _retention_loop() -> None:
         await asyncio.sleep(policy.interval_minutes * 60)
 
 
-def _persist_event_for_processing(event: Event) -> StoredEvent:
+def _persist_event_for_processing(
+    event: Event,
+    *,
+    authorization_principal: str | None = None,
+    authorized_destinations: set[str] | None = None,
+) -> StoredEvent:
     """Persist an event before any delivery attempt or producer acknowledgement."""
-    stored = build_stored_event(event)
+    stored = build_stored_event(
+        event,
+        authorization_principal=authorization_principal,
+        authorized_destinations=authorized_destinations,
+    )
     return enqueue_event(stored)
 
 
@@ -224,7 +238,9 @@ def _process_durable_record(record: DurableEventRecord) -> None:
             channel,
             state,
             destination_ref=evidence if state == "accepted" else None,
-            error_category=evidence if state in {"failed", "buffered"} else None,
+            error_category=evidence
+            if state in {"failed", "buffered", "outcome_unknown"}
+            else None,
         )
 
     result = process_stored_event_with_result(
@@ -275,6 +291,13 @@ async def _durable_inbox_loop() -> None:
                 exc.channel,
                 status,
                 exc.retry_at.isoformat(),
+            )
+        except DeliveryOutcomeUnknown as exc:
+            status = await asyncio.to_thread(record_processing_outcome_unknown, record, exc)
+            logger.error(
+                "Durable event %s has outcome_unknown; status=%s and automatic retry is blocked",
+                record.event_id,
+                status,
             )
         except Exception as exc:  # noqa: BLE001 - failures become retry/DLQ state
             status = await asyncio.to_thread(record_processing_failure, record, exc)
@@ -1914,11 +1937,39 @@ async def request_validation_exception_handler(
 
 
 @app.post("/events", response_model=EventResponse, status_code=201)
-async def create_event(event: Event) -> EventResponse:
+async def create_event(event: Event, request: Request) -> EventResponse:
     """Accept a notification event after durable persistence."""
     global _event_count
+    authorization = request.headers.get("Authorization", "")
+    bearer_token = (
+        authorization.removeprefix("Bearer ").strip()
+        if authorization.startswith("Bearer ")
+        else None
+    )
+    explanation = explain_event(event)
+    destinations = {"log"}
+    if explanation.push_delivery:
+        destinations.add("push")
+    if explanation.slack_delivery:
+        destinations.add("slack")
     try:
-        stored = await asyncio.to_thread(_persist_event_for_processing, event)
+        producer_authorization = authorize_producer(
+            producer_id=request.headers.get("X-Notification-Producer"),
+            bearer_token=bearer_token,
+            source=event.source,
+            destinations=destinations,
+        )
+    except ProducerAuthorizationError as exc:
+        detail = str(exc)
+        status = 403 if "allowlist" in detail else 401
+        raise HTTPException(status_code=status, detail=detail) from exc
+    try:
+        stored = await asyncio.to_thread(
+            _persist_event_for_processing,
+            event,
+            authorization_principal=producer_authorization.producer_id,
+            authorized_destinations=destinations,
+        )
     except IdempotencyConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:

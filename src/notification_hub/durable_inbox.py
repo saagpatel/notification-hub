@@ -41,20 +41,35 @@ class IdempotencyConflictError(ValueError):
 
 
 def event_payload_digest(event: StoredEvent) -> str:
-    """Return a stable digest that excludes server receipt metadata."""
-    if event.payload_digest is not None:
-        return event.payload_digest
-    payload = event.model_dump(
-        mode="json",
-        exclude={
-            "event_id",
-            "timestamp",
-            "payload_digest",
-            "received_at",
-            "classified_level",
-        },
-    )
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    """Return a stable digest bound to authenticated intake authority when present."""
+    payload_digest = event.payload_digest
+    if payload_digest is None:
+        payload = event.model_dump(
+            mode="json",
+            exclude={
+                "event_id",
+                "timestamp",
+                "payload_digest",
+                "received_at",
+                "classified_level",
+                "authorization_principal",
+                "authorized_destinations",
+            },
+        )
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        payload_digest = hashlib.sha256(encoded).hexdigest()
+    if event.authorization_principal is None:
+        return payload_digest
+    authority_binding = {
+        "authorization_principal": event.authorization_principal,
+        "authorized_destinations": sorted(event.authorized_destinations or ()),
+        "payload_digest": payload_digest,
+    }
+    encoded = json.dumps(
+        authority_binding,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
 
 
@@ -260,6 +275,7 @@ def record_channel_state(
         "delivered",
         "observed",
         "failed",
+        "outcome_unknown",
         "dispositioned",
     }
     if state not in allowed:
@@ -283,6 +299,7 @@ def record_channel_state(
             "attempted": 1,
             "buffered": 1,
             "failed": 1,
+            "outcome_unknown": 6,
             "accepted": 2,
             "delivered": 3,
             "observed": 4,
@@ -291,7 +308,9 @@ def record_channel_state(
         if (
             current_state is not None
             and terminal_rank[current_state] > terminal_rank[state]
-            and not (current_state in {"buffered", "failed"} and state == "attempted")
+            and not (
+                current_state in {"buffered", "failed"} and state == "attempted"
+            )
         ):
             return
         conn.execute(
@@ -706,6 +725,33 @@ def record_processing_failure(
         return "retry_scheduled"
 
 
+def record_processing_outcome_unknown(
+    record: DurableEventRecord,
+    error: BaseException,
+    *,
+    path: Path | None = None,
+) -> DurableEventStatus:
+    """Terminally quarantine an ambiguous provider outcome pending reconciliation."""
+    now = isoformat()
+    error_text = str(error)[:1000] or error.__class__.__name__
+    with _managed_connection(path) as conn:
+        conn.execute(
+            """
+            UPDATE durable_events
+            SET status = 'dead_lettered',
+                lease_until = NULL,
+                next_attempt_at = NULL,
+                dead_lettered_at = ?,
+                last_error = ?,
+                last_error_type = 'DeliveryOutcomeUnknown',
+                updated_at = ?
+            WHERE event_id = ?
+            """,
+            (now, error_text, now, record.event_id),
+        )
+    return "dead_lettered"
+
+
 def record_processing_deferred(
     record: DurableEventRecord,
     retry_at: datetime,
@@ -737,11 +783,49 @@ def reclaim_stale_processing(
     path: Path | None = None,
     now: datetime | None = None,
 ) -> int:
-    """Move expired processing leases back to retry so restarts do not drop events."""
+    """Recover stale leases, quarantining any delivery with an ambiguous attempt."""
     init_schema(path)
     now_iso = isoformat(now)
     with _managed_connection(path) as conn:
-        cursor = conn.execute(
+        conn.execute(
+            """
+            UPDATE channel_deliveries
+            SET state = 'outcome_unknown',
+                last_error_category = 'process_exit_after_delivery_attempt',
+                updated_at = ?
+            WHERE state = 'attempted'
+              AND channel IN ('push', 'slack')
+              AND event_id IN (
+                SELECT event_id FROM durable_events
+                WHERE status = 'processing'
+                  AND lease_until IS NOT NULL
+                  AND lease_until < ?
+              )
+            """,
+            (now_iso, now_iso),
+        )
+        ambiguous = conn.execute(
+            """
+            UPDATE durable_events
+            SET status = 'dead_lettered',
+                lease_until = NULL,
+                next_attempt_at = NULL,
+                dead_lettered_at = ?,
+                last_error = 'process exited after an external delivery attempt; reconciliation required',
+                last_error_type = 'DeliveryOutcomeUnknown',
+                updated_at = ?
+            WHERE status = 'processing'
+              AND lease_until IS NOT NULL
+              AND lease_until < ?
+              AND EXISTS (
+                SELECT 1 FROM channel_deliveries
+                WHERE channel_deliveries.event_id = durable_events.event_id
+                  AND channel_deliveries.state = 'outcome_unknown'
+              )
+            """,
+            (now_iso, now_iso, now_iso),
+        )
+        retryable = conn.execute(
             """
             UPDATE durable_events
             SET status = 'retry_scheduled',
@@ -754,7 +838,7 @@ def reclaim_stale_processing(
             """,
             (now_iso, now_iso, now_iso),
         )
-        return cursor.rowcount
+        return ambiguous.rowcount + retryable.rowcount
 
 
 def prune_retained_events(

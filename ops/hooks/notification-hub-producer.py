@@ -25,6 +25,27 @@ MAX_DRAIN = 20
 DEFAULT_MAX_ATTEMPTS = 20
 
 
+class ProducerCredentialError(ValueError):
+    """Raised when an outbox item has no configured producer credential."""
+
+
+def _producer_headers(payload_json: str) -> dict[str, str]:
+    payload = json.loads(payload_json)
+    source = payload.get("source") if isinstance(payload, dict) else None
+    if not isinstance(source, str) or not source:
+        raise ProducerCredentialError("producer payload source is required")
+    suffix = "".join(character if character.isalnum() else "_" for character in source).upper()
+    token = os.environ.get(f"NOTIFICATION_HUB_PRODUCER_TOKEN_{suffix}")
+    if not token:
+        raise ProducerCredentialError("producer token is not configured")
+    producer_id = os.environ.get(f"NOTIFICATION_HUB_PRODUCER_ID_{suffix}", source)
+    return {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+        "X-Notification-Producer": producer_id,
+    }
+
+
 def _hub_url_allowed() -> bool:
     if os.environ.get("NOTIFICATION_HUB_TEST_MODE", "").lower() not in {"1", "true", "yes"}:
         return True
@@ -148,20 +169,22 @@ def deliver_due(*, path: Path = OUTBOX_PATH, limit: int = MAX_DRAIN) -> int:
             event_id = str(row["event_id"])
             attempt_count = int(row["attempt_count"]) + 1
             max_attempts = int(row["max_attempts"])
-            request = urllib.request.Request(
-                HUB_URL,
-                data=str(row["payload_json"]).encode(),
-                headers={"Content-Type": "application/json"},
-                method="POST",
-            )
             try:
+                request = urllib.request.Request(
+                    HUB_URL,
+                    data=str(row["payload_json"]).encode(),
+                    headers=_producer_headers(str(row["payload_json"])),
+                    method="POST",
+                )
                 with urllib.request.urlopen(request, timeout=2) as response:
                     status = int(getattr(response, "status", 0))
                 if status < 200 or status >= 300:
                     raise urllib.error.HTTPError(HUB_URL, status, "non-success", {}, None)
             except Exception as exc:
-                permanent = isinstance(exc, urllib.error.HTTPError) and (
-                    400 <= exc.code < 500 and exc.code not in {408, 429}
+                permanent = isinstance(exc, ProducerCredentialError) or (
+                    isinstance(exc, urllib.error.HTTPError)
+                    and 400 <= exc.code < 500
+                    and exc.code not in {408, 429}
                 )
                 exhausted = attempt_count >= max_attempts
                 state = "rejected" if permanent else "dead_lettered" if exhausted else "queued"

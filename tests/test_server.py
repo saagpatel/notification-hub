@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator
 from contextlib import contextmanager
+from dataclasses import replace
 from unittest.mock import patch
 
 import pytest
@@ -18,9 +19,12 @@ from notification_hub.durable_inbox import (
     get_channel_receipts,
     get_channel_state,
     get_event,
+    record_processing_outcome_unknown,
 )
+from notification_hub.models import Event
 from notification_hub.pipeline import (
     DeliveryError,
+    DeliveryOutcomeUnknown,
     get_suppression_engine,
     reset_suppression_engine,
 )
@@ -50,7 +54,14 @@ def _mock_channels():
 @pytest.fixture
 async def client() -> AsyncIterator[AsyncClient]:
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as c:
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        headers={
+            "Authorization": "Bearer fixture-producer-token",
+            "X-Notification-Producer": "fixture-producer",
+        },
+    ) as c:
         yield c
 
 
@@ -228,6 +239,92 @@ async def test_create_event_valid(client: AsyncClient) -> None:
     assert "event_id" in data
 
 
+async def test_create_event_rejects_unauthenticated_producer(client: AsyncClient) -> None:
+    response = await client.post(
+        "/events",
+        json={
+            "source": "codex",
+            "level": "info",
+            "title": "No credentials",
+            "body": "Must not persist.",
+        },
+        headers={"Authorization": "", "X-Notification-Producer": ""},
+    )
+    assert response.status_code == 401
+
+
+async def test_create_event_rejects_destination_escalation(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(
+        "NOTIFICATION_HUB_PRODUCERS_JSON",
+        '{"log-only":{"token":"log-only-token","sources":["codex"],'
+        '"destinations":["log"]}}',
+    )
+    response = await client.post(
+        "/events",
+        json={
+            "source": "codex",
+            "level": "normal",
+            "title": "Escalation",
+            "body": "Normal routing includes external destinations.",
+        },
+        headers={
+            "Authorization": "Bearer log-only-token",
+            "X-Notification-Producer": "log-only",
+        },
+    )
+    assert response.status_code == 403
+
+
+async def test_intake_authorized_destinations_remain_delivery_ceiling(
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = {
+        "event_id": "codex:fixture:intake-destination-ceiling",
+        "source": "codex",
+        "level": "normal",
+        "title": "Policy reload ceiling",
+        "body": "A later policy must not add Slack authority.",
+    }
+    event = Event.model_validate(payload)
+    intake_explanation = replace(
+        server_mod.explain_event(event),
+        push_delivery=False,
+        slack_delivery=False,
+    )
+    monkeypatch.setenv(
+        "NOTIFICATION_HUB_PRODUCERS_JSON",
+        '{"log-only":{"token":"log-only-token","sources":["codex"],'
+        '"destinations":["log"]}}',
+    )
+    with patch.object(server_mod, "explain_event", return_value=intake_explanation):
+        response = await client.post(
+            "/events",
+            json=payload,
+            headers={
+                "Authorization": "Bearer log-only-token",
+                "X-Notification-Producer": "log-only",
+            },
+        )
+
+    assert response.status_code == 201
+    claimed = claim_next_due_event()
+    assert claimed is not None
+    assert claimed.event.authorized_destinations == ["log"]
+
+    with (
+        patch("notification_hub.pipeline.has_slack_webhook_configured", return_value=True),
+        patch("notification_hub.pipeline.send_push_with_result") as mock_push,
+        patch("notification_hub.pipeline.send_slack_with_result") as mock_slack,
+    ):
+        server_mod._process_durable_record(claimed)
+
+    mock_push.assert_not_called()
+    mock_slack.assert_not_called()
+
+
 async def test_create_event_persists_before_ack_with_stable_event_id(client: AsyncClient) -> None:
     payload = {
         "source": "codex",
@@ -265,6 +362,79 @@ async def test_create_event_identical_retry_returns_original_receipt(client: Asy
     assert second.status_code == 201
     assert first.json()["event_id"] == "producer:stable:0001"
     assert second.json() == first.json()
+
+
+async def test_create_event_idempotency_is_bound_to_authenticated_producer(
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "NOTIFICATION_HUB_PRODUCERS_JSON",
+        '{"producer-a":{"token":"token-a","sources":["codex"],'
+        '"destinations":["log","push","slack"]},'
+        '"producer-b":{"token":"token-b","sources":["codex"],'
+        '"destinations":["log","push","slack"]}}',
+    )
+    payload = {
+        "event_id": "producer:stable:authority-principal",
+        "source": "codex",
+        "level": "info",
+        "title": "Principal-bound retry",
+        "body": "A second producer cannot inherit the first producer receipt.",
+        "timestamp": "2026-07-17T12:00:00Z",
+    }
+
+    first = await client.post(
+        "/events",
+        json=payload,
+        headers={
+            "Authorization": "Bearer token-a",
+            "X-Notification-Producer": "producer-a",
+        },
+    )
+    second = await client.post(
+        "/events",
+        json=payload,
+        headers={
+            "Authorization": "Bearer token-b",
+            "X-Notification-Producer": "producer-b",
+        },
+    )
+
+    assert first.status_code == 201
+    assert second.status_code == 409
+
+
+async def test_create_event_idempotency_is_bound_to_authorized_destinations(
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = {
+        "event_id": "producer:stable:authority-destinations",
+        "source": "codex",
+        "level": "normal",
+        "title": "Destination-bound retry",
+        "body": "A policy reload cannot widen an existing receipt.",
+        "timestamp": "2026-07-17T12:00:00Z",
+    }
+    event = Event.model_validate(payload)
+    log_only = replace(
+        server_mod.explain_event(event),
+        push_delivery=False,
+        slack_delivery=False,
+    )
+    monkeypatch.setenv(
+        "NOTIFICATION_HUB_PRODUCERS_JSON",
+        '{"fixture-producer":{"token":"fixture-producer-token","sources":["codex"],'
+        '"destinations":["log","push","slack"]}}',
+    )
+
+    with patch.object(server_mod, "explain_event", return_value=log_only):
+        first = await client.post("/events", json=payload)
+    second = await client.post("/events", json=payload)
+
+    assert first.status_code == 201
+    assert second.status_code == 409
 
 
 async def test_create_event_persists_explicit_producer(client: AsyncClient) -> None:
@@ -353,6 +523,44 @@ async def test_durable_worker_honors_log_only_destination_contract(
     record = get_event(claimed.event_id)
     assert record is not None
     assert record.status == "processed"
+
+
+async def test_outcome_unknown_is_quarantined_without_retry(client: AsyncClient) -> None:
+    response = await client.post(
+        "/events",
+        json={
+            "event_id": "codex:fixture:outcome-unknown",
+            "source": "codex",
+            "level": "normal",
+            "title": "Ambiguous Slack result",
+            "body": "The connection dropped after request transmission.",
+            "required_destinations": ["slack"],
+        },
+    )
+    assert response.status_code == 201
+    claimed = claim_next_due_event()
+    assert claimed is not None
+    with (
+        patch("notification_hub.pipeline.has_slack_webhook_configured", return_value=True),
+        patch(
+            "notification_hub.pipeline.send_slack_with_result",
+            return_value=ChannelDeliveryResult(
+                False,
+                "outcome_unknown",
+                error_category="slack_outcome_unknown",
+            ),
+        ),
+        pytest.raises(DeliveryOutcomeUnknown) as caught,
+    ):
+        server_mod._process_durable_record(claimed)
+
+    record_processing_outcome_unknown(claimed, caught.value)
+    quarantined = get_event(claimed.event_id)
+    assert quarantined is not None
+    assert quarantined.status == "dead_lettered"
+    assert quarantined.next_attempt_at is None
+    assert get_channel_state(claimed.event_id, "slack") == "outcome_unknown"
+    assert claim_next_due_event() is None
 
 
 async def test_durable_worker_persists_secret_safe_transport_failure_category(

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hmac
+import json
 import logging
 import os
 import subprocess
@@ -139,6 +141,72 @@ DEFAULT_RETENTION_MAX_EVENTS = 2000
 DEFAULT_RETENTION_KEEP_ARCHIVES = 10
 VALID_LEVELS = frozenset(("urgent", "normal", "info"))
 VALID_SOURCES = frozenset(SOURCE_IDS)
+VALID_DESTINATIONS = frozenset(("log", "push", "slack"))
+
+
+@dataclass(frozen=True)
+class ProducerAuthorization:
+    producer_id: str
+    token: str
+    sources: frozenset[str]
+    destinations: frozenset[str]
+
+
+class ProducerAuthorizationError(ValueError):
+    """Raised when producer credentials or destination scope are invalid."""
+
+
+def authorize_producer(
+    *,
+    producer_id: str | None,
+    bearer_token: str | None,
+    source: str,
+    destinations: set[str],
+) -> ProducerAuthorization:
+    """Authenticate an intake producer and enforce source/destination allowlists."""
+    if not producer_id or not bearer_token:
+        raise ProducerAuthorizationError("producer authentication is required")
+    raw = os.environ.get("NOTIFICATION_HUB_PRODUCERS_JSON", "")
+    try:
+        registry_value: object = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ProducerAuthorizationError("producer registry is invalid") from exc
+    if not isinstance(registry_value, dict):
+        raise ProducerAuthorizationError("producer registry is unavailable")
+    registry = cast(dict[str, object], registry_value)
+    record = registry.get(producer_id)
+    if not isinstance(record, dict):
+        raise ProducerAuthorizationError("producer is unknown")
+    record = cast(dict[str, object], record)
+    expected_token = record.get("token")
+    sources = record.get("sources")
+    allowed_destinations = record.get("destinations")
+    if (
+        not isinstance(expected_token, str)
+        or not expected_token
+        or not isinstance(sources, list)
+        or not all(isinstance(item, str) for item in cast(list[object], sources))
+        or not isinstance(allowed_destinations, list)
+        or not all(
+            isinstance(item, str)
+            for item in cast(list[object], allowed_destinations)
+        )
+    ):
+        raise ProducerAuthorizationError("producer registry entry is invalid")
+    if not hmac.compare_digest(bearer_token, expected_token):
+        raise ProducerAuthorizationError("producer credential is invalid")
+    source_scope = frozenset(cast(list[str], sources))
+    destination_scope = frozenset(cast(list[str], allowed_destinations))
+    if source not in source_scope:
+        raise ProducerAuthorizationError("producer source is outside its allowlist")
+    if not destinations.issubset(destination_scope):
+        raise ProducerAuthorizationError("notification destination is outside producer allowlist")
+    return ProducerAuthorization(
+        producer_id=producer_id,
+        token=expected_token,
+        sources=source_scope,
+        destinations=destination_scope,
+    )
 
 
 @dataclass(frozen=True)

@@ -111,6 +111,30 @@ def test_legacy_producer_digest_contract_is_unchanged() -> None:
     assert stored.payload_digest == expected
 
 
+def test_stored_authorized_destinations_prevent_policy_reload_escalation(
+    tmp_log: Path,
+) -> None:
+    stored = build_stored_event(
+        _event(body="Session complete", level="normal"),
+        authorized_destinations={"log"},
+    )
+
+    with (
+        patch("notification_hub.pipeline.send_push_with_result") as mock_push,
+        patch("notification_hub.pipeline.send_slack_with_result") as mock_slack,
+        _patch_daytime(),
+    ):
+        result = process_stored_event_with_result(
+            stored,
+            raise_on_delivery_failure=True,
+            durable_mode=True,
+        )
+
+    assert result.outcome == "processed"
+    mock_push.assert_not_called()
+    mock_slack.assert_not_called()
+
+
 class TestClassificationRouting:
     def test_urgent_triggers_push_and_slack(self, tmp_log: Path) -> None:
         p1, p2, p3 = _patch_channels()

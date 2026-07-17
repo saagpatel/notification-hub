@@ -264,6 +264,43 @@ def test_reclaim_stale_processing_lease(tmp_path: Path) -> None:
     assert stored.status == "retry_scheduled"
 
 
+def test_reclaim_stale_processing_attempt_is_quarantined(tmp_path: Path) -> None:
+    db_path = tmp_path / "inbox.sqlite3"
+    enqueue_event(_event("attempted-before-crash"), path=db_path)
+    claimed = claim_next_due_event(path=db_path, lease_seconds=-1)
+    assert claimed is not None
+    record_channel_state(claimed.event_id, "slack", "attempted", path=db_path)
+
+    reclaimed = reclaim_stale_processing(path=db_path)
+
+    assert reclaimed == 1
+    stored = get_event(claimed.event_id, path=db_path)
+    assert stored is not None
+    assert stored.status == "dead_lettered"
+    assert stored.next_attempt_at is None
+    assert stored.last_error_type == "DeliveryOutcomeUnknown"
+    assert channels_in_state(claimed.event_id, "outcome_unknown", path=db_path) == frozenset(
+        {"slack"}
+    )
+    assert claim_next_due_event(path=db_path) is None
+
+
+def test_reclaim_stale_processing_local_log_attempt_remains_retryable(tmp_path: Path) -> None:
+    db_path = tmp_path / "inbox.sqlite3"
+    enqueue_event(_event("local-log-before-crash"), path=db_path)
+    claimed = claim_next_due_event(path=db_path, lease_seconds=-1)
+    assert claimed is not None
+    record_channel_state(claimed.event_id, "log", "attempted", path=db_path)
+
+    reclaimed = reclaim_stale_processing(path=db_path)
+
+    assert reclaimed == 1
+    stored = get_event(claimed.event_id, path=db_path)
+    assert stored is not None
+    assert stored.status == "retry_scheduled"
+    assert channels_in_state(claimed.event_id, "attempted", path=db_path) == frozenset({"log"})
+
+
 def test_restart_before_first_attempt_preserves_queued_event(tmp_path: Path) -> None:
     db_path = tmp_path / "inbox.sqlite3"
     enqueue_event(_event("restart-before-attempt"), path=db_path)

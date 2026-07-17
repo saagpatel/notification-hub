@@ -149,8 +149,27 @@ class StoredEvent(Event):
     received_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     classified_level: Level | None = None
     payload_digest: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+    authorization_principal: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=100,
+        pattern=r"^[A-Za-z0-9._:-]+$",
+    )
+    authorized_destinations: list[str] | None = None
     suppression_predecessor_id: str | None = Field(default=None, max_length=128)
     suppression_policy: str | None = Field(default=None, max_length=100)
+
+    @field_validator("authorized_destinations")
+    @classmethod
+    def validate_authorized_destinations(cls, values: list[str] | None) -> list[str] | None:
+        if values is None:
+            return None
+        allowed = {"log", "push", "slack"}
+        if unknown := set(values) - allowed:
+            raise ValueError(f"unknown authorized destination(s): {', '.join(sorted(unknown))}")
+        if "log" not in values:
+            raise ValueError("authorized destinations must include log")
+        return sorted(set(values))
 
 
 class EventResponse(BaseModel):
