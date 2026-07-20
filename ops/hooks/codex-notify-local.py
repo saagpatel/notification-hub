@@ -188,6 +188,7 @@ def post_to_hub(
     hub_level = "urgent" if level == "waiting" else "normal"
     payload = {
         "source": "codex",
+        "producer": "codex",
         "level": hub_level,
         "title": clamp_text(title, MAX_TITLE_LENGTH) or "Codex notification",
         "body": clamp_text(message, MAX_BODY_LENGTH) or "Codex notification.",

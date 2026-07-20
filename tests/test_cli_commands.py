@@ -69,6 +69,365 @@ def test_cli_smoke_json_output(capsys: CaptureFixture[str]) -> None:
     assert '"event_id": "abc123"' in captured.out
 
 
+def test_reconcile_delivery_defaults_to_plan_only(capsys: CaptureFixture[str]) -> None:
+    plan = {
+        "schema": "ChannelReconciliationPlanV2",
+        "action_kind": "notification.channel_reconcile",
+        "canonical_targets": {"event_id": "fixture:1", "channel": "slack"},
+        "plan_digest": "sha256:" + ("1" * 64),
+    }
+    with (
+        patch(
+            "notification_hub.cli.load_readback_file",
+            return_value={"provider_outcome": "accepted"},
+        ),
+        patch(
+            "notification_hub.cli.build_reconciliation_plan",
+            return_value=plan,
+        ) as mock_plan,
+        patch("notification_hub.cli.apply_reconciliation_plan") as mock_apply,
+    ):
+        exit_code = main(
+            [
+                "reconcile-delivery",
+                "--event-id",
+                "fixture:1",
+                "--channel",
+                "slack",
+                "--terminal-outcome",
+                "reconciled_succeeded",
+                "--provider-reference",
+                "slack:history:1",
+                "--readback-json",
+                "/tmp/readback.json",
+                "--db-path",
+                "/tmp/inbox.sqlite3",
+                "--json",
+            ]
+        )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert '"status": "planned"' in captured.out
+    mock_plan.assert_called_once_with(
+        "fixture:1",
+        "slack",
+        terminal_outcome="reconciled_succeeded",
+        provider_reference="slack:history:1",
+        readback_result={"provider_outcome": "accepted"},
+        database_path=Path("/tmp/inbox.sqlite3"),
+        receipt_state_dir=None,
+    )
+    mock_apply.assert_not_called()
+
+
+def test_reconcile_delivery_apply_binds_and_forwards_claim_directory() -> None:
+    plan = {"plan_digest": "sha256:" + ("1" * 64)}
+    claims = Path("/tmp/fixture-reconciliation-claims")
+    envelope = Path("/tmp/fixture-reconciliation-envelope.json")
+    with (
+        patch(
+            "notification_hub.cli.load_readback_file",
+            return_value={"provider_outcome": "accepted"},
+        ),
+        patch(
+            "notification_hub.cli.build_reconciliation_plan",
+            return_value=plan,
+        ) as mock_plan,
+        patch(
+            "notification_hub.cli.apply_reconciliation_plan",
+            return_value={"status": "applied", "plan": plan},
+        ) as mock_apply,
+    ):
+        exit_code = main(
+            [
+                "reconcile-delivery",
+                "--event-id",
+                "fixture:1",
+                "--channel",
+                "slack",
+                "--terminal-outcome",
+                "reconciled_succeeded",
+                "--provider-reference",
+                "slack:history:1",
+                "--readback-json",
+                "/tmp/readback.json",
+                "--db-path",
+                "/tmp/inbox.sqlite3",
+                "--claim-state-dir",
+                str(claims),
+                "--envelope",
+                str(envelope),
+                "--apply",
+                "--json",
+            ]
+        )
+
+    assert exit_code == 0
+    assert mock_plan.call_args.kwargs["receipt_state_dir"] == claims
+    mock_apply.assert_called_once_with(
+        plan,
+        envelope_path=envelope,
+        claim_state_dir=claims,
+    )
+
+
+def test_reconcile_delivery_apply_requires_envelope_and_claim_dir(
+    capsys: CaptureFixture[str],
+) -> None:
+    with (
+        patch(
+            "notification_hub.cli.load_readback_file",
+            return_value={"provider_outcome": "accepted"},
+        ),
+        patch(
+            "notification_hub.cli.build_reconciliation_plan",
+            return_value={"plan_digest": "sha256:" + ("1" * 64)},
+        ),
+        patch("notification_hub.cli.apply_reconciliation_plan") as mock_apply,
+    ):
+        exit_code = main(
+            [
+                "reconcile-delivery",
+                "--event-id",
+                "fixture:1",
+                "--channel",
+                "slack",
+                "--terminal-outcome",
+                "reconciled_succeeded",
+                "--provider-reference",
+                "slack:history:1",
+                "--readback-json",
+                "/tmp/readback.json",
+                "--db-path",
+                "/tmp/inbox.sqlite3",
+                "--apply",
+            ]
+        )
+
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert "--apply requires --envelope and --claim-state-dir" in captured.err
+    mock_apply.assert_not_called()
+
+
+def test_finalize_reconciliation_claim_uses_saved_plan_and_never_calls_apply(
+    capsys: CaptureFixture[str],
+) -> None:
+    plan = {"plan_digest": "sha256:" + ("1" * 64)}
+    with (
+        patch(
+            "notification_hub.cli.load_readback_file",
+            return_value=plan,
+        ),
+        patch(
+            "notification_hub.cli.finalize_reconciliation_claim",
+            return_value={
+                "status": "finalized",
+                "plan": plan,
+                "terminal_outcome": "failed_before_effect",
+                "authority_receipt_path": "/tmp/fixture.receipt.json",
+            },
+        ) as mock_finalize,
+        patch("notification_hub.cli.apply_reconciliation_plan") as mock_apply,
+    ):
+        exit_code = main(
+            [
+                "finalize-reconciliation-claim",
+                "--plan-json",
+                "/tmp/plan.json",
+                "--envelope",
+                "/tmp/envelope.json",
+                "--claim-state-dir",
+                "/tmp/claims",
+                "--json",
+            ]
+        )
+
+    assert exit_code == 0
+    mock_finalize.assert_called_once_with(
+        plan,
+        envelope_path=Path("/tmp/envelope.json"),
+        claim_state_dir=Path("/tmp/claims"),
+    )
+    mock_apply.assert_not_called()
+
+
+def test_supersede_delivery_check_receipt_defaults_to_plan_only() -> None:
+    plan = {
+        "schema": "NotificationDeliveryCheckReceiptSupersessionPlanV1",
+        "plan_digest": "sha256:" + ("1" * 64),
+    }
+    with (
+        patch(
+            "notification_hub.cli.build_delivery_check_receipt_supersession_plan",
+            return_value=plan,
+        ) as mock_plan,
+        patch(
+            "notification_hub.cli.apply_delivery_check_receipt_supersession_plan"
+        ) as mock_apply,
+    ):
+        exit_code = main(
+            [
+                "supersede-delivery-check-receipt",
+                "--original-plan-json",
+                "/tmp/original-plan.json",
+                "--original-receipt-json",
+                "/tmp/original-receipt.json",
+                "--provider-readback-json",
+                "/tmp/provider-readback.json",
+                "--claim-state-dir",
+                "/tmp/fresh-claims",
+                "--json",
+            ]
+        )
+
+    assert exit_code == 0
+    mock_plan.assert_called_once_with(
+        original_plan_path=Path("/tmp/original-plan.json"),
+        original_receipt_path=Path("/tmp/original-receipt.json"),
+        provider_readback_path=Path("/tmp/provider-readback.json"),
+        receipt_state_dir=Path("/tmp/fresh-claims"),
+    )
+    mock_apply.assert_not_called()
+
+
+def test_supersede_delivery_check_receipt_apply_requires_fresh_envelope(
+    capsys: CaptureFixture[str],
+) -> None:
+    with patch(
+        "notification_hub.cli.build_delivery_check_receipt_supersession_plan"
+    ) as mock_plan:
+        exit_code = main(
+            [
+                "supersede-delivery-check-receipt",
+                "--original-plan-json",
+                "/tmp/original-plan.json",
+                "--original-receipt-json",
+                "/tmp/original-receipt.json",
+                "--provider-readback-json",
+                "/tmp/provider-readback.json",
+                "--claim-state-dir",
+                "/tmp/fresh-claims",
+                "--apply",
+            ]
+        )
+
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert "--apply requires --envelope" in captured.err
+    mock_plan.assert_not_called()
+
+
+def test_finalize_delivery_check_supersession_uses_saved_plan() -> None:
+    plan = {"plan_digest": "sha256:" + ("1" * 64)}
+    with (
+        patch("notification_hub.cli.load_readback_file", return_value=plan),
+        patch(
+            "notification_hub.cli.finalize_delivery_check_receipt_supersession_claim",
+            return_value={
+                "status": "finalized",
+                "plan": plan,
+                "terminal_outcome": "succeeded",
+            },
+        ) as mock_finalize,
+        patch(
+            "notification_hub.cli.apply_delivery_check_receipt_supersession_plan"
+        ) as mock_apply,
+    ):
+        exit_code = main(
+            [
+                "finalize-delivery-check-supersession-claim",
+                "--plan-json",
+                "/tmp/plan.json",
+                "--envelope",
+                "/tmp/envelope.json",
+                "--claim-state-dir",
+                "/tmp/fresh-claims",
+                "--json",
+            ]
+        )
+
+    assert exit_code == 0
+    mock_finalize.assert_called_once_with(
+        plan,
+        envelope_path=Path("/tmp/envelope.json"),
+        claim_state_dir=Path("/tmp/fresh-claims"),
+    )
+    mock_apply.assert_not_called()
+
+
+def test_supersede_reconciliation_receipt_defaults_to_plan_only() -> None:
+    original_plan = {"schema": "ChannelReconciliationPlanV2"}
+    supersession_plan = {
+        "schema": "ReconciliationReceiptSupersessionPlanV1",
+        "plan_digest": "sha256:" + ("1" * 64),
+    }
+    with (
+        patch(
+            "notification_hub.cli.load_readback_file",
+            return_value=original_plan,
+        ),
+        patch(
+            "notification_hub.cli.build_reconciliation_receipt_supersession_plan",
+            return_value=supersession_plan,
+        ) as mock_plan,
+        patch(
+            "notification_hub.cli.apply_reconciliation_receipt_supersession_plan"
+        ) as mock_apply,
+    ):
+        exit_code = main(
+            [
+                "supersede-reconciliation-receipt",
+                "--original-plan-json",
+                "/tmp/original-plan.json",
+                "--original-receipt-json",
+                "/tmp/original-receipt.json",
+                "--json",
+            ]
+        )
+
+    assert exit_code == 0
+    mock_plan.assert_called_once_with(
+        original_plan,
+        original_receipt_path=Path("/tmp/original-receipt.json"),
+    )
+    mock_apply.assert_not_called()
+
+
+def test_supersede_reconciliation_receipt_apply_requires_fresh_authority(
+    capsys: CaptureFixture[str],
+) -> None:
+    with (
+        patch(
+            "notification_hub.cli.load_readback_file",
+            return_value={"schema": "ChannelReconciliationPlanV2"},
+        ),
+        patch(
+            "notification_hub.cli.build_reconciliation_receipt_supersession_plan",
+            return_value={"plan_digest": "sha256:" + ("1" * 64)},
+        ),
+        patch(
+            "notification_hub.cli.apply_reconciliation_receipt_supersession_plan"
+        ) as mock_apply,
+    ):
+        exit_code = main(
+            [
+                "supersede-reconciliation-receipt",
+                "--original-plan-json",
+                "/tmp/original-plan.json",
+                "--original-receipt-json",
+                "/tmp/original-receipt.json",
+                "--apply",
+            ]
+        )
+
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert "--apply requires --envelope and --claim-state-dir" in captured.err
+    mock_apply.assert_not_called()
+
+
 def test_cli_inbox_json_output(capsys: CaptureFixture[str]) -> None:
     with patch(
         "notification_hub.cli.run_inbox",

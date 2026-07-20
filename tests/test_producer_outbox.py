@@ -14,11 +14,13 @@ import pytest
 PRODUCER = Path(__file__).resolve().parents[1] / "ops/hooks/notification-hub-producer.py"
 
 
-def _module() -> ModuleType:
+def _module(*, fixture_token: bool = True) -> ModuleType:
     spec = importlib.util.spec_from_file_location("notification_hub_producer", PRODUCER)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    if fixture_token:
+        module.load_producer_token = lambda _producer_id: "fixture-producer-token"
     return module
 
 
@@ -26,6 +28,7 @@ def _payload(event_id: str = "producer:fixture:1") -> dict[str, object]:
     return {
         "event_id": event_id,
         "source": "personal-ops",
+        "producer": "personal-ops",
         "level": "normal",
         "title": "Producer fixture",
         "body": "Retry after hub downtime.",
@@ -40,6 +43,45 @@ class AcceptedResponse:
 
     def __exit__(self, *_args: object) -> None:
         return None
+
+
+def test_delivery_authenticates_the_exact_payload_producer(tmp_path: Path) -> None:
+    module = _module()
+    outbox = tmp_path / "producer.sqlite3"
+    module.enqueue(_payload(), path=outbox)
+    captured: dict[str, str | None] = {}
+
+    def accept(request: object, *, timeout: int) -> AcceptedResponse:
+        captured["authorization"] = request.get_header("Authorization")
+        captured["producer"] = request.get_header("X-notification-hub-producer")
+        assert timeout == 2
+        return AcceptedResponse()
+
+    with patch.object(module.urllib.request, "urlopen", side_effect=accept):
+        assert module.deliver_due(path=outbox) == 1
+
+    assert captured == {
+        "authorization": "Bearer fixture-producer-token",
+        "producer": "personal-ops",
+    }
+
+
+def test_missing_or_broad_producer_token_file_fails_before_request(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _module(fixture_token=False)
+    missing = tmp_path / "missing.token"
+    monkeypatch.setenv("NOTIFICATION_HUB_PRODUCER_TOKEN_FILE", str(missing))
+    with pytest.raises(FileNotFoundError):
+        module.load_producer_token("personal-ops")
+
+    broad = tmp_path / "broad.token"
+    broad.write_text("fixture-token\n", encoding="utf-8")
+    broad.chmod(0o644)
+    monkeypatch.setenv("NOTIFICATION_HUB_PRODUCER_TOKEN_FILE", str(broad))
+    with pytest.raises(ValueError, match="owner-private"):
+        module.load_producer_token("personal-ops")
 
 
 def test_hub_downtime_persists_event_and_retry_accepts_same_id(tmp_path: Path) -> None:

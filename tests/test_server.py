@@ -26,6 +26,15 @@ from notification_hub.pipeline import (
 )
 from notification_hub.server import app
 
+CODEX_AUTH_HEADERS = {
+    "Authorization": "Bearer fixture-codex-token",
+    "X-Notification-Hub-Producer": "codex",
+}
+PERSONAL_OPS_AUTH_HEADERS = {
+    "Authorization": "Bearer fixture-personal-ops-token",
+    "X-Notification-Hub-Producer": "personal-ops",
+}
+
 
 @contextmanager
 def _mock_channels():
@@ -50,7 +59,11 @@ def _mock_channels():
 @pytest.fixture
 async def client() -> AsyncIterator[AsyncClient]:
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as c:
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        headers=CODEX_AUTH_HEADERS,
+    ) as c:
         yield c
 
 
@@ -66,6 +79,28 @@ async def test_health_endpoint(client: AsyncClient) -> None:
     assert data["status"] == "ok"
     assert "uptime_seconds" in data
     assert "events_processed" in data
+    assert data["producer_auth"] == {
+        "status": "ok",
+        "configured": True,
+        "producer_count": 3,
+    }
+
+
+async def test_health_degrades_when_producer_auth_policy_is_unavailable(
+    client: AsyncClient,
+) -> None:
+    with patch(
+        "notification_hub.server.collect_producer_auth_health",
+        return_value={
+            "status": "degraded",
+            "configured": False,
+            "producer_count": 0,
+        },
+    ):
+        response = await client.get("/health")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "degraded"
 
 
 async def test_health_endpoint_propagates_delivery_degradation(client: AsyncClient) -> None:
@@ -268,6 +303,137 @@ async def test_create_event_valid(client: AsyncClient) -> None:
     assert "event_id" in data
 
 
+async def test_create_event_rejects_unauthenticated_producer_without_persistence() -> None:
+    transport = ASGITransport(app=app)
+    payload = {
+        "event_id": "unauthenticated:fixture:1",
+        "source": "codex",
+        "level": "urgent",
+        "title": "Unauthorized event",
+        "body": "Must not reach durable delivery.",
+    }
+    async with AsyncClient(transport=transport, base_url="http://test") as unauthenticated:
+        response = await unauthenticated.post("/events", json=payload)
+
+    assert response.status_code == 401
+    assert response.headers["www-authenticate"] == "Bearer"
+    assert get_event("unauthenticated:fixture:1") is None
+
+
+async def test_create_event_fails_closed_when_auth_policy_is_unavailable(
+    client: AsyncClient,
+) -> None:
+    payload = {
+        "event_id": "missing-auth-policy:fixture:1",
+        "source": "codex",
+        "level": "info",
+        "title": "Unavailable policy",
+        "body": "Must not persist while producer policy is unavailable.",
+    }
+    with patch(
+        "notification_hub.server.authenticate_producer",
+        side_effect=server_mod.ProducerPolicyError("fixture unavailable"),
+    ):
+        response = await client.post("/events", json=payload)
+
+    assert response.status_code == 503
+    assert get_event("missing-auth-policy:fixture:1") is None
+
+
+async def test_create_event_rejects_producer_identity_mismatch(
+    client: AsyncClient,
+) -> None:
+    payload = {
+        "event_id": "producer-mismatch:fixture:1",
+        "source": "personal-ops",
+        "producer": "personal-ops",
+        "level": "info",
+        "title": "Mismatched producer",
+        "body": "Codex credential cannot claim personal-ops.",
+        "required_destinations": ["log"],
+    }
+
+    response = await client.post("/events", json=payload)
+
+    assert response.status_code == 403
+    assert get_event("producer-mismatch:fixture:1") is None
+
+
+async def test_create_event_rejects_destination_escalation_without_persistence(
+    client: AsyncClient,
+) -> None:
+    payload = {
+        "event_id": "destination-escalation:fixture:1",
+        "source": "codex",
+        "producer": "restricted",
+        "level": "urgent",
+        "title": "Escalating destination",
+        "body": "Restricted producer cannot request push or Slack.",
+        "required_destinations": ["slack"],
+    }
+
+    response = await client.post(
+        "/events",
+        json=payload,
+        headers={
+            "Authorization": "Bearer fixture-restricted-token",
+            "X-Notification-Hub-Producer": "restricted",
+        },
+    )
+
+    assert response.status_code == 403
+    assert get_event("destination-escalation:fixture:1") is None
+
+
+async def test_create_event_freezes_exact_authorized_destinations(
+    client: AsyncClient,
+) -> None:
+    payload = {
+        "event_id": "authorized-destinations:fixture:1",
+        "source": "codex",
+        "level": "urgent",
+        "title": "Authorized urgent event",
+        "body": "Freeze the destinations selected at authenticated intake.",
+    }
+
+    response = await client.post("/events", json=payload)
+
+    assert response.status_code == 201
+    record = get_event("authorized-destinations:fixture:1")
+    assert record is not None
+    assert record.event.producer == "codex"
+    assert record.event.required_destinations == ["log", "push", "slack"]
+
+
+async def test_create_event_accepts_restricted_log_only_contract(
+    client: AsyncClient,
+) -> None:
+    payload = {
+        "event_id": "restricted-log:fixture:1",
+        "source": "codex",
+        "producer": "restricted",
+        "level": "urgent",
+        "title": "Local evidence only",
+        "body": "Exact log-only destination remains legitimate.",
+        "required_destinations": ["log"],
+    }
+
+    response = await client.post(
+        "/events",
+        json=payload,
+        headers={
+            "Authorization": "Bearer fixture-restricted-token",
+            "X-Notification-Hub-Producer": "restricted",
+        },
+    )
+
+    assert response.status_code == 201
+    record = get_event("restricted-log:fixture:1")
+    assert record is not None
+    assert record.event.producer == "restricted"
+    assert record.event.required_destinations == ["log"]
+
+
 async def test_create_event_persists_before_ack_with_stable_event_id(client: AsyncClient) -> None:
     payload = {
         "source": "codex",
@@ -319,7 +485,11 @@ async def test_create_event_persists_explicit_producer(client: AsyncClient) -> N
         "body": "Producer identity must survive intake.",
     }
 
-    response = await client.post("/events", json=payload)
+    response = await client.post(
+        "/events",
+        json=payload,
+        headers=PERSONAL_OPS_AUTH_HEADERS,
+    )
 
     assert response.status_code == 201
     record = get_event("personal-ops:fixture:0001")
@@ -342,7 +512,11 @@ async def test_durable_worker_persists_transport_acceptance_receipts(
         "title": "Approval required",
         "body": "Persist transport acceptance evidence.",
     }
-    response = await client.post("/events", json=payload)
+    response = await client.post(
+        "/events",
+        json=payload,
+        headers=PERSONAL_OPS_AUTH_HEADERS,
+    )
     assert response.status_code == 201
     claimed = claim_next_due_event()
     assert claimed is not None
@@ -374,7 +548,11 @@ async def test_durable_worker_honors_log_only_destination_contract(
         "project": "personal-ops",
         "required_destinations": ["log"],
     }
-    response = await client.post("/events", json=payload)
+    response = await client.post(
+        "/events",
+        json=payload,
+        headers=PERSONAL_OPS_AUTH_HEADERS,
+    )
     assert response.status_code == 201
     claimed = claim_next_due_event()
     assert claimed is not None
@@ -408,7 +586,11 @@ async def test_durable_worker_persists_secret_safe_transport_failure_category(
         "title": "Fixture only",
         "body": "Persist a bounded failure category.",
     }
-    response = await client.post("/events", json=payload)
+    response = await client.post(
+        "/events",
+        json=payload,
+        headers=PERSONAL_OPS_AUTH_HEADERS,
+    )
     assert response.status_code == 201
     claimed = claim_next_due_event()
     assert claimed is not None

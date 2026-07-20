@@ -6,7 +6,7 @@ import json
 import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from notification_hub.cli_parser import build_parser
 from notification_hub.cli_reports import (
@@ -21,6 +21,7 @@ from notification_hub.cli_reports import (
     print_coordination_console_report,
     print_coordination_readiness_report,
     print_coordination_snapshot_report,
+    print_delivery_check_finalization_report,
     print_delivery_check_report,
     print_doctor_report,
     print_explain_report,
@@ -39,11 +40,19 @@ from notification_hub.cli_reports import (
     print_personal_ops_queue_review_report,
     print_personal_ops_queue_scenario_report,
     print_policy_check_report,
+    print_reconciliation_report,
     print_retention_report,
     print_smoke_report,
     print_status_report,
     print_verify_runtime_report,
     write_json_report,
+)
+from notification_hub.delivery_check import finalize_delivery_check_claim
+from notification_hub.delivery_check_supersession import (
+    DeliveryCheckSupersessionAuthorizationError,
+    apply_delivery_check_receipt_supersession_plan,
+    build_delivery_check_receipt_supersession_plan,
+    finalize_delivery_check_receipt_supersession_claim,
 )
 from notification_hub.diagnostics import collect_doctor_report
 from notification_hub.models import Event
@@ -83,6 +92,15 @@ from notification_hub.operations import (
     validate_action_package,
 )
 from notification_hub.pipeline import build_event_explanation_report
+from notification_hub.reconciliation import (
+    ReconciliationAuthorizationError,
+    apply_reconciliation_plan,
+    apply_reconciliation_receipt_supersession_plan,
+    build_reconciliation_plan,
+    build_reconciliation_receipt_supersession_plan,
+    finalize_reconciliation_claim,
+    load_readback_file,
+)
 
 
 def _emit_report(
@@ -139,8 +157,200 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "delivery-check":
         if not args.slack and not args.push:
             parser.error("delivery-check requires --slack and/or --push")
-        report = run_delivery_check(verify_slack=args.slack, verify_push=args.push)
-        return _emit_report(report, json_output=args.json, print_report=print_delivery_check_report)
+        if args.apply and (args.envelope is None or args.claim_state_dir is None):
+            print(
+                "--apply requires --envelope and --claim-state-dir",
+                file=sys.stderr,
+            )
+            return 2
+        try:
+            report = run_delivery_check(
+                verify_slack=args.slack,
+                verify_push=args.push,
+                apply=args.apply,
+                envelope_path=Path(args.envelope) if args.envelope else None,
+                claim_state_dir=(
+                    Path(args.claim_state_dir) if args.claim_state_dir else None
+                ),
+            )
+        except (OSError, ValueError) as exc:
+            print(f"delivery-check failed: {exc}", file=sys.stderr)
+            return 2
+        return _emit_report(
+            report,
+            json_output=args.json,
+            print_report=print_delivery_check_report,
+            success_status=None,
+        )
+
+    if args.command == "finalize-delivery-check-claim":
+        try:
+            plan = load_readback_file(Path(args.plan_json))
+            report = finalize_delivery_check_claim(
+                plan,
+                envelope_path=Path(args.envelope),
+                claim_state_dir=Path(args.claim_state_dir),
+            )
+        except (OSError, ValueError) as exc:
+            print(f"finalize-delivery-check-claim failed: {exc}", file=sys.stderr)
+            return 2
+        return _emit_report(
+            report,
+            json_output=args.json,
+            print_report=print_delivery_check_finalization_report,
+            success_status=None,
+        )
+
+    if args.command == "supersede-delivery-check-receipt":
+        if args.apply and args.envelope is None:
+            print("--apply requires --envelope", file=sys.stderr)
+            return 2
+        try:
+            plan = build_delivery_check_receipt_supersession_plan(
+                original_plan_path=Path(args.original_plan_json),
+                original_receipt_path=Path(args.original_receipt_json),
+                provider_readback_path=Path(args.provider_readback_json),
+                receipt_state_dir=Path(args.claim_state_dir),
+            )
+            if args.apply:
+                report = apply_delivery_check_receipt_supersession_plan(
+                    plan,
+                    envelope_path=Path(args.envelope),
+                    claim_state_dir=Path(args.claim_state_dir),
+                )
+            else:
+                report = {"status": "planned", "plan": plan}
+        except (
+            OSError,
+            ValueError,
+            DeliveryCheckSupersessionAuthorizationError,
+        ) as exc:
+            print(f"supersede-delivery-check-receipt failed: {exc}", file=sys.stderr)
+            return 2
+        return _emit_report(
+            report,
+            json_output=args.json,
+            print_report=print_reconciliation_report,
+            success_status=None,
+        )
+
+    if args.command == "finalize-delivery-check-supersession-claim":
+        try:
+            plan = load_readback_file(Path(args.plan_json))
+            report = finalize_delivery_check_receipt_supersession_claim(
+                plan,
+                envelope_path=Path(args.envelope),
+                claim_state_dir=Path(args.claim_state_dir),
+            )
+        except (
+            OSError,
+            ValueError,
+            DeliveryCheckSupersessionAuthorizationError,
+        ) as exc:
+            print(
+                f"finalize-delivery-check-supersession-claim failed: {exc}",
+                file=sys.stderr,
+            )
+            return 2
+        return _emit_report(
+            report,
+            json_output=args.json,
+            print_report=print_reconciliation_report,
+            success_status=None,
+        )
+
+    if args.command == "finalize-reconciliation-claim":
+        try:
+            plan = load_readback_file(Path(args.plan_json))
+            report = finalize_reconciliation_claim(
+                plan,
+                envelope_path=Path(args.envelope),
+                claim_state_dir=Path(args.claim_state_dir),
+            )
+        except (OSError, ValueError, ReconciliationAuthorizationError) as exc:
+            print(f"finalize-reconciliation-claim failed: {exc}", file=sys.stderr)
+            return 2
+        _emit_report(
+            report,
+            json_output=args.json,
+            print_report=print_reconciliation_report,
+            success_status=None,
+        )
+        return 0
+
+    if args.command == "supersede-reconciliation-receipt":
+        try:
+            original_plan = load_readback_file(Path(args.original_plan_json))
+            plan = build_reconciliation_receipt_supersession_plan(
+                original_plan,
+                original_receipt_path=Path(args.original_receipt_json),
+            )
+            if args.apply:
+                if args.envelope is None or args.claim_state_dir is None:
+                    print(
+                        "--apply requires --envelope and --claim-state-dir",
+                        file=sys.stderr,
+                    )
+                    return 2
+                report = apply_reconciliation_receipt_supersession_plan(
+                    plan,
+                    envelope_path=Path(args.envelope),
+                    claim_state_dir=Path(args.claim_state_dir),
+                )
+            else:
+                report = {"status": "planned", "plan": plan}
+        except (OSError, ValueError, ReconciliationAuthorizationError) as exc:
+            print(f"supersede-reconciliation-receipt failed: {exc}", file=sys.stderr)
+            return 2
+        _emit_report(
+            report,
+            json_output=args.json,
+            print_report=print_reconciliation_report,
+            success_status=None,
+        )
+        return 0
+
+    if args.command == "reconcile-delivery":
+        try:
+            readback = load_readback_file(Path(args.readback_json))
+            plan = build_reconciliation_plan(
+                args.event_id,
+                args.channel,
+                terminal_outcome=args.terminal_outcome,
+                provider_reference=args.provider_reference,
+                readback_result=readback,
+                database_path=Path(args.db_path),
+                receipt_state_dir=(
+                    Path(args.claim_state_dir)
+                    if args.claim_state_dir is not None
+                    else None
+                ),
+            )
+            if args.apply:
+                if args.envelope is None or args.claim_state_dir is None:
+                    print(
+                        "--apply requires --envelope and --claim-state-dir",
+                        file=sys.stderr,
+                    )
+                    return 2
+            if args.apply:
+                report = apply_reconciliation_plan(
+                    plan,
+                    envelope_path=Path(cast(str, args.envelope)),
+                    claim_state_dir=Path(cast(str, args.claim_state_dir)),
+                )
+            else:
+                report = {"status": "planned", "plan": plan}
+        except (OSError, ValueError, ReconciliationAuthorizationError) as exc:
+            print(f"reconcile-delivery failed: {exc}", file=sys.stderr)
+            return 2
+        _emit_report(
+            report,
+            json_output=args.json,
+            print_report=print_reconciliation_report,
+            success_status=None,
+        )
+        return 0
 
     if args.command == "inbox":
         report = run_inbox(hours=args.hours, limit=args.limit)
@@ -488,6 +698,34 @@ def verify_runtime_main(argv: Sequence[str] | None = None) -> int:
 
 def delivery_check_main(argv: Sequence[str] | None = None) -> int:
     return _forward_to_command("delivery-check", argv)
+
+
+def finalize_delivery_check_claim_main(argv: Sequence[str] | None = None) -> int:
+    return _forward_to_command("finalize-delivery-check-claim", argv)
+
+
+def supersede_delivery_check_receipt_main(
+    argv: Sequence[str] | None = None,
+) -> int:
+    return _forward_to_command("supersede-delivery-check-receipt", argv)
+
+
+def finalize_delivery_check_supersession_claim_main(
+    argv: Sequence[str] | None = None,
+) -> int:
+    return _forward_to_command("finalize-delivery-check-supersession-claim", argv)
+
+
+def reconcile_delivery_main(argv: Sequence[str] | None = None) -> int:
+    return _forward_to_command("reconcile-delivery", argv)
+
+
+def finalize_reconciliation_claim_main(argv: Sequence[str] | None = None) -> int:
+    return _forward_to_command("finalize-reconciliation-claim", argv)
+
+
+def supersede_reconciliation_receipt_main(argv: Sequence[str] | None = None) -> int:
+    return _forward_to_command("supersede-reconciliation-receipt", argv)
 
 
 def inbox_main(argv: Sequence[str] | None = None) -> int:

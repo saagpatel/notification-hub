@@ -85,12 +85,12 @@ def build_parser(prog: str = "notification-hub") -> argparse.ArgumentParser:
     verify_runtime.add_argument(
         "--verify-slack",
         action="store_true",
-        help="Send one explicit Slack delivery-check message.",
+        help="Include the deterministic Slack delivery-check plan without sending.",
     )
     verify_runtime.add_argument(
         "--verify-push",
         action="store_true",
-        help="Send one explicit local push delivery-check notification.",
+        help="Include the deterministic push delivery-check plan without sending.",
     )
     verify_runtime.add_argument(
         "--json",
@@ -110,22 +110,228 @@ def build_parser(prog: str = "notification-hub") -> argparse.ArgumentParser:
 
     delivery_check = subparsers.add_parser(
         "delivery-check",
-        help="Send explicit opt-in Slack and/or push transport checks.",
+        help="Plan Slack and/or push checks; apply only with exact one-shot authority.",
     )
     delivery_check.add_argument(
         "--slack",
         action="store_true",
-        help="Send one Slack delivery-check message.",
+        help="Include Slack in the exact delivery-check plan.",
     )
     delivery_check.add_argument(
         "--push",
         action="store_true",
-        help="Send one local push delivery-check notification.",
+        help="Include local push in the exact delivery-check plan.",
+    )
+    delivery_check.add_argument(
+        "--apply",
+        action="store_true",
+        help="Consume exact one-shot authority and execute the rendered plan.",
+    )
+    delivery_check.add_argument(
+        "--envelope",
+        help="Owner-private IrreversibleActionEnvelopeV1 bound to the plan.",
+    )
+    delivery_check.add_argument(
+        "--claim-state-dir",
+        help="Exact owner-private claim/receipt directory; binds an apply-ready plan.",
     )
     delivery_check.add_argument(
         "--json",
         action="store_true",
         help="Emit the delivery-check report as JSON.",
+    )
+
+    finalize_delivery_check = subparsers.add_parser(
+        "finalize-delivery-check-claim",
+        help="Finalize a consumed delivery-check claim without sending or retrying.",
+    )
+    finalize_delivery_check.add_argument(
+        "--plan-json",
+        required=True,
+        help="Owner-private delivery-check plan artifact persisted before the claim.",
+    )
+    finalize_delivery_check.add_argument(
+        "--envelope",
+        required=True,
+        help="Exact IrreversibleActionEnvelopeV1 consumed by the claim.",
+    )
+    finalize_delivery_check.add_argument(
+        "--claim-state-dir",
+        required=True,
+        help="Owner-private directory containing the consumed claim.",
+    )
+    finalize_delivery_check.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the receipt-only finalization result as JSON.",
+    )
+
+    supersede_delivery_check = subparsers.add_parser(
+        "supersede-delivery-check-receipt",
+        help="Plan or append a fresh-authority resolution of one outcome_unknown check.",
+    )
+    supersede_delivery_check.add_argument(
+        "--original-plan-json",
+        required=True,
+        help="Owner-private original NotificationDeliveryCheckPlanV2 artifact.",
+    )
+    supersede_delivery_check.add_argument(
+        "--original-receipt-json",
+        required=True,
+        help="Owner-private original single-channel outcome_unknown receipt.",
+    )
+    supersede_delivery_check.add_argument(
+        "--provider-readback-json",
+        required=True,
+        help="Owner-private operator-supplied provider readback; never queried by this command.",
+    )
+    supersede_delivery_check.add_argument(
+        "--claim-state-dir",
+        required=True,
+        help="Exact owner-private directory bound into the fresh supersession plan.",
+    )
+    supersede_delivery_check.add_argument(
+        "--apply",
+        action="store_true",
+        help="Append the superseding receipt after consuming fresh exact authority.",
+    )
+    supersede_delivery_check.add_argument(
+        "--envelope",
+        help="Fresh supersession IrreversibleActionEnvelopeV1; required with --apply.",
+    )
+    supersede_delivery_check.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the supersession plan or receipt as JSON.",
+    )
+
+    finalize_delivery_check_supersession = subparsers.add_parser(
+        "finalize-delivery-check-supersession-claim",
+        help="Finalize a consumed supersession claim without querying or sending.",
+    )
+    finalize_delivery_check_supersession.add_argument(
+        "--plan-json",
+        required=True,
+        help="Owner-private supersession plan artifact persisted before the claim.",
+    )
+    finalize_delivery_check_supersession.add_argument(
+        "--envelope",
+        required=True,
+        help="Exact fresh IrreversibleActionEnvelopeV1 consumed by the claim.",
+    )
+    finalize_delivery_check_supersession.add_argument(
+        "--claim-state-dir",
+        required=True,
+        help="Owner-private directory containing the consumed supersession claim.",
+    )
+    finalize_delivery_check_supersession.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the receipt-only supersession finalization result as JSON.",
+    )
+
+    reconcile_delivery = subparsers.add_parser(
+        "reconcile-delivery",
+        help="Render an ambiguous-delivery reconciliation plan; apply only with exact authority.",
+    )
+    reconcile_delivery.add_argument("--event-id", required=True, help="Exact durable event ID.")
+    reconcile_delivery.add_argument("--channel", required=True, help="Exact delivery channel.")
+    reconcile_delivery.add_argument(
+        "--terminal-outcome",
+        required=True,
+        choices=("reconciled_succeeded", "reconciled_absent"),
+        help="Terminal provider outcome proven by readback.",
+    )
+    reconcile_delivery.add_argument(
+        "--provider-reference",
+        required=True,
+        help="Provider-specific readback reference.",
+    )
+    reconcile_delivery.add_argument(
+        "--readback-json",
+        required=True,
+        help="Owner-private JSON file containing exact provider readback.",
+    )
+    reconcile_delivery.add_argument(
+        "--db-path",
+        required=True,
+        help="Exact durable inbox SQLite path.",
+    )
+    reconcile_delivery.add_argument(
+        "--apply",
+        action="store_true",
+        help="Apply the rendered plan after consuming exact one-shot authority.",
+    )
+    reconcile_delivery.add_argument(
+        "--envelope",
+        help="IrreversibleActionEnvelopeV1 file; required with --apply.",
+    )
+    reconcile_delivery.add_argument(
+        "--claim-state-dir",
+        help="Exact owner-private claim/receipt directory; binds an apply-ready plan.",
+    )
+    reconcile_delivery.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the reconciliation plan or receipt as JSON.",
+    )
+
+    finalize_reconciliation = subparsers.add_parser(
+        "finalize-reconciliation-claim",
+        help="Finalize a consumed reconciliation or receipt-supersession claim.",
+    )
+    finalize_reconciliation.add_argument(
+        "--plan-json",
+        required=True,
+        help="Owner-private plan artifact persisted before the one-shot claim.",
+    )
+    finalize_reconciliation.add_argument(
+        "--envelope",
+        required=True,
+        help="Exact IrreversibleActionEnvelopeV1 consumed by the claim.",
+    )
+    finalize_reconciliation.add_argument(
+        "--claim-state-dir",
+        required=True,
+        help="Owner-private directory containing the existing one-shot claim.",
+    )
+    finalize_reconciliation.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the finalization result as JSON.",
+    )
+
+    supersede_reconciliation = subparsers.add_parser(
+        "supersede-reconciliation-receipt",
+        help="Plan or append a fresh-authority resolution of outcome_unknown.",
+    )
+    supersede_reconciliation.add_argument(
+        "--original-plan-json",
+        required=True,
+        help="Owner-private original ChannelReconciliationPlanV2 file.",
+    )
+    supersede_reconciliation.add_argument(
+        "--original-receipt-json",
+        required=True,
+        help="Owner-private original outcome_unknown authority receipt.",
+    )
+    supersede_reconciliation.add_argument(
+        "--apply",
+        action="store_true",
+        help="Append the superseding receipt after consuming fresh exact authority.",
+    )
+    supersede_reconciliation.add_argument(
+        "--envelope",
+        help="Fresh supersession IrreversibleActionEnvelopeV1; required with --apply.",
+    )
+    supersede_reconciliation.add_argument(
+        "--claim-state-dir",
+        help="Owner-private claim/receipt directory; required with --apply.",
+    )
+    supersede_reconciliation.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the supersession plan or receipt as JSON.",
     )
 
     inbox = subparsers.add_parser(

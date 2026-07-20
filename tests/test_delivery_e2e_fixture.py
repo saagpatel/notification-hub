@@ -84,6 +84,7 @@ def test_bridge_to_isolated_destination_readback_and_observation(tmp_path: Path)
     )
     mark_delivered(
         claimed.event_id,
+        expected_attempt_count=claimed.attempt_count,
         outcome="processed",
         classified_level=claimed.event.classified_level,
         path=inbox,

@@ -32,6 +32,8 @@ Prerequisites:
 - Python 3.12+
 - uv
 - FastMCP 3.x
+- A producer grant named `notification-hub-mcp` and its raw token in the
+  `NOTIFICATION_HUB_PRODUCER_TOKEN` environment variable
 
 Install and test:
 
@@ -109,6 +111,9 @@ HTTP client config:
 ## Security Notes
 
 - Keep secrets in environment variables; never paste API keys into prompts.
+- The downstream daemon request is authenticated as the fixed
+  `notification-hub-mcp` producer; caller-supplied payload fields cannot select
+  another producer principal.
 - Require approval for sensitive write, delete, or external-send actions.
 - Connect remote MCP clients only to trusted servers and review shared data.
 - Do not pass MCP client bearer tokens through to downstream APIs.

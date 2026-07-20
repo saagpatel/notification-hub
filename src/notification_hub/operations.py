@@ -16,7 +16,7 @@ from typing import cast
 
 import httpx
 
-from notification_hub.channels import ensure_log_dir, read_jsonl, send_push, send_slack
+from notification_hub.channels import ensure_log_dir, read_jsonl
 from notification_hub.config import (
     DAEMON_STDERR_LOG,
     DAEMON_STDOUT_LOG,
@@ -30,8 +30,11 @@ from notification_hub.config import (
     PolicyConfig,
     analyze_policy_config,
     get_policy_config,
-    live_smoke_authorized,
     load_policy_config_file,
+)
+from notification_hub.delivery_check import (
+    apply_delivery_check_plan,
+    build_delivery_check_plan,
 )
 from notification_hub.diagnostics import collect_doctor_report
 from notification_hub.durable_inbox import collect_health as collect_durable_inbox_health
@@ -323,6 +326,7 @@ from notification_hub.operations_types import (
 from notification_hub.operations_types import (
     VerifyRuntimeReport as VerifyRuntimeReport,
 )
+from notification_hub.producer_auth import ProducerPolicyError, producer_request_headers
 
 _GENERIC_OPERATION_ERROR = "operation failed; inspect local logs for details"
 
@@ -2055,14 +2059,21 @@ def run_smoke_check() -> SmokeReport:
     health_url = f"{base_url}/health/details"
     payload = Event(
         source="codex",
+        producer="notification-hub-smoke",
         level="info",
         title="Notification Hub smoke check",
         body=f"Smoke check at {datetime.now(UTC).isoformat()}",
         project="notification-hub",
+        required_destinations=["log"],
     )
 
     try:
-        response = httpx.post(event_url, json=payload.model_dump(mode="json"), timeout=5.0)
+        response = httpx.post(
+            event_url,
+            json=payload.model_dump(mode="json"),
+            headers=producer_request_headers("notification-hub-smoke"),
+            timeout=5.0,
+        )
         if response.status_code != 201:
             return {
                 "status": "degraded",
@@ -2093,7 +2104,7 @@ def run_smoke_check() -> SmokeReport:
             "response_status": response.status_code,
             "error": None if log_verified else "event not found in log",
         }
-    except httpx.HTTPError:
+    except (httpx.HTTPError, ProducerPolicyError):
         return {
             "status": "degraded",
             "health_url": health_url,
@@ -3367,49 +3378,51 @@ def run_policy_check() -> PolicyCheckReport:
 
 
 def run_delivery_check(
-    *, verify_slack: bool = False, verify_push: bool = False
+    *,
+    verify_slack: bool = False,
+    verify_push: bool = False,
+    apply: bool = False,
+    envelope_path: Path | None = None,
+    claim_state_dir: Path | None = None,
+    envelope_module_path: Path | None = None,
 ) -> DeliveryCheckReport:
-    """Send explicit opt-in transport checks for Slack and/or push delivery."""
-    if not live_smoke_authorized():
-        raise PermissionError(
-            "live delivery check requires NOTIFICATION_HUB_LIVE_SMOKE=1 and "
-            "NOTIFICATION_HUB_OPERATOR_APPROVED=1 with test mode disabled"
-        )
-    event = StoredEvent(
-        source="codex",
-        level="normal",
-        classified_level="normal",
-        title="Notification Hub delivery check",
-        body="Explicit operator-requested delivery verification.",
-        project="notification-hub",
+    """Render a deterministic plan or execute it with exact one-shot authority."""
+    plan = build_delivery_check_plan(
+        verify_slack=verify_slack,
+        verify_push=verify_push,
+        receipt_state_dir=claim_state_dir,
     )
-    slack_ok = send_slack(event) if verify_slack else None
-    push_ok = send_push(event) if verify_push else None
-    failures: list[str] = []
-    if slack_ok is False:
-        failures.append("Slack delivery check failed")
-    if push_ok is False:
-        failures.append("Push delivery check failed")
-    if slack_ok is True or push_ok is True:
+    if not apply:
+        return {
+            "status": "planned",
+            "verify_slack": verify_slack,
+            "verify_push": verify_push,
+            "slack_ok": None,
+            "push_ok": None,
+            "event_id": None,
+            "error": None,
+            "plan": plan,
+        }
+    if envelope_path is None or claim_state_dir is None:
+        raise ValueError("delivery-check apply requires envelope and claim state directory")
+    raw_report = apply_delivery_check_plan(
+        plan,
+        envelope_path=envelope_path,
+        claim_state_dir=claim_state_dir,
+        envelope_module_path=envelope_module_path,
+    )
+    report = cast(DeliveryCheckReport, raw_report)
+    if report["slack_ok"] is True or report["push_ok"] is True:
         state = _read_delivery_check_state()
         checked_at = datetime.now(UTC).isoformat()
-        if slack_ok is True:
+        if report["slack_ok"] is True:
             state["last_slack_ok_at"] = checked_at
-            state["last_slack_event_id"] = event.event_id
-        if push_ok is True:
+            state["last_slack_event_id"] = report["event_id"]
+        if report["push_ok"] is True:
             state["last_push_ok_at"] = checked_at
-            state["last_push_event_id"] = event.event_id
+            state["last_push_event_id"] = report["event_id"]
         _write_delivery_check_state(state)
-
-    return {
-        "status": "ok" if not failures else "degraded",
-        "verify_slack": verify_slack,
-        "verify_push": verify_push,
-        "slack_ok": slack_ok,
-        "push_ok": push_ok,
-        "event_id": event.event_id,
-        "error": "; ".join(failures) if failures else None,
-    }
+    return report
 
 
 def run_verify_runtime(
@@ -3448,14 +3461,15 @@ def run_verify_runtime(
         "recent_runtime_health_ok": burn_in["health"]["status"] == "ok",
         "import_queue_ok": import_queue["status"] == "ok",
         "smoke_ok": smoke is None or smoke["status"] == "ok",
-        "delivery_check_ok": delivery_check is None or delivery_check["status"] == "ok",
+        "delivery_check_ok": delivery_check is None
+        or delivery_check["status"] in {"ok", "planned"},
     }
     status = "ok" if all(checks.values()) else "degraded"
     health_url = local_api.get("url")
 
     return {
         "status": status,
-        "read_only": smoke is None and delivery_check is None,
+        "read_only": smoke is None,
         "include_smoke": include_smoke,
         "health_url": health_url if isinstance(health_url, str) else None,
         "checks": checks,

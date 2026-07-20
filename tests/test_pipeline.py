@@ -18,6 +18,7 @@ from notification_hub.models import Event, Level, Source
 from notification_hub.pipeline import (
     DeliveryDeferred,
     DeliveryError,
+    DeliveryOutcomeUnknown,
     QueueCapacityError,
     build_event_explanation_report,
     build_stored_event,
@@ -790,6 +791,39 @@ class TestRateLimiting:
 
 
 class TestPushFailureResilience:
+    def test_outcome_unknown_is_persisted_and_raises_non_retryable_error(
+        self, tmp_log: Path
+    ) -> None:
+        event = build_stored_event(_event(body="Session complete", project="ink"))
+        states: list[tuple[str, str, str | None]] = []
+        with (
+            patch(
+                "notification_hub.pipeline.send_slack_with_result",
+                return_value=ChannelDeliveryResult(
+                    False,
+                    receipt="slack:webhook:transport:response_unknown",
+                    error_category="slack_timeout",
+                    outcome_unknown=True,
+                ),
+            ),
+            _patch_daytime(),
+            pytest.raises(DeliveryOutcomeUnknown),
+        ):
+            process_stored_event_with_result(
+                event,
+                raise_on_delivery_failure=True,
+                durable_mode=True,
+                channel_state_recorder=lambda channel, state, evidence: states.append(
+                    (channel, state, evidence)
+                ),
+            )
+
+        assert states == [
+            ("slack", "attempted", None),
+            ("slack", "outcome_unknown", "slack:webhook:transport:response_unknown"),
+        ]
+        assert not tmp_log.exists()
+
     def test_durable_quiet_hour_delivery_is_deferred_not_memory_queued(self, tmp_log: Path) -> None:
         event = build_stored_event(_event(body="Approval needed for draft", project="ink"))
         states: list[tuple[str, str, str | None]] = []

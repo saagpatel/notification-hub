@@ -7,6 +7,9 @@
   The default Label matches the project-owned LaunchAgent path.
 
   Install:
+    git worktree add --detach ~/.local/state/notification-hub/runtime-current <reviewed-sha>
+    cd ~/.local/state/notification-hub/runtime-current
+    uv sync --frozen --no-editable --group dev
     sed 's|__HOME__|'"$HOME"'|g' ops/launchagents/com.saagar.notification-hub.plist \
       > ~/Library/LaunchAgents/com.saagar.notification-hub.plist
     launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.saagar.notification-hub.plist
@@ -20,6 +23,9 @@
       <string>/opt/homebrew/bin/uv</string>
       <string>run</string>
       <string>--frozen</string>
+      <string>--no-sync</string>
+      <string>python</string>
+      <string>-m</string>
       <string>uvicorn</string>
       <string>notification_hub.server:app</string>
       <string>--host</string>
@@ -28,7 +34,7 @@
       <string>9199</string>
     </array>
     <key>WorkingDirectory</key>
-    <string>__HOME__/Projects/notification-hub</string>
+    <string>__HOME__/.local/state/notification-hub/runtime-current</string>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
@@ -43,6 +49,8 @@
       <string>__HOME__</string>
       <key>PATH</key>
       <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+      <key>PYTHONPATH</key>
+      <string>__HOME__/.local/state/notification-hub/runtime-current/src</string>
     </dict>
   </dict>
 </plist>

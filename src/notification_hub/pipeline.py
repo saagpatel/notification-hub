@@ -68,6 +68,10 @@ class DeliveryError(RuntimeError):
     """Raised when required channel delivery fails in durable-worker mode."""
 
 
+class DeliveryOutcomeUnknown(DeliveryError):
+    """Raised when provider acceptance is ambiguous and retry must stop."""
+
+
 class DeliveryDeferred(RuntimeError):
     """Raised when a durable delivery must wait without consuming retry budget."""
 
@@ -488,8 +492,23 @@ def process_stored_event_with_result(
             )
         )
         if channel_state_recorder is not None:
-            evidence = result.receipt if result.accepted else result.error_category
-            channel_state_recorder(channel, "accepted" if result.accepted else "failed", evidence)
+            evidence = (
+                result.receipt
+                if result.accepted or result.outcome_unknown
+                else result.error_category
+            )
+            state = (
+                "accepted"
+                if result.accepted
+                else "outcome_unknown"
+                if result.outcome_unknown
+                else "failed"
+            )
+            channel_state_recorder(channel, state, evidence)
+        if result.outcome_unknown:
+            raise DeliveryOutcomeUnknown(
+                f"{channel} delivery outcome unknown for event {stored.event_id}"
+            )
         return result.accepted
 
     # A non-empty required_destinations list is an exact external-channel

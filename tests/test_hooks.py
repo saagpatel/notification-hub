@@ -142,6 +142,7 @@ def test_codex_hook_template_posts_valid_payload_with_repo_project_from_cwd() ->
     payload = json.loads(cast(str, captured["data"]))
     event = Event.model_validate(payload)
     assert event.source == "codex"
+    assert event.producer == "codex"
     assert event.level == "normal"
     assert event.project == "saagpatel/notification-hub"
     assert event.session_label == "task-clear-my-portfolio-s-dependabot"
@@ -207,6 +208,7 @@ def test_codex_hook_template_clamps_payload_to_event_schema() -> None:
 
     payload = json.loads(cast(str, captured["data"]))
     event = Event.model_validate(payload)
+    assert event.producer == "codex"
     assert len(event.title) <= 200
     assert len(event.body) <= 2000
     assert event.project is not None
@@ -268,6 +270,7 @@ exit 1
 
     payload = json.loads(payload_path.read_text(encoding="utf-8"))
     event = Event.model_validate(payload)
+    assert event.producer == "cc"
     assert event.project is not None
     assert len(event.project) <= 100
     assert event.project == "unresolved"
@@ -280,5 +283,11 @@ def test_launch_agent_template_uses_frozen_runtime() -> None:
     text = LAUNCH_AGENT_TEMPLATE.read_text(encoding="utf-8")
     assert "/opt/homebrew/bin/uv" in text
     assert "<string>--frozen</string>" in text
+    assert "<string>--no-sync</string>" in text
+    assert "<string>python</string>" in text
+    assert "<string>-m</string>" in text
+    assert "__HOME__/.local/state/notification-hub/runtime-current" in text
+    assert "<key>PYTHONPATH</key>" in text
+    assert "__HOME__/.local/state/notification-hub/runtime-current/src" in text
     assert "<string>127.0.0.1</string>" in text
     assert "<string>9199</string>" in text

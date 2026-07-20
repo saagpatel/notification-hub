@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 
@@ -10,6 +12,7 @@ from httpx import ASGITransport, AsyncClient
 
 import notification_hub.channels as channels_mod
 import notification_hub.config as config_mod
+import notification_hub.delivery_check as delivery_check_mod
 import notification_hub.durable_inbox as durable_inbox_mod
 import notification_hub.operations as operations_mod
 import notification_hub.pipeline as pipeline_mod
@@ -23,7 +26,14 @@ from notification_hub.pipeline import reset_suppression_engine
 @pytest.fixture
 async def client() -> AsyncIterator[AsyncClient]:
     transport = ASGITransport(app=server_mod.app)
-    async with AsyncClient(transport=transport, base_url="http://test") as c:
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        headers={
+            "Authorization": "Bearer fixture-codex-token",
+            "X-Notification-Hub-Producer": "codex",
+        },
+    ) as c:
         yield c
 
 
@@ -56,6 +66,40 @@ def isolate_runtime_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> It
     monkeypatch.setattr(config_mod, "DAEMON_STDOUT_LOG", daemon_log_dir / "stdout.log")
     monkeypatch.setattr(config_mod, "DAEMON_STDERR_LOG", daemon_log_dir / "stderr.log")
     monkeypatch.setattr(config_mod, "POLICY_CONFIG", tmp_path / "config.toml")
+    producer_auth_policy = tmp_path / "producer-auth.json"
+    producer_auth_policy.write_text(
+        json.dumps(
+            {
+                "schema": "NotificationProducerPolicyV1",
+                "producers": {
+                    producer: {
+                        "token_sha256": hashlib.sha256(token.encode()).hexdigest(),
+                        "allowed_destinations": destinations,
+                    }
+                    for producer, token, destinations in (
+                        (
+                            "codex",
+                            "fixture-codex-token",
+                            ["log", "push", "slack"],
+                        ),
+                        (
+                            "personal-ops",
+                            "fixture-personal-ops-token",
+                            ["log", "push", "slack"],
+                        ),
+                        (
+                            "restricted",
+                            "fixture-restricted-token",
+                            ["log"],
+                        ),
+                    )
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    producer_auth_policy.chmod(0o600)
+    monkeypatch.setattr(config_mod, "PRODUCER_AUTH_POLICY", producer_auth_policy)
     monkeypatch.setattr(
         config_mod, "LAUNCH_AGENT_PLIST", tmp_path / "com.saagar.notification-hub.plist"
     )
@@ -74,7 +118,16 @@ def isolate_runtime_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> It
     monkeypatch.setattr(pipeline_mod, "send_push", lambda _event: False)
     monkeypatch.setattr(pipeline_mod, "send_slack", lambda _event: False)
     monkeypatch.setattr(pipeline_mod, "send_slack_digest", lambda _events: False)
-    monkeypatch.setattr(operations_mod, "send_push", lambda _event: False)
+    monkeypatch.setattr(
+        delivery_check_mod,
+        "send_push_with_result",
+        lambda _event: channels_mod.ChannelDeliveryResult(False),
+    )
+    monkeypatch.setattr(
+        delivery_check_mod,
+        "send_slack_with_result",
+        lambda _event: channels_mod.ChannelDeliveryResult(False),
+    )
     monkeypatch.setattr(channels_mod, "get_slack_webhook_url", lambda: None)
 
     monkeypatch.setattr(config_mod, "BRIDGE_FILE", bridge_file)

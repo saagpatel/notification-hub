@@ -38,6 +38,7 @@ from notification_hub.durable_inbox import (
     record_channel_state,
     record_processing_deferred,
     record_processing_failure,
+    record_processing_outcome_unknown,
 )
 from notification_hub.durable_inbox import (
     collect_health as collect_durable_inbox_health,
@@ -84,9 +85,17 @@ from notification_hub.operations import (
 )
 from notification_hub.pipeline import (
     DeliveryDeferred,
+    DeliveryOutcomeUnknown,
     build_stored_event,
+    explain_event,
     get_suppression_engine,
     process_stored_event_with_result,
+)
+from notification_hub.producer_auth import (
+    ProducerAuthenticationError,
+    ProducerPolicyError,
+    authenticate_producer,
+    collect_producer_auth_health,
 )
 from notification_hub.producer_health import collect_producer_health
 from notification_hub.watcher import ObserverHandle, start_watcher
@@ -254,8 +263,14 @@ def _process_durable_record(record: DurableEventRecord) -> None:
             record.event_id,
             channel,
             state,
-            destination_ref=evidence if state == "accepted" else None,
-            error_category=evidence if state in {"failed", "buffered"} else None,
+            destination_ref=evidence if state in {"accepted", "outcome_unknown"} else None,
+            error_category=(
+                "outcome_unknown"
+                if state == "outcome_unknown"
+                else evidence
+                if state in {"failed", "buffered"}
+                else None
+            ),
         )
 
     result = process_stored_event_with_result(
@@ -268,6 +283,7 @@ def _process_durable_record(record: DurableEventRecord) -> None:
     )
     mark_delivered(
         record.event_id,
+        expected_attempt_count=record.attempt_count,
         outcome=result.outcome,
         classified_level=result.event.classified_level,
     )
@@ -287,6 +303,13 @@ async def _durable_inbox_loop() -> None:
 
         try:
             await asyncio.to_thread(_process_durable_record, record)
+        except DeliveryOutcomeUnknown as exc:
+            status = await asyncio.to_thread(record_processing_outcome_unknown, record, exc)
+            logger.error(
+                "Durable event %s requires provider reconciliation; status=%s",
+                record.event_id,
+                status,
+            )
         except DeliveryDeferred as exc:
             status = await asyncio.to_thread(record_processing_deferred, record, exc.retry_at)
             buffered_channels = await asyncio.to_thread(
@@ -1959,12 +1982,51 @@ async def request_validation_exception_handler(
     return JSONResponse(status_code=422, content={"detail": exc.errors()})
 
 
+def _authorize_producer_event(request: Request, event: Event) -> Event:
+    """Bind request credentials and freeze the exact authorized destinations."""
+    try:
+        grant = authenticate_producer(
+            request.headers.get("x-notification-hub-producer"),
+            request.headers.get("authorization"),
+        )
+    except ProducerAuthenticationError as exc:
+        raise HTTPException(
+            status_code=401,
+            detail="producer authentication failed",
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from exc
+    except ProducerPolicyError as exc:
+        logger.error("Producer authentication policy unavailable: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail="producer authentication policy unavailable",
+        ) from exc
+    if event.producer is not None and event.producer != grant.producer_id:
+        raise HTTPException(status_code=403, detail="producer identity mismatch")
+
+    explanation = explain_event(event)
+    destinations = {"log"}
+    if explanation.push_delivery:
+        destinations.add("push")
+    if explanation.slack_delivery:
+        destinations.add("slack")
+    if not destinations <= grant.allowed_destinations:
+        raise HTTPException(status_code=403, detail="destination is not authorized")
+    return event.model_copy(
+        update={
+            "producer": grant.producer_id,
+            "required_destinations": sorted(destinations),
+        }
+    )
+
+
 @app.post("/events", response_model=EventResponse, status_code=201)
-async def create_event(event: Event) -> EventResponse:
+async def create_event(request: Request, event: Event) -> EventResponse:
     """Accept a notification event after durable persistence."""
     global _event_count
+    authorized_event = _authorize_producer_event(request, event)
     try:
-        stored = await asyncio.to_thread(_persist_event_for_processing, event)
+        stored = await asyncio.to_thread(_persist_event_for_processing, authorized_event)
     except IdempotencyConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:
@@ -1989,12 +2051,14 @@ async def health() -> dict[str, object]:
     )
     durable_inbox = dict(collect_durable_inbox_health(create=True))
     producer_outbox = dict(collect_producer_health())
+    producer_auth = collect_producer_auth_health()
     status = (
         "ok"
         if (
             cursor_healthy
             and durable_inbox.get("status") == "ok"
             and producer_outbox.get("status") == "ok"
+            and producer_auth.get("status") == "ok"
         )
         else "degraded"
     )
@@ -2011,6 +2075,7 @@ async def health() -> dict[str, object]:
         },
         "durable_inbox": durable_inbox,
         "producer_outbox": producer_outbox,
+        "producer_auth": producer_auth,
     }
 
 

@@ -85,7 +85,13 @@ async def test_post_event_required_fields_only():
             )
     m.assert_called_once_with(
         "/events",
-        {"source": "cc", "level": "info", "title": "t", "body": "b"},
+        {
+            "source": "cc",
+            "producer": "notification-hub-mcp",
+            "level": "info",
+            "title": "t",
+            "body": "b",
+        },
     )
 
 
@@ -110,6 +116,7 @@ async def test_post_event_optional_fields_included():
         "/events",
         {
             "source": "codex",
+            "producer": "notification-hub-mcp",
             "level": "urgent",
             "title": "deploy done",
             "body": "v2 deployed",

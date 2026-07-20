@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import sqlite3
+import stat
 import sys
 import time
 import urllib.error
@@ -23,6 +24,36 @@ OUTBOX_PATH = Path(
 )
 MAX_DRAIN = 20
 DEFAULT_MAX_ATTEMPTS = 20
+
+
+def load_producer_token(producer_id: str) -> str:
+    """Load the producer's owner-private token without placing it in payloads."""
+    configured_path = os.environ.get("NOTIFICATION_HUB_PRODUCER_TOKEN_FILE")
+    token_path = (
+        Path(configured_path).expanduser()
+        if configured_path
+        else Path.home()
+        / ".config"
+        / "notification-hub"
+        / "producer-tokens"
+        / f"{producer_id}.token"
+    )
+    metadata = token_path.lstat()
+    if (
+        token_path.is_symlink()
+        or not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid != os.geteuid()
+        or metadata.st_mode & 0o077
+    ):
+        raise ValueError("producer token file must be owner-private and non-symlinked")
+    token = token_path.read_text(encoding="utf-8").strip()
+    if (
+        not token
+        or len(token) > 512
+        or any(character.isspace() for character in token)
+    ):
+        raise ValueError("producer token is invalid")
+    return token
 
 
 def _hub_url_allowed() -> bool:
@@ -148,10 +179,19 @@ def deliver_due(*, path: Path = OUTBOX_PATH, limit: int = MAX_DRAIN) -> int:
             event_id = str(row["event_id"])
             attempt_count = int(row["attempt_count"]) + 1
             max_attempts = int(row["max_attempts"])
+            payload = json.loads(str(row["payload_json"]))
+            producer_id = payload.get("producer") if isinstance(payload, dict) else None
+            if not isinstance(producer_id, str) or not producer_id:
+                raise ValueError("producer payload requires producer identity")
+            token = load_producer_token(producer_id)
             request = urllib.request.Request(
                 HUB_URL,
                 data=str(row["payload_json"]).encode(),
-                headers={"Content-Type": "application/json"},
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                    "X-Notification-Hub-Producer": producer_id,
+                },
                 method="POST",
             )
             try:

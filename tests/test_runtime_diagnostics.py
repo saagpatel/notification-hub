@@ -7,7 +7,6 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 from _pytest.capture import CaptureFixture
 
 from notification_hub.cli import main
@@ -551,13 +550,27 @@ def test_cli_status_json_output(capsys: CaptureFixture[str]) -> None:
 
 def test_run_delivery_check_persists_successful_transport_state(tmp_path: Path) -> None:
     state_path = tmp_path / "delivery-check-state.json"
+    applied_report = _delivery_check_report(
+        status="degraded",
+        verify_slack=True,
+        verify_push=True,
+    )
+    applied_report["slack_ok"] = True
+    applied_report["push_ok"] = False
     with (
-        patch("notification_hub.operations.live_smoke_authorized", return_value=True),
         patch("notification_hub.operations.DELIVERY_CHECK_STATE", state_path),
-        patch("notification_hub.operations.send_slack", return_value=True),
-        patch("notification_hub.operations.send_push", return_value=False),
+        patch(
+            "notification_hub.operations.apply_delivery_check_plan",
+            return_value=applied_report,
+        ),
     ):
-        report = run_delivery_check(verify_slack=True, verify_push=True)
+        report = run_delivery_check(
+            verify_slack=True,
+            verify_push=True,
+            apply=True,
+            envelope_path=tmp_path / "envelope.json",
+            claim_state_dir=tmp_path / "claims",
+        )
 
     payload = json.loads(state_path.read_text(encoding="utf-8"))
     assert report["status"] == "degraded"
@@ -567,14 +580,15 @@ def test_run_delivery_check_persists_successful_transport_state(tmp_path: Path) 
     assert payload["last_push_ok_at"] is None
 
 
-def test_run_delivery_check_refuses_without_separate_live_smoke_gates() -> None:
-    with (
-        patch("notification_hub.operations.live_smoke_authorized", return_value=False),
-        patch("notification_hub.operations.send_slack") as mock_slack,
-        pytest.raises(PermissionError, match="LIVE_SMOKE"),
-    ):
-        run_delivery_check(verify_slack=True)
-    mock_slack.assert_not_called()
+def test_run_delivery_check_is_plan_only_without_apply() -> None:
+    with patch(
+        "notification_hub.operations.apply_delivery_check_plan"
+    ) as mock_apply:
+        report = run_delivery_check(verify_slack=True)
+
+    assert report["status"] == "planned"
+    assert report["event_id"] is None
+    mock_apply.assert_not_called()
 
 
 def test_cli_logs_json_output(capsys: CaptureFixture[str]) -> None:
@@ -893,7 +907,7 @@ def test_run_verify_runtime_delivery_check_is_opt_in() -> None:
         report = run_verify_runtime(verify_slack=True)
 
     assert report["status"] == "degraded"
-    assert report["read_only"] is False
+    assert report["read_only"] is True
     assert report["checks"]["delivery_check_ok"] is False
     assert report["delivery_check"] is not None
     mock_delivery_check.assert_called_once_with(verify_slack=True, verify_push=False)
@@ -901,13 +915,27 @@ def test_run_verify_runtime_delivery_check_is_opt_in() -> None:
 
 def test_run_delivery_check_reports_transport_results(tmp_path: Path) -> None:
     state_path = tmp_path / "delivery-check-state.json"
+    applied_report = _delivery_check_report(
+        status="degraded",
+        verify_slack=True,
+        verify_push=True,
+    )
+    applied_report["slack_ok"] = True
+    applied_report["push_ok"] = False
     with (
-        patch("notification_hub.operations.live_smoke_authorized", return_value=True),
         patch("notification_hub.operations.DELIVERY_CHECK_STATE", state_path),
-        patch("notification_hub.operations.send_slack", return_value=True) as mock_slack,
-        patch("notification_hub.operations.send_push", return_value=False) as mock_push,
+        patch(
+            "notification_hub.operations.apply_delivery_check_plan",
+            return_value=applied_report,
+        ) as mock_apply,
     ):
-        report = run_delivery_check(verify_slack=True, verify_push=True)
+        report = run_delivery_check(
+            verify_slack=True,
+            verify_push=True,
+            apply=True,
+            envelope_path=tmp_path / "envelope.json",
+            claim_state_dir=tmp_path / "claims",
+        )
 
     assert report["status"] == "degraded"
     assert report["verify_slack"] is True
@@ -915,9 +943,8 @@ def test_run_delivery_check_reports_transport_results(tmp_path: Path) -> None:
     assert report["slack_ok"] is True
     assert report["push_ok"] is False
     assert report["event_id"] is not None
-    assert report["error"] == "Push delivery check failed"
-    mock_slack.assert_called_once()
-    mock_push.assert_called_once()
+    assert report["error"] == "delivery failed"
+    mock_apply.assert_called_once()
 
 
 def test_cli_verify_runtime_json_output(capsys: CaptureFixture[str]) -> None:
@@ -1031,4 +1058,100 @@ def test_cli_delivery_check_json_output(capsys: CaptureFixture[str]) -> None:
     captured = capsys.readouterr()
     assert exit_code == 0
     assert '"slack_ok": true' in captured.out
-    mock_delivery_check.assert_called_once_with(verify_slack=True, verify_push=False)
+    mock_delivery_check.assert_called_once_with(
+        verify_slack=True,
+        verify_push=False,
+        apply=False,
+        envelope_path=None,
+        claim_state_dir=None,
+    )
+
+
+def test_cli_delivery_check_apply_requires_exact_authority_paths(
+    capsys: CaptureFixture[str],
+) -> None:
+    with patch("notification_hub.cli.run_delivery_check") as mock_delivery_check:
+        exit_code = main(["delivery-check", "--slack", "--apply"])
+
+    output = capsys.readouterr()
+    assert exit_code == 2
+    assert "--apply requires --envelope and --claim-state-dir" in output.err
+    mock_delivery_check.assert_not_called()
+
+
+def test_cli_delivery_check_apply_forwards_exact_authority_paths(
+    tmp_path: Path,
+) -> None:
+    envelope_path = tmp_path / "envelope.json"
+    claim_state_dir = tmp_path / "claims"
+    with patch(
+        "notification_hub.cli.run_delivery_check",
+        return_value=_delivery_check_report(verify_slack=True),
+    ) as mock_delivery_check:
+        exit_code = main(
+            [
+                "delivery-check",
+                "--slack",
+                "--apply",
+                "--envelope",
+                str(envelope_path),
+                "--claim-state-dir",
+                str(claim_state_dir),
+                "--json",
+            ]
+        )
+
+    assert exit_code == 0
+    mock_delivery_check.assert_called_once_with(
+        verify_slack=True,
+        verify_push=False,
+        apply=True,
+        envelope_path=envelope_path,
+        claim_state_dir=claim_state_dir,
+    )
+
+
+def test_cli_finalize_delivery_check_claim_is_receipt_only(
+    tmp_path: Path,
+) -> None:
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(
+        json.dumps(
+            {
+                "schema": "NotificationDeliveryCheckPlanV2",
+                "action_kind": "notification.delivery_check",
+            }
+        ),
+        encoding="utf-8",
+    )
+    plan_path.chmod(0o600)
+    envelope_path = tmp_path / "envelope.json"
+    claim_state_dir = tmp_path / "claims"
+    with patch(
+        "notification_hub.cli.finalize_delivery_check_claim",
+        return_value={
+            "status": "finalized",
+            "terminal_outcome": "outcome_unknown",
+            "authority_receipt_path": str(tmp_path / "receipt.json"),
+            "plan_artifact_path": str(plan_path),
+        },
+    ) as mock_finalize:
+        exit_code = main(
+            [
+                "finalize-delivery-check-claim",
+                "--plan-json",
+                str(plan_path),
+                "--envelope",
+                str(envelope_path),
+                "--claim-state-dir",
+                str(claim_state_dir),
+                "--json",
+            ]
+        )
+
+    assert exit_code == 0
+    mock_finalize.assert_called_once_with(
+        json.loads(plan_path.read_text(encoding="utf-8")),
+        envelope_path=envelope_path,
+        claim_state_dir=claim_state_dir,
+    )

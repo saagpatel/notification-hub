@@ -401,7 +401,7 @@ class TestSendSlack:
         ):
             result = send_slack(event)
         assert result is False
-        assert mock_post.call_count == channels_mod._SLACK_MAX_ATTEMPTS
+        assert mock_post.call_count == 1
 
     def test_returns_false_on_http_error(self) -> None:
         event = _make_event()
@@ -424,7 +424,7 @@ class TestSendSlack:
         [
             (400, "slack_http_4xx", 1),
             (429, "slack_http_429", channels_mod._SLACK_MAX_ATTEMPTS),
-            (503, "slack_http_5xx", channels_mod._SLACK_MAX_ATTEMPTS),
+            (503, "slack_http_5xx", 1),
         ],
     )
     def test_detailed_result_categorizes_http_failure_without_response_content(
@@ -443,7 +443,15 @@ class TestSendSlack:
         ):
             result = send_slack_with_result(_make_event())
 
-        assert result == ChannelDeliveryResult(False, error_category=category)
+        if status_code >= 500:
+            assert result == ChannelDeliveryResult(
+                False,
+                receipt="slack:webhook:http:5xx",
+                error_category=category,
+                outcome_unknown=True,
+            )
+        else:
+            assert result == ChannelDeliveryResult(False, error_category=category)
         assert "secret" not in (result.error_category or "")
         assert mock_post.call_count == attempts
 
@@ -467,7 +475,15 @@ class TestSendSlack:
         ):
             result = send_slack_with_result(_make_event())
 
-        assert result == ChannelDeliveryResult(False, error_category=category)
+        if isinstance(error, httpx.ReadTimeout):
+            assert result == ChannelDeliveryResult(
+                False,
+                receipt="slack:webhook:transport:response_unknown",
+                error_category=category,
+                outcome_unknown=True,
+            )
+        else:
+            assert result == ChannelDeliveryResult(False, error_category=category)
 
     @pytest.mark.parametrize(
         "error",
@@ -546,8 +562,19 @@ class TestSendSlack:
         assert "hooks.slack.com" not in payload_str
 
 
+def test_outcome_unknown_result_requires_consistent_provider_evidence() -> None:
+    with pytest.raises(ValueError, match="both accepted"):
+        ChannelDeliveryResult(
+            True,
+            receipt="slack:webhook:http:2xx",
+            outcome_unknown=True,
+        )
+    with pytest.raises(ValueError, match="provider-specific receipt"):
+        ChannelDeliveryResult(False, error_category="slack_timeout", outcome_unknown=True)
+
+
 class TestSendSlackRetry:
-    """Transient Slack failures (network, timeout, 429, 5xx) must retry with backoff."""
+    """Only Slack failures known to be pre-effect may retry with backoff."""
 
     _WEBHOOK = "notification_hub.channels.get_slack_webhook_url"
     _POST = "notification_hub.channels.httpx.post"
@@ -573,7 +600,7 @@ class TestSendSlackRetry:
         assert mock_post.call_count == 2
         assert mock_sleep.call_count == 1
 
-    def test_retries_on_5xx_then_succeeds(self) -> None:
+    def test_does_not_retry_ambiguous_5xx(self) -> None:
         event = _make_event()
         with (
             patch(self._WEBHOOK, return_value=self._URL),
@@ -581,10 +608,10 @@ class TestSendSlackRetry:
             patch(self._SLEEP),
         ):
             result = send_slack(event)
-        assert result is True
-        assert mock_post.call_count == 2
+        assert result is False
+        assert mock_post.call_count == 1
 
-    def test_gives_up_after_max_attempts_on_persistent_5xx(self) -> None:
+    def test_persistent_5xx_stops_after_first_ambiguous_attempt(self) -> None:
         event = _make_event()
         with (
             patch(self._WEBHOOK, return_value=self._URL),
@@ -593,8 +620,8 @@ class TestSendSlackRetry:
         ):
             result = send_slack(event)
         assert result is False
-        assert mock_post.call_count == channels_mod._SLACK_MAX_ATTEMPTS
-        assert mock_sleep.call_count == channels_mod._SLACK_MAX_ATTEMPTS - 1
+        assert mock_post.call_count == 1
+        mock_sleep.assert_not_called()
 
     def test_no_retry_on_permanent_4xx(self) -> None:
         event = _make_event()
@@ -619,6 +646,20 @@ class TestSendSlackRetry:
             result = send_slack(event)
         assert result is True
         assert mock_post.call_count == 2
+
+    def test_does_not_retry_read_timeout_with_unknown_provider_outcome(self) -> None:
+        event = _make_event()
+        with (
+            patch(self._WEBHOOK, return_value=self._URL),
+            patch(self._POST, side_effect=httpx.ReadTimeout("response lost")) as mock_post,
+            patch(self._SLEEP) as mock_sleep,
+        ):
+            result = send_slack_with_result(event)
+
+        assert result.outcome_unknown is True
+        assert result.receipt == "slack:webhook:transport:response_unknown"
+        assert mock_post.call_count == 1
+        mock_sleep.assert_not_called()
 
     def test_success_on_first_attempt_does_not_sleep(self) -> None:
         event = _make_event()

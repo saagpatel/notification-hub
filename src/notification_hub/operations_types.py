@@ -23,6 +23,12 @@ class DeliveryCheckReport(TypedDict):
     push_ok: bool | None
     event_id: str | None
     error: str | None
+    plan: NotRequired[dict[str, object]]
+    terminal_outcome: NotRequired[str]
+    authority_receipt: NotRequired[dict[str, object]]
+    authority_receipt_path: NotRequired[str]
+    plan_artifact_path: NotRequired[str]
+    channel_results: NotRequired[dict[str, object]]
 
 
 class DeliveryCheckState(TypedDict):

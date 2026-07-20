@@ -108,8 +108,48 @@ def print_delivery_check_report(report: DeliveryCheckReport) -> None:
     print(f"- push requested: {report['verify_push']}")
     print(f"- push OK: {report['push_ok']}")
     print(f"- event ID: {report['event_id']}")
+    plan = report.get("plan")
+    if isinstance(plan, dict):
+        print(f"- plan digest: {plan.get('plan_digest')}")
+        print(f"- targets: {json.dumps(plan.get('canonical_targets'), sort_keys=True)}")
+    terminal_outcome = report.get("terminal_outcome")
+    if terminal_outcome is not None:
+        print(f"- terminal outcome: {terminal_outcome}")
+    authority_receipt_path = report.get("authority_receipt_path")
+    if authority_receipt_path is not None:
+        print(f"- authority receipt: {authority_receipt_path}")
     if report["error"] is not None:
         print(f"- error: {report['error']}")
+
+
+def print_delivery_check_finalization_report(report: dict[str, object]) -> None:
+    print(f"notification-hub finalize-delivery-check-claim: {report['status']}")
+    print(f"- terminal outcome: {report.get('terminal_outcome')}")
+    print(f"- authority receipt: {report.get('authority_receipt_path')}")
+    print(f"- plan artifact: {report.get('plan_artifact_path')}")
+
+
+def print_reconciliation_report(report: dict[str, object]) -> None:
+    print(f"notification-hub reconcile-delivery: {report['status']}")
+    plan = report.get("plan")
+    if isinstance(plan, dict):
+        typed_plan = cast(dict[str, object], plan)
+        print(f"- plan digest: {typed_plan.get('plan_digest')}")
+        print(f"- action kind: {typed_plan.get('action_kind')}")
+        print(f"- targets: {json.dumps(typed_plan.get('canonical_targets'), sort_keys=True)}")
+    receipt = report.get("receipt")
+    if isinstance(receipt, dict):
+        typed_receipt = cast(dict[str, object], receipt)
+        print(f"- action ID: {typed_receipt.get('action_id')}")
+        print(f"- terminal outcome: {typed_receipt.get('terminal_outcome')}")
+    if report.get("authority_receipt_path") is not None:
+        print(f"- authority receipt: {report['authority_receipt_path']}")
+    if report.get("plan_artifact_path") is not None:
+        print(f"- plan artifact: {report['plan_artifact_path']}")
+    if report.get("recovered_after_error") is True:
+        print("- recovered after apply error: yes (terminal database readback matched)")
+    if report.get("terminal_outcome") is not None and not isinstance(receipt, dict):
+        print(f"- terminal outcome: {report['terminal_outcome']}")
 
 
 def print_inbox_report(report: InboxReport) -> None:

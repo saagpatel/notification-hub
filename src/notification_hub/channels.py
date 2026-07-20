@@ -25,9 +25,9 @@ from notification_hub.models import StoredEvent
 
 logger = logging.getLogger(__name__)
 
-# Slack delivery retry policy. Transient failures (network errors, timeouts,
-# HTTP 429, and 5xx) are retried with exponential backoff; permanent client
-# errors (other 4xx) and success short-circuit immediately.
+# Slack delivery retry policy. Only failures that prove Slack did not accept the
+# request are retried. Once request acceptance is ambiguous, the caller must
+# reconcile provider state before any further send.
 _SLACK_TIMEOUT_SECONDS = 10.0
 _SLACK_MAX_ATTEMPTS = 3
 _SLACK_RETRY_BASE_SECONDS = 0.5
@@ -131,6 +131,13 @@ class ChannelDeliveryResult:
     accepted: bool
     receipt: str | None = None
     error_category: str | None = None
+    outcome_unknown: bool = False
+
+    def __post_init__(self) -> None:
+        if self.accepted and self.outcome_unknown:
+            raise ValueError("delivery cannot be both accepted and outcome_unknown")
+        if self.outcome_unknown and not self.receipt:
+            raise ValueError("outcome_unknown requires a provider-specific receipt")
 
 
 def ensure_log_dir() -> None:
@@ -311,23 +318,33 @@ def _parse_retry_after(resp: httpx.Response) -> float | None:
 def _post_to_slack_with_result(
     webhook_url: str, payload: SlackPayload, description: str
 ) -> ChannelDeliveryResult:
-    """POST a payload to a Slack webhook with bounded retry on transient failures.
-
-    Retries network errors, timeouts, HTTP 429, and 5xx with exponential backoff
-    (honoring Retry-After on 429). Returns immediately on a 200 or a permanent
-    client error (other 4xx). Returns True only when Slack accepts the payload.
-    """
+    """POST a payload to Slack without replaying an ambiguous attempt."""
     for attempt in range(1, _SLACK_MAX_ATTEMPTS + 1):
         retry_after: float | None = None
         try:
             resp = httpx.post(webhook_url, json=payload, timeout=_SLACK_TIMEOUT_SECONDS)
         except httpx.TransportError as exc:
-            # Covers all timeout + network variants; retry these.
-            transient = True
             reason = type(exc).__name__
             error_category = (
                 "slack_timeout" if isinstance(exc, httpx.TimeoutException) else "slack_network_error"
             )
+            if isinstance(
+                exc,
+                (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout),
+            ):
+                transient = True
+            else:
+                logger.warning(
+                    "Slack %s has ambiguous transport outcome (%s); reconciliation required",
+                    description,
+                    reason,
+                )
+                return ChannelDeliveryResult(
+                    False,
+                    receipt="slack:webhook:transport:response_unknown",
+                    error_category=error_category,
+                    outcome_unknown=True,
+                )
         except Exception as exc:
             # Permanent/setup error (bad URL, unsupported protocol). Log the type
             # only — exception messages can embed the webhook URL (a bearer token).
@@ -337,7 +354,19 @@ def _post_to_slack_with_result(
             if resp.status_code == 200:
                 logger.info("Slack %s sent (attempt %d)", description, attempt)
                 return ChannelDeliveryResult(True, receipt="slack:webhook:http:2xx")
-            transient = resp.status_code == 429 or resp.status_code >= 500
+            if resp.status_code >= 500:
+                logger.warning(
+                    "Slack %s has ambiguous provider outcome (HTTP %d); reconciliation required",
+                    description,
+                    resp.status_code,
+                )
+                return ChannelDeliveryResult(
+                    False,
+                    receipt="slack:webhook:http:5xx",
+                    error_category="slack_http_5xx",
+                    outcome_unknown=True,
+                )
+            transient = resp.status_code == 429
             reason = f"HTTP {resp.status_code}"
             error_category = (
                 "slack_http_429"
