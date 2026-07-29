@@ -17,6 +17,10 @@ import httpx
 from fastmcp import FastMCP
 
 BASE_URL = os.environ.get("NOTIFICATION_HUB_URL", "http://127.0.0.1:9199")
+PRODUCER_ID = os.environ.get(
+    "NOTIFICATION_HUB_MCP_PRODUCER",
+    "notification-hub-mcp",
+)
 TIMEOUT = httpx.Timeout(connect=5.0, read=15.0, write=10.0, pool=15.0)
 
 mcp = FastMCP("notification-hub-mcp")
@@ -30,8 +34,15 @@ async def _get(path: str) -> dict[str, Any]:
 
 
 async def _post(path: str, payload: dict[str, Any]) -> dict[str, Any]:
+    token = os.environ.get("NOTIFICATION_HUB_PRODUCER_TOKEN")
+    if not token:
+        raise RuntimeError("notification-hub producer token is not configured")
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "X-Notification-Hub-Producer": PRODUCER_ID,
+    }
     async with httpx.AsyncClient(base_url=BASE_URL, timeout=TIMEOUT) as client:
-        response = await client.post(path, json=payload)
+        response = await client.post(path, json=payload, headers=headers)
         response.raise_for_status()
         return response.json()
 
@@ -63,6 +74,7 @@ async def post_event(
     """
     payload: dict[str, Any] = {
         "source": source,
+        "producer": PRODUCER_ID,
         "level": level,
         "title": title,
         "body": body,

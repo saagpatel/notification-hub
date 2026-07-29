@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+from collections.abc import Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -21,6 +22,9 @@ DurableEventStatus = Literal[
     "processed",
     "suppressed",
     "dead_lettered",
+    "reconciliation_required",
+    "reconciled_succeeded",
+    "reconciled_absent",
 ]
 DurableOutcome = Literal["processed", "suppressed"]
 
@@ -66,6 +70,7 @@ class DurableInboxHealth(TypedDict):
     processing_count: int
     retry_scheduled_count: int
     retrying_count: int
+    reconciliation_required_count: int
     processed_count: int
     suppressed_count: int
     dead_letter_count: int
@@ -200,6 +205,56 @@ def init_schema(path: Path | None = None) -> None:
                 cursor_value INTEGER NOT NULL,
                 updated_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS channel_reconciliation_receipts (
+                reconciliation_id TEXT PRIMARY KEY,
+                event_id TEXT NOT NULL,
+                channel TEXT NOT NULL,
+                original_unknown_evidence_digest TEXT NOT NULL,
+                original_provider_reference TEXT NOT NULL,
+                terminal_outcome TEXT NOT NULL,
+                provider_reference TEXT NOT NULL,
+                readback_json TEXT NOT NULL,
+                readback_digest TEXT NOT NULL,
+                receipt_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                UNIQUE(event_id, channel),
+                FOREIGN KEY(event_id) REFERENCES durable_events(event_id) ON DELETE RESTRICT
+            );
+            CREATE TRIGGER IF NOT EXISTS channel_reconciliation_receipts_no_update
+            BEFORE UPDATE ON channel_reconciliation_receipts
+            BEGIN
+                SELECT RAISE(ABORT, 'channel reconciliation receipts are append-only');
+            END;
+            CREATE TRIGGER IF NOT EXISTS channel_reconciliation_receipts_no_delete
+            BEFORE DELETE ON channel_reconciliation_receipts
+            BEGIN
+                SELECT RAISE(ABORT, 'channel reconciliation receipts are append-only');
+            END;
+            CREATE TRIGGER IF NOT EXISTS outcome_unknown_channel_no_update
+            BEFORE UPDATE ON channel_deliveries
+            WHEN OLD.state = 'outcome_unknown' AND OLD.destination_ref IS NOT NULL
+            BEGIN
+                SELECT RAISE(ABORT, 'outcome_unknown evidence is immutable');
+            END;
+            CREATE TRIGGER IF NOT EXISTS outcome_unknown_channel_no_delete
+            BEFORE DELETE ON channel_deliveries
+            WHEN OLD.state = 'outcome_unknown'
+            BEGIN
+                SELECT RAISE(ABORT, 'outcome_unknown evidence is immutable');
+            END;
+            CREATE TRIGGER IF NOT EXISTS reconciled_event_status_no_update
+            BEFORE UPDATE OF status ON durable_events
+            WHEN OLD.status IN ('reconciled_succeeded', 'reconciled_absent')
+                AND NEW.status != OLD.status
+            BEGIN
+                SELECT RAISE(ABORT, 'reconciled event status is terminal');
+            END;
+            CREATE TRIGGER IF NOT EXISTS reconciled_event_no_delete
+            BEFORE DELETE ON durable_events
+            WHEN OLD.status IN ('reconciled_succeeded', 'reconciled_absent')
+            BEGIN
+                SELECT RAISE(ABORT, 'reconciled event evidence is append-only');
+            END;
             """
         )
         columns = {
@@ -227,7 +282,7 @@ def init_schema(path: Path | None = None) -> None:
             if name not in channel_columns:
                 conn.execute(f"ALTER TABLE channel_deliveries ADD COLUMN {name} TEXT")  # noqa: S608
         conn.execute(
-            "INSERT OR REPLACE INTO schema_metadata(key, value) VALUES('schema_version', '5')"
+            "INSERT OR REPLACE INTO schema_metadata(key, value) VALUES('schema_version', '7')"
         )
 
 
@@ -260,10 +315,13 @@ def record_channel_state(
         "delivered",
         "observed",
         "failed",
+        "outcome_unknown",
         "dispositioned",
     }
     if state not in allowed:
         raise ValueError(f"unsupported channel state: {state}")
+    if state == "outcome_unknown" and not destination_ref:
+        raise ValueError("outcome_unknown requires a provider reference")
     now = isoformat()
     timestamp_column = {
         "attempted": "attempted_at",
@@ -275,14 +333,24 @@ def record_channel_state(
     init_schema(path)
     with _managed_connection(path) as conn:
         existing = conn.execute(
-            "SELECT state FROM channel_deliveries WHERE event_id = ? AND channel = ?",
+            "SELECT state, destination_ref FROM channel_deliveries "
+            "WHERE event_id = ? AND channel = ?",
             (event_id, channel),
         ).fetchone()
         current_state = str(existing["state"]) if existing is not None else None
+        if current_state == "outcome_unknown":
+            assert existing is not None
+            current_ref = cast(str | None, existing["destination_ref"])
+            if state != "outcome_unknown":
+                raise ValueError("outcome_unknown requires explicit reconciliation")
+            if destination_ref != current_ref:
+                raise ValueError("outcome_unknown receipt is immutable")
+            return
         terminal_rank = {
             "attempted": 1,
             "buffered": 1,
             "failed": 1,
+            "outcome_unknown": 2,
             "accepted": 2,
             "delivered": 3,
             "observed": 4,
@@ -374,7 +442,7 @@ def get_channel_receipts(
     init_schema(path)
     with _managed_connection(path) as conn:
         row = conn.execute(
-            "SELECT acceptance_receipt, delivery_receipt, observation_receipt, "
+            "SELECT destination_ref, acceptance_receipt, delivery_receipt, observation_receipt, "
             "terminal_disposition, last_error_category AS error_category, backoff_until "
             "FROM channel_deliveries "
             "WHERE event_id = ? AND channel = ?",
@@ -383,6 +451,337 @@ def get_channel_receipts(
     if row is None:
         raise KeyError((event_id, channel))
     return {key: cast(str | None, row[key]) for key in row.keys()}
+
+
+def _canonical_json(value: object) -> str:
+    try:
+        return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("receipt evidence must be canonical JSON") from exc
+
+
+def _sha256_json(value: object) -> str:
+    return "sha256:" + hashlib.sha256(_canonical_json(value).encode("utf-8")).hexdigest()
+
+
+def _parse_json_object(encoded: str, *, label: str) -> dict[str, object]:
+    value = cast(object, json.loads(encoded))
+    if not isinstance(value, dict):
+        raise ValueError(f"{label} is not an object")
+    raw = cast(dict[object, object], value)
+    if not all(isinstance(key, str) for key in raw):
+        raise ValueError(f"{label} has a non-string key")
+    return {cast(str, key): item for key, item in raw.items()}
+
+
+def _unknown_delivery_evidence(row: sqlite3.Row, event_id: str, channel: str) -> dict[str, object]:
+    if str(row["state"]) != "outcome_unknown":
+        raise ValueError("channel does not have outcome_unknown evidence")
+    original_provider_reference = cast(str | None, row["destination_ref"])
+    if not original_provider_reference:
+        raise ValueError("outcome_unknown evidence has no provider reference")
+    payload_digest = cast(str | None, row["payload_digest"])
+    if not payload_digest:
+        event = StoredEvent.model_validate_json(str(row["payload_json"]))
+        payload_digest = event_payload_digest(event)
+    return {
+        "schema": "UnknownDeliveryEvidenceV1",
+        "target": {"event_id": event_id, "channel": channel},
+        "event_payload_digest": payload_digest,
+        "state": "outcome_unknown",
+        "provider_reference": original_provider_reference,
+        "error_category": cast(str | None, row["last_error_category"]),
+        "attempt_count": int(row["attempt_count"]),
+    }
+
+
+def _select_unknown_delivery(
+    conn: sqlite3.Connection,
+    event_id: str,
+    channel: str,
+) -> sqlite3.Row:
+    row = conn.execute(
+        """
+        SELECT
+            channel_deliveries.state,
+            channel_deliveries.destination_ref,
+            channel_deliveries.last_error_category,
+            channel_deliveries.attempt_count,
+            durable_events.status AS event_status,
+            durable_events.payload_digest,
+            durable_events.payload_json
+        FROM channel_deliveries
+        JOIN durable_events ON durable_events.event_id = channel_deliveries.event_id
+        WHERE channel_deliveries.event_id = ? AND channel_deliveries.channel = ?
+        """,
+        (event_id, channel),
+    ).fetchone()
+    if row is None:
+        raise KeyError((event_id, channel))
+    return row
+
+
+def unknown_delivery_evidence_digest(
+    event_id: str,
+    channel: str,
+    *,
+    path: Path | None = None,
+) -> str:
+    """Digest the immutable unknown-outcome evidence for exact reconciliation binding."""
+    init_schema(path)
+    with _managed_connection(path) as conn:
+        row = _select_unknown_delivery(conn, event_id, channel)
+        return _sha256_json(_unknown_delivery_evidence(row, event_id, channel))
+
+
+def read_unknown_delivery_context(
+    event_id: str,
+    channel: str,
+    *,
+    path: Path,
+) -> dict[str, object]:
+    """Read reconciliation context without creating or migrating SQLite state."""
+    canonical_path = path.expanduser().resolve(strict=True)
+    connection = sqlite3.connect(f"{canonical_path.as_uri()}?mode=ro", uri=True)
+    connection.row_factory = sqlite3.Row
+    try:
+        row = _select_unknown_delivery(connection, event_id, channel)
+        evidence = _unknown_delivery_evidence(row, event_id, channel)
+        return {
+            "database_path": str(canonical_path),
+            "event_status": str(row["event_status"]),
+            "event_payload_digest": evidence["event_payload_digest"],
+            "unknown_evidence_digest": _sha256_json(evidence),
+            "original_provider_reference": evidence["provider_reference"],
+        }
+    finally:
+        connection.close()
+
+
+def read_channel_reconciliation_state(
+    event_id: str,
+    channel: str,
+    *,
+    path: Path,
+) -> dict[str, object]:
+    """Read terminal reconciliation state without creating or migrating SQLite state."""
+    canonical_path = path.expanduser().resolve(strict=True)
+    connection = sqlite3.connect(f"{canonical_path.as_uri()}?mode=ro", uri=True)
+    connection.row_factory = sqlite3.Row
+    try:
+        row = connection.execute(
+            """
+            SELECT
+                durable_events.status AS event_status,
+                channel_reconciliation_receipts.receipt_json
+            FROM durable_events
+            LEFT JOIN channel_reconciliation_receipts
+              ON channel_reconciliation_receipts.event_id = durable_events.event_id
+             AND channel_reconciliation_receipts.channel = ?
+            WHERE durable_events.event_id = ?
+            """,
+            (channel, event_id),
+        ).fetchone()
+        if row is None:
+            raise KeyError(event_id)
+        encoded_receipt = cast(str | None, row["receipt_json"])
+        return {
+            "database_path": str(canonical_path),
+            "event_status": str(row["event_status"]),
+            "receipt": (
+                _parse_json_object(
+                    encoded_receipt,
+                    label="stored reconciliation receipt",
+                )
+                if encoded_receipt is not None
+                else None
+            ),
+        }
+    finally:
+        connection.close()
+
+
+def get_channel_reconciliation_receipt(
+    event_id: str,
+    channel: str,
+    *,
+    path: Path | None = None,
+) -> dict[str, object] | None:
+    """Read the append-only reconciliation receipt for one target, if present."""
+    init_schema(path)
+    with _managed_connection(path) as conn:
+        row = conn.execute(
+            "SELECT receipt_json FROM channel_reconciliation_receipts "
+            "WHERE event_id = ? AND channel = ?",
+            (event_id, channel),
+        ).fetchone()
+    if row is None:
+        return None
+    return _parse_json_object(
+        str(row["receipt_json"]),
+        label="stored reconciliation receipt",
+    )
+
+
+def record_channel_reconciliation(
+    event_id: str,
+    channel: str,
+    *,
+    reconciliation_id: str,
+    expected_unknown_evidence_digest: str,
+    expected_original_provider_reference: str,
+    terminal_outcome: Literal["reconciled_succeeded", "reconciled_absent"],
+    provider_reference: str,
+    readback_result: Mapping[str, object],
+    artifact_digest: str,
+    provider_idempotency_key: str,
+    path: Path | None = None,
+) -> dict[str, object]:
+    """Append exact provider readback and terminally resolve one unknown outcome."""
+    for name, value in (
+        ("event_id", event_id),
+        ("channel", channel),
+        ("reconciliation_id", reconciliation_id),
+        ("expected_unknown_evidence_digest", expected_unknown_evidence_digest),
+        ("expected_original_provider_reference", expected_original_provider_reference),
+        ("provider_reference", provider_reference),
+        ("artifact_digest", artifact_digest),
+        ("provider_idempotency_key", provider_idempotency_key),
+    ):
+        if not value or value != value.strip():
+            raise ValueError(f"{name} must be a non-empty exact value")
+    if terminal_outcome not in {"reconciled_succeeded", "reconciled_absent"}:
+        raise ValueError("unsupported reconciliation terminal outcome")
+    canonical_readback = _parse_json_object(
+        _canonical_json(dict(readback_result)),
+        label="readback_result",
+    )
+    if not canonical_readback:
+        raise ValueError("readback_result must be a non-empty object")
+    expected_provider_outcome = (
+        "accepted" if terminal_outcome == "reconciled_succeeded" else "absent"
+    )
+    required_readback = {
+        "event_id": event_id,
+        "channel": channel,
+        "provider_outcome": expected_provider_outcome,
+        "provider_reference": provider_reference,
+    }
+    for key, expected in required_readback.items():
+        if canonical_readback.get(key) != expected:
+            raise ValueError(f"readback_result {key} does not match reconciliation target")
+    readback_digest = _sha256_json(canonical_readback)
+
+    init_schema(path)
+    with _managed_connection(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        unknown_row = _select_unknown_delivery(conn, event_id, channel)
+        unknown_evidence = _unknown_delivery_evidence(unknown_row, event_id, channel)
+        actual_evidence_digest = _sha256_json(unknown_evidence)
+        if expected_unknown_evidence_digest != actual_evidence_digest:
+            raise ValueError("unknown evidence digest does not match current evidence")
+        actual_original_reference = str(unknown_evidence["provider_reference"])
+        if expected_original_provider_reference != actual_original_reference:
+            raise ValueError("original provider reference does not match current evidence")
+
+        existing = conn.execute(
+            """
+            SELECT *
+            FROM channel_reconciliation_receipts
+            WHERE reconciliation_id = ? OR (event_id = ? AND channel = ?)
+            """,
+            (reconciliation_id, event_id, channel),
+        ).fetchone()
+        if existing is not None:
+            exact_replay = (
+                str(existing["reconciliation_id"]) == reconciliation_id
+                and str(existing["event_id"]) == event_id
+                and str(existing["channel"]) == channel
+                and str(existing["original_unknown_evidence_digest"])
+                == actual_evidence_digest
+                and str(existing["original_provider_reference"])
+                == actual_original_reference
+                and str(existing["terminal_outcome"]) == terminal_outcome
+                and str(existing["provider_reference"]) == provider_reference
+                and str(existing["readback_json"]) == _canonical_json(canonical_readback)
+                and str(existing["readback_digest"]) == readback_digest
+            )
+            stored_receipt = _parse_json_object(
+                str(existing["receipt_json"]),
+                label="stored reconciliation receipt",
+            )
+            exact_replay = (
+                exact_replay
+                and stored_receipt.get("artifact_digest") == artifact_digest
+                and stored_receipt.get("provider_idempotency_key")
+                == provider_idempotency_key
+            )
+            if not exact_replay:
+                raise ValueError("event, channel, or reconciliation id already has reconciliation")
+            return stored_receipt
+
+        if str(unknown_row["event_status"]) != "reconciliation_required":
+            raise ValueError("event is not awaiting reconciliation")
+        recorded_at = isoformat()
+        receipt: dict[str, object] = {
+            "schema": "ChannelReconciliationReceiptV1",
+            "action_id": reconciliation_id,
+            "target": {"event_id": event_id, "channel": channel},
+            "original_unknown_evidence_digest": actual_evidence_digest,
+            "original_provider_reference": actual_original_reference,
+            "terminal_outcome": terminal_outcome,
+            "provider_reference": provider_reference,
+            "readback_result": canonical_readback,
+            "readback_digest": readback_digest,
+            "artifact_digest": artifact_digest,
+            "provider_idempotency_key": provider_idempotency_key,
+            "recorded_at": recorded_at,
+        }
+        conn.execute(
+            """
+            INSERT INTO channel_reconciliation_receipts (
+                reconciliation_id,
+                event_id,
+                channel,
+                original_unknown_evidence_digest,
+                original_provider_reference,
+                terminal_outcome,
+                provider_reference,
+                readback_json,
+                readback_digest,
+                receipt_json,
+                created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                reconciliation_id,
+                event_id,
+                channel,
+                actual_evidence_digest,
+                actual_original_reference,
+                terminal_outcome,
+                provider_reference,
+                _canonical_json(canonical_readback),
+                readback_digest,
+                _canonical_json(receipt),
+                recorded_at,
+            ),
+        )
+        cursor = conn.execute(
+            """
+            UPDATE durable_events
+            SET status = ?,
+                lease_until = NULL,
+                next_attempt_at = NULL,
+                updated_at = ?
+            WHERE event_id = ? AND status = 'reconciliation_required'
+            """,
+            (terminal_outcome, recorded_at, event_id),
+        )
+        if cursor.rowcount != 1:
+            raise ValueError("reconciliation transition no longer matches current event state")
+        return receipt
 
 
 def recent_channel_acceptance_times(
@@ -630,13 +1029,14 @@ def claim_next_due_event(
 def mark_delivered(
     event_id: str,
     *,
+    expected_attempt_count: int,
     outcome: DurableOutcome,
     classified_level: Level | None,
     path: Path | None = None,
 ) -> None:
     now = isoformat()
     with _managed_connection(path) as conn:
-        conn.execute(
+        cursor = conn.execute(
             """
             UPDATE durable_events
             SET status = ?,
@@ -648,9 +1048,13 @@ def mark_delivered(
                 classified_level = ?,
                 updated_at = ?
             WHERE event_id = ?
+              AND status = 'processing'
+              AND attempt_count = ?
             """,
-            (outcome, now, classified_level, now, event_id),
+            (outcome, now, classified_level, now, event_id, expected_attempt_count),
         )
+        if cursor.rowcount != 1:
+            raise ValueError("delivery completion no longer matches the claimed attempt")
 
 
 def retry_delay_seconds(attempt_count: int) -> int:
@@ -672,7 +1076,7 @@ def record_processing_failure(
     error_type = error.__class__.__name__
     with _managed_connection(path) as conn:
         if record.attempt_count >= record.max_attempts:
-            conn.execute(
+            cursor = conn.execute(
                 """
                 UPDATE durable_events
                 SET status = 'dead_lettered',
@@ -683,14 +1087,25 @@ def record_processing_failure(
                     last_error_type = ?,
                     updated_at = ?
                 WHERE event_id = ?
+                  AND status = 'processing'
+                  AND attempt_count = ?
                 """,
-                (now, error_text, error_type, now, record.event_id),
+                (
+                    now,
+                    error_text,
+                    error_type,
+                    now,
+                    record.event_id,
+                    record.attempt_count,
+                ),
             )
+            if cursor.rowcount != 1:
+                raise ValueError("processing failure no longer matches the claimed attempt")
             return "dead_lettered"
 
         delay = retry_delay_seconds(record.attempt_count)
         next_attempt_at = isoformat(now_dt + timedelta(seconds=delay))
-        conn.execute(
+        cursor = conn.execute(
             """
             UPDATE durable_events
             SET status = 'retry_scheduled',
@@ -700,10 +1115,57 @@ def record_processing_failure(
                 last_error_type = ?,
                 updated_at = ?
             WHERE event_id = ?
+              AND status = 'processing'
+              AND attempt_count = ?
             """,
-            (next_attempt_at, error_text, error_type, now, record.event_id),
+            (
+                next_attempt_at,
+                error_text,
+                error_type,
+                now,
+                record.event_id,
+                record.attempt_count,
+            ),
         )
+        if cursor.rowcount != 1:
+            raise ValueError("processing failure no longer matches the claimed attempt")
         return "retry_scheduled"
+
+
+def record_processing_outcome_unknown(
+    record: DurableEventRecord,
+    error: BaseException,
+    *,
+    path: Path | None = None,
+) -> DurableEventStatus:
+    """Stop automatic retries until provider outcome is explicitly reconciled."""
+    now = isoformat()
+    error_text = str(error)[:1000] or error.__class__.__name__
+    with _managed_connection(path) as conn:
+        cursor = conn.execute(
+            """
+            UPDATE durable_events
+            SET status = 'reconciliation_required',
+                lease_until = NULL,
+                next_attempt_at = NULL,
+                last_error = ?,
+                last_error_type = ?,
+                updated_at = ?
+            WHERE event_id = ?
+              AND status = 'processing'
+              AND attempt_count = ?
+            """,
+            (
+                error_text,
+                error.__class__.__name__,
+                now,
+                record.event_id,
+                record.attempt_count,
+            ),
+        )
+        if cursor.rowcount != 1:
+            raise ValueError("outcome_unknown transition no longer matches the claimed attempt")
+    return "reconciliation_required"
 
 
 def record_processing_deferred(
@@ -715,7 +1177,7 @@ def record_processing_deferred(
     """Durably defer without consuming the delivery failure budget."""
     now = isoformat()
     with _managed_connection(path) as conn:
-        conn.execute(
+        cursor = conn.execute(
             """
             UPDATE durable_events
             SET status = 'retry_scheduled',
@@ -726,9 +1188,13 @@ def record_processing_deferred(
                 last_error_type = NULL,
                 updated_at = ?
             WHERE event_id = ?
+              AND status = 'processing'
+              AND attempt_count = ?
             """,
-            (isoformat(retry_at), now, record.event_id),
+            (isoformat(retry_at), now, record.event_id, record.attempt_count),
         )
+        if cursor.rowcount != 1:
+            raise ValueError("processing deferral no longer matches the claimed attempt")
     return "retry_scheduled"
 
 
@@ -741,6 +1207,27 @@ def reclaim_stale_processing(
     init_schema(path)
     now_iso = isoformat(now)
     with _managed_connection(path) as conn:
+        conn.execute(
+            """
+            UPDATE durable_events
+            SET status = 'reconciliation_required',
+                lease_until = NULL,
+                next_attempt_at = NULL,
+                last_error = 'provider reconciliation required after interrupted delivery',
+                last_error_type = 'DeliveryOutcomeUnknown',
+                updated_at = ?
+            WHERE status = 'processing'
+              AND lease_until IS NOT NULL
+              AND lease_until < ?
+              AND EXISTS (
+                  SELECT 1
+                  FROM channel_deliveries
+                  WHERE channel_deliveries.event_id = durable_events.event_id
+                    AND channel_deliveries.state = 'outcome_unknown'
+              )
+            """,
+            (now_iso, now_iso),
+        )
         cursor = conn.execute(
             """
             UPDATE durable_events
@@ -828,6 +1315,7 @@ def collect_health(*, path: Path | None = None, create: bool = False) -> Durable
             "processing_count": 0,
             "retry_scheduled_count": 0,
             "retrying_count": 0,
+            "reconciliation_required_count": 0,
             "processed_count": 0,
             "suppressed_count": 0,
             "dead_letter_count": 0,
@@ -908,6 +1396,7 @@ def collect_health(*, path: Path | None = None, create: bool = False) -> Durable
             "processing_count": 0,
             "retry_scheduled_count": 0,
             "retrying_count": 0,
+            "reconciliation_required_count": 0,
             "processed_count": 0,
             "suppressed_count": 0,
             "dead_letter_count": 0,
@@ -932,6 +1421,7 @@ def collect_health(*, path: Path | None = None, create: bool = False) -> Durable
     queued = counts.get("queued", 0)
     processing = counts.get("processing", 0)
     retry_scheduled = counts.get("retry_scheduled", 0)
+    reconciliation_required = counts.get("reconciliation_required", 0)
     processed = counts.get("processed", 0)
     suppressed = counts.get("suppressed", 0)
     dead = counts.get("dead_lettered", 0)
@@ -950,7 +1440,10 @@ def collect_health(*, path: Path | None = None, create: bool = False) -> Durable
         oldest_actionable_dt is not None
         and (now_dt - oldest_actionable_dt).total_seconds() > BACKLOG_DEGRADED_AFTER_SECONDS
     )
-    if unresolved_dead > 0:
+    if reconciliation_required > 0:
+        status = "degraded"
+        next_action = "Reconcile every outcome-unknown delivery before any provider retry."
+    elif unresolved_dead > 0:
         status = "degraded"
         next_action = "Review and disposition every unresolved dead-lettered event."
     elif stale_processing > 0:
@@ -974,6 +1467,7 @@ def collect_health(*, path: Path | None = None, create: bool = False) -> Durable
         "processing_count": processing,
         "retry_scheduled_count": retry_scheduled,
         "retrying_count": retry_scheduled,
+        "reconciliation_required_count": reconciliation_required,
         "processed_count": processed,
         "suppressed_count": suppressed,
         "dead_letter_count": dead,

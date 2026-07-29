@@ -21,7 +21,7 @@ configurable.
 
 ## What It Does
 
-- Accepts `POST /events` on `127.0.0.1:9199`
+- Accepts authenticated `POST /events` requests on `127.0.0.1:9199`
 - Watches the Claude bridge file for new activity lines
 - Classifies events as `urgent`, `normal`, or `info`
 - Persists accepted events to a local SQLite durable inbox before acknowledging producers
@@ -30,7 +30,9 @@ configurable.
 - Sends normal events to Slack
 - Keeps info events in the log only
 - Suppresses noise with dedup, quiet hours, and rate limits
-- Retries failed delivery and retains exhausted events in a dead-letter box
+- Retries delivery only when the failure proves no provider effect, retains exhausted
+  failures in a dead-letter box, and quarantines ambiguous provider outcomes for
+  explicit readback reconciliation
 
 ## Architecture
 
@@ -48,6 +50,45 @@ Core modules:
 - `suppression.py`: dedup, quiet hours, and rate limiting
 - `channels.py`: JSONL, macOS push, and Slack delivery
 - `config.py`: host, paths, and Keychain-backed webhook lookup
+
+## Producer Authentication
+
+`POST /events` fails closed unless the request supplies both
+`Authorization: Bearer <token>` and `X-Notification-Hub-Producer: <producer>`.
+The bearer token authenticates that exact producer; a payload cannot claim a
+different `producer`.
+
+The daemon reads digest-only grants from the owner-private, non-symlinked file
+`~/.config/notification-hub/producer-auth.json`:
+
+```json
+{
+  "schema": "NotificationProducerPolicyV1",
+  "producers": {
+    "codex": {
+      "token_sha256": "64-lowercase-hex-characters",
+      "allowed_destinations": ["log", "push", "slack"]
+    }
+  }
+}
+```
+
+The checked-in hook producer reads the corresponding raw token from
+`~/.config/notification-hub/producer-tokens/<producer>.token`, also requiring
+an owner-private, non-symlinked file. Provision tokens outside the repository;
+the example digest above is descriptive and is not a usable credential.
+
+At intake, the daemon computes the destinations selected by the current
+classifier and routing policy, verifies that exact set against the producer
+grant, and persists it into the event. A later routing-policy change therefore
+cannot widen an already accepted event. Local JSONL evidence (`log`) is always
+required. Missing policy, missing credentials, principal mismatch, and
+destination escalation all fail before durable inbox persistence.
+
+The repo-owned hooks use producer IDs `codex` and `cc`. The smoke command uses
+`notification-hub-smoke`. The MCP wrapper uses `notification-hub-mcp` and reads
+its raw token from `NOTIFICATION_HUB_PRODUCER_TOKEN`. Each ID needs its own
+unique token digest and destination allowlist.
 
 ## Local Development
 
@@ -112,6 +153,13 @@ uv run notification-hub verify-runtime
 uv run notification-hub verify-runtime --verify-slack
 uv run notification-hub delivery-check --slack
 uv run notification-hub-delivery-check --json --slack
+uv run notification-hub delivery-check --slack --apply --envelope ENVELOPE.json --claim-state-dir CLAIMS
+uv run notification-hub finalize-delivery-check-claim --plan-json PLAN.json --envelope ENVELOPE.json --claim-state-dir CLAIMS --json
+uv run notification-hub supersede-delivery-check-receipt --original-plan-json ORIGINAL_PLAN.json --original-receipt-json OUTCOME_UNKNOWN_RECEIPT.json --provider-readback-json PROVIDER_READBACK.json --claim-state-dir FRESH_CLAIMS --json
+uv run notification-hub finalize-delivery-check-supersession-claim --plan-json SUPERSESSION_PLAN.json --envelope FRESH_ENVELOPE.json --claim-state-dir FRESH_CLAIMS --json
+uv run notification-hub reconcile-delivery --event-id EVENT_ID --channel slack --terminal-outcome reconciled_succeeded --provider-reference PROVIDER_REF --readback-json READBACK.json --db-path INBOX.sqlite3 --json
+uv run notification-hub finalize-reconciliation-claim --plan-json PLAN.json --envelope ENVELOPE.json --claim-state-dir CLAIMS --json
+uv run notification-hub supersede-reconciliation-receipt --original-plan-json PLAN.json --original-receipt-json OUTCOME_UNKNOWN_RECEIPT.json --json
 uv run notification-hub-verify-runtime --json
 uv run notification-hub policy-check
 uv run notification-hub explain --source codex --level info --title "Test" --body "Approval needed"
@@ -121,8 +169,56 @@ uv run notification-hub retention --max-events 2000
 
 The doctor command checks the local API, LaunchAgent presence, bridge file path, push notifier,
 Slack Keychain setup, policy-config load status, and durable inbox status.
-The smoke command posts a harmless `info` event and verifies the background worker lands it in the
-live JSONL audit log.
+`reconcile-delivery` is plan-only by default and reads the named SQLite database
+without creating or migrating it. Its `--readback-json` input must be an
+owner-private regular file. `ChannelReconciliationPlanV2` binds an explicit
+`--claim-state-dir`, or the deterministic `claims` directory beside the inbox
+when omitted. Applying a rendered plan requires `--apply`, an exact one-shot
+`--envelope`, and that same owner-private directory; changing directories
+cannot reset claim consumption. The command does not query or retry the
+provider. After the one-shot claim, any
+handled SQLite error is classified by read-only database inspection and emits
+an immutable `failed_before_effect`, reconciled, or `outcome_unknown` authority
+receipt in the claim-state directory. Before claim consumption, apply also
+atomically saves `<action_id>.plan.json` in that directory for restart-safe
+finalization.
+`finalize-reconciliation-claim` consumes the previously rendered owner-private
+plan artifact plus the existing envelope and claim. It validates that the claim
+digest matches the envelope, that the supplied plan exactly matches the
+owner-private non-symlink artifact persisted before claim, and that `claimed_at`
+fell inside the original authorization window. Only then does it perform
+read-only database classification and receipt finalization. It never replays
+the reconciliation transition. Concurrent finalizers use atomic
+first-writer-wins publication; a loser re-reads and validates the winning
+receipt instead of emitting conflicting evidence or reporting a false failure.
+Apply also holds an owner-private per-action OS execution lock from before the
+one-shot claim through mutation, readback, and receipt publication. Finalizers
+take a shared nonblocking lock and fail closed while apply is alive; process
+termination releases the lock automatically for receipt-only recovery.
+The same command finalizes an interrupted receipt supersession from its
+persisted plan and consumed claim; that path emits only the missing append-only
+receipt and performs no database read, transition, notification, or provider
+retry.
+`supersede-reconciliation-receipt` is plan-only by default. It requires the
+immutable original `outcome_unknown` receipt plus its original plan, resolves
+the current database state read-only, and binds a proposed superseding receipt
+to both evidence digests. `--apply` requires a fresh one-shot envelope under a
+new action ID; the original receipt is never replaced.
+`supersede-delivery-check-receipt` is the narrower no-send equivalent for a
+single-channel delivery-check `outcome_unknown`. It accepts only an
+owner-private operator-supplied provider readback proving `accepted` or
+`absent`; the command contains no provider-query or transport path. Planning
+binds the original plan and receipt digests, exact readback digest, provider
+reference, and future claim-state directory. Apply re-reads those files before
+creating claim state and requires a fresh exact one-shot envelope. Changed
+evidence, multi-channel originals, reused authority, or a different receipt
+directory fail closed. The original receipt is append-only evidence and is
+never replaced. If receipt publication is interrupted after the fresh claim,
+`finalize-delivery-check-supersession-claim` emits only the missing linked
+receipt and never sends, queries, or retries a provider.
+The smoke command authenticates as `notification-hub-smoke`, posts a harmless
+log-only `info` event, and verifies the background worker lands it in the live
+JSONL audit log.
 The status command shows the compact day-to-day runtime view and suggests the next repair action
 when something is degraded, including recent Slack delivery failures found in daemon logs and
 recent durable inbox dead letters or stale backlog.
@@ -288,10 +384,31 @@ copied deliberately instead of inferred from raw event rows.
 The verify-runtime command combines doctor, policy-check, `/health/details`, runtime wiring checks,
 durable inbox status, and recent burn-in health into one read-only report by default. Pass
 `--include-smoke` when you intentionally want it to post a harmless smoke event too. Pass
-`--verify-slack` or `--verify-push` when you intentionally want to send one real delivery-check
-notification through that channel.
-The delivery-check command runs the same explicit transport checks directly without the rest of
-the runtime report.
+`--verify-slack` or `--verify-push` to include the deterministic delivery-check plan for that
+channel without sending.
+The delivery-check command is also plan-only by default. Pass
+`--claim-state-dir` while rendering an apply-ready plan so
+`NotificationDeliveryCheckPlanV2` binds the exact owner-private claim and
+receipt namespace. Live execution requires `--apply`, an exact unexpired
+one-shot `IrreversibleActionEnvelopeV1` bound to that plan digest, channel
+targets, and state directory, plus the product's separate live-smoke policy
+gates. Unbound legacy plans are non-executable, and changing directories cannot
+reset one-shot consumption. The exact plan is atomically persisted before
+authority is claimed and before the first transport call. A successful or handled
+ambiguous simulation emits an immutable receipt with provider references and channel readback.
+An ambiguous outcome stops remaining channels and the consumed action cannot be retried.
+If the executor terminates after claiming authority but before publishing its receipt,
+`finalize-delivery-check-claim` validates the persisted plan, exact envelope digest, claim time,
+and existing lock identity, then appends only an `outcome_unknown` receipt. It does not invoke,
+query, or retry either transport. An active executor holds the per-action OS lock and blocks the
+finalizer; after termination, replay returns the first byte-stable receipt.
+Resolving that receipt is deliberately separate from retry. The
+`supersede-delivery-check-receipt` plan accepts only one original channel and
+binds fresh owner-private provider evidence plus a new receipt directory.
+`--apply` requires a newly issued envelope under a new action ID. A provider
+outcome of `accepted` resolves to `succeeded`; `absent` resolves to
+`failed_before_effect`. Both outcomes append a new authority receipt and
+preserve the original `outcome_unknown` bytes.
 The policy-check command inspects the current policy config for overlapping keywords, shadowed
 routing rules, no-op rules, and drift between the live noise rules and repo sample before they cause
 confusing behavior. It also suggests likely fixes for each warning it reports.
@@ -628,8 +745,10 @@ Runtime change checklist:
   behavior.
 - Use `notification-hub verify-runtime --include-smoke` only when you intentionally want a real
   POST-to-log smoke event.
-- Use `notification-hub verify-runtime --verify-slack`, `--verify-push`, or
-  `notification-hub delivery-check` only when you intentionally want a real delivery notification.
+- `notification-hub verify-runtime --verify-slack`, `--verify-push`, and
+  `notification-hub delivery-check` render delivery plans without sending. Use delivery-check
+  `--apply` only with an exact one-shot envelope, bounded targets, and a disposable or explicitly
+  approved claim-state directory.
 - Confirm GitHub Actions passes after pushing to `main`.
 
 ## Runtime Notes
@@ -637,8 +756,9 @@ Runtime change checklist:
 - The daemon is localhost-only.
 - The canonical local Python version is pinned in `.python-version` and matches CI's Python 3.12
   target.
-- Accepted events are committed to `~/.local/share/notification-hub/inbox.sqlite3` before `POST
-  /events` returns 201.
+- Authenticated, destination-authorized events are committed to
+  `~/.local/share/notification-hub/inbox.sqlite3` before `POST /events` returns
+  201.
 - Local push or Slack rate limits move durable events to `retry_scheduled` until a channel slot is
   available without consuming the event's failure-attempt budget. A channel that was already
   accepted remains accepted and is skipped on the later retry. Health treats a future scheduled
@@ -659,8 +779,9 @@ Runtime change checklist:
   and the durable producer helper are the source of truth for machine-local wiring. Failed hook
   posts remain queued in `~/.local/share/notification-hub/producer-outbox.sqlite3` and retry on a
   later hook invocation; accepted producer receipts remain as history.
-- `GET /health` reports degraded status when durable inbox delivery, the producer outbox, or the
-  enabled BridgeDB cursor is unhealthy; it is the compact fleet-readiness authority.
+- `GET /health` reports degraded status when producer authentication, durable
+  inbox delivery, the producer outbox, or the enabled BridgeDB cursor is
+  unhealthy; it is the compact fleet-readiness authority.
 - `GET /health/details` adds whether push delivery is available, whether Slack is configured,
   whether key local files exist, whether a policy config file was loaded, how many policy warnings
   were found, the current retention settings plus the last retention result, and current

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 from _pytest.capture import CaptureFixture
 
@@ -19,6 +19,8 @@ from notification_hub.cli import (
     delivery_check_main,
     doctor_main,
     explain_main,
+    finalize_delivery_check_claim_main,
+    finalize_delivery_check_supersession_claim_main,
     inbox_main,
     logs_main,
     operator_daily_state_main,
@@ -32,6 +34,7 @@ from notification_hub.cli import (
     retention_main,
     smoke_main,
     status_main,
+    supersede_delivery_check_receipt_main,
     validate_action_package_main,
     verify_runtime_main,
 )
@@ -102,6 +105,22 @@ def test_doctor_main_forwards_flags(capsys: CaptureFixture[str]) -> None:
     captured = capsys.readouterr()
     assert exit_code == 0
     assert '"status": "ok"' in captured.out
+
+
+def test_delivery_check_supersession_wrappers_forward_exact_commands() -> None:
+    with patch("notification_hub.cli.main", return_value=0) as mock_main:
+        assert supersede_delivery_check_receipt_main(["--json"]) == 0
+        assert finalize_delivery_check_supersession_claim_main(["--json"]) == 0
+
+    assert mock_main.call_args_list == [
+        call(["supersede-delivery-check-receipt", "--json"]),
+        call(
+            [
+            "finalize-delivery-check-supersession-claim",
+            "--json",
+            ]
+        ),
+    ]
 
 
 def test_smoke_and_retention_wrappers_forward_flags(capsys: CaptureFixture[str]) -> None:
@@ -313,7 +332,56 @@ def test_delivery_check_wrapper_forwards_flags(capsys: CaptureFixture[str]) -> N
     output = capsys.readouterr()
     assert exit_code == 0
     assert '"verify_push": true' in output.out
-    mock_delivery_check.assert_called_once_with(verify_slack=True, verify_push=True)
+    mock_delivery_check.assert_called_once_with(
+        verify_slack=True,
+        verify_push=True,
+        apply=False,
+        envelope_path=None,
+        claim_state_dir=None,
+    )
+
+
+def test_finalize_delivery_check_wrapper_forwards_paths(
+    tmp_path: Path,
+    capsys: CaptureFixture[str],
+) -> None:
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(
+        json.dumps({"schema": "NotificationDeliveryCheckPlanV2"}),
+        encoding="utf-8",
+    )
+    plan_path.chmod(0o600)
+    envelope_path = tmp_path / "envelope.json"
+    claims = tmp_path / "claims"
+    with patch(
+        "notification_hub.cli.finalize_delivery_check_claim",
+        return_value={
+            "status": "finalized",
+            "terminal_outcome": "outcome_unknown",
+            "authority_receipt_path": str(tmp_path / "receipt.json"),
+            "plan_artifact_path": str(plan_path),
+        },
+    ) as mock_finalize:
+        exit_code = finalize_delivery_check_claim_main(
+            [
+                "--plan-json",
+                str(plan_path),
+                "--envelope",
+                str(envelope_path),
+                "--claim-state-dir",
+                str(claims),
+                "--json",
+            ]
+        )
+
+    output = capsys.readouterr()
+    assert exit_code == 0
+    assert '"terminal_outcome": "outcome_unknown"' in output.out
+    mock_finalize.assert_called_once_with(
+        {"schema": "NotificationDeliveryCheckPlanV2"},
+        envelope_path=envelope_path,
+        claim_state_dir=claims,
+    )
 
 
 def test_inbox_wrapper_forwards_flags(capsys: CaptureFixture[str]) -> None:

@@ -22,6 +22,13 @@ def test_smoke_check_reports_success_when_event_hits_log() -> None:
     response.json.return_value = {"event_id": "abc123"}
 
     with (
+        patch(
+            "notification_hub.operations.producer_request_headers",
+            return_value={
+                "Authorization": "Bearer fixture-smoke-token",
+                "X-Notification-Hub-Producer": "notification-hub-smoke",
+            },
+        ),
         patch("notification_hub.operations.httpx.post", return_value=response),
         patch(
             "notification_hub.operations.read_jsonl",
@@ -38,9 +45,18 @@ def test_smoke_check_reports_success_when_event_hits_log() -> None:
 
 
 def test_smoke_check_reports_http_failure() -> None:
-    with patch(
-        "notification_hub.operations.httpx.post",
-        side_effect=httpx.ConnectError("boom"),
+    with (
+        patch(
+            "notification_hub.operations.producer_request_headers",
+            return_value={
+                "Authorization": "Bearer fixture-smoke-token",
+                "X-Notification-Hub-Producer": "notification-hub-smoke",
+            },
+        ),
+        patch(
+            "notification_hub.operations.httpx.post",
+            side_effect=httpx.ConnectError("boom"),
+        ),
     ):
         report = run_smoke_check()
 

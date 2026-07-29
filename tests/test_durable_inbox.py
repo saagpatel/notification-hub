@@ -19,16 +19,21 @@ from notification_hub.durable_inbox import (
     disposition_dead_letter,
     enqueue_event,
     get_channel_receipts,
+    get_channel_reconciliation_receipt,
+    get_channel_state,
     get_event,
     init_schema,
     mark_delivered,
     prune_retained_events,
     recent_channel_acceptance_times,
     reclaim_stale_processing,
+    record_channel_reconciliation,
     record_channel_state,
     record_processing_deferred,
     record_processing_failure,
+    record_processing_outcome_unknown,
     retry_delay_seconds,
+    unknown_delivery_evidence_digest,
 )
 from notification_hub.models import StoredEvent
 
@@ -143,6 +148,7 @@ def test_claim_and_mark_processed_transition(tmp_path: Path) -> None:
 
     mark_delivered(
         claimed.event_id,
+        expected_attempt_count=claimed.attempt_count,
         outcome="processed",
         classified_level=claimed.event.classified_level,
         path=db_path,
@@ -264,6 +270,30 @@ def test_reclaim_stale_processing_lease(tmp_path: Path) -> None:
     assert stored.status == "retry_scheduled"
 
 
+def test_reclaim_stale_unknown_outcome_requires_reconciliation_instead_of_retry(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "inbox.sqlite3"
+    enqueue_event(_event("stale-unknown"), path=db_path)
+    claimed = claim_next_due_event(path=db_path, lease_seconds=-1)
+    assert claimed is not None
+    record_channel_state(
+        claimed.event_id,
+        "slack",
+        "outcome_unknown",
+        path=db_path,
+        destination_ref="slack:webhook:transport:response_unknown",
+    )
+
+    reclaimed = reclaim_stale_processing(path=db_path)
+
+    assert reclaimed == 0
+    stored = get_event(claimed.event_id, path=db_path)
+    assert stored is not None
+    assert stored.status == "reconciliation_required"
+    assert claim_next_due_event(path=db_path) is None
+
+
 def test_restart_before_first_attempt_preserves_queued_event(tmp_path: Path) -> None:
     db_path = tmp_path / "inbox.sqlite3"
     enqueue_event(_event("restart-before-attempt"), path=db_path)
@@ -339,6 +369,329 @@ def test_retry_backoff_schedules_transient_failure(tmp_path: Path) -> None:
     assert stored.last_error_type == "RuntimeError"
     assert stored.next_attempt_at is not None
     assert retry_delay_seconds(1) == 5
+
+
+def test_outcome_unknown_requires_reconciliation_and_cannot_be_claimed_for_retry(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "inbox.sqlite3"
+    enqueue_event(_event("unknown-outcome"), path=db_path)
+    claimed = claim_next_due_event(path=db_path)
+    assert claimed is not None
+    record_channel_state(
+        claimed.event_id,
+        "slack",
+        "outcome_unknown",
+        path=db_path,
+        destination_ref="slack:webhook:transport:response_unknown",
+    )
+    record_channel_state(
+        claimed.event_id,
+        "slack",
+        "outcome_unknown",
+        path=db_path,
+        destination_ref="slack:webhook:transport:response_unknown",
+    )
+    with pytest.raises(ValueError, match="explicit reconciliation"):
+        record_channel_state(
+            claimed.event_id,
+            "slack",
+            "accepted",
+            path=db_path,
+            destination_ref="slack:webhook:http:2xx",
+        )
+    with pytest.raises(ValueError, match="receipt is immutable"):
+        record_channel_state(
+            claimed.event_id,
+            "slack",
+            "outcome_unknown",
+            path=db_path,
+            destination_ref="slack:webhook:http:5xx",
+        )
+
+    status = record_processing_outcome_unknown(
+        claimed,
+        RuntimeError("provider reconciliation required"),
+        path=db_path,
+    )
+
+    stored = get_event(claimed.event_id, path=db_path)
+    assert status == "reconciliation_required"
+    assert stored is not None
+    assert stored.status == "reconciliation_required"
+    assert stored.next_attempt_at is None
+    assert claim_next_due_event(path=db_path) is None
+    assert get_channel_receipts(claimed.event_id, "slack", path=db_path)[
+        "destination_ref"
+    ] == "slack:webhook:transport:response_unknown"
+    health = collect_health(path=db_path)
+    assert health["status"] == "degraded"
+    assert health["reconciliation_required_count"] == 1
+    assert "Reconcile every outcome-unknown" in health["next_action"]
+    with pytest.raises(ValueError, match="no longer matches"):
+        record_processing_outcome_unknown(
+            claimed,
+            RuntimeError("replayed transition"),
+            path=db_path,
+        )
+    replayed = get_event(claimed.event_id, path=db_path)
+    assert replayed is not None
+    assert replayed.status == "reconciliation_required"
+
+
+def test_reconciliation_appends_stable_receipt_without_rewriting_unknown_evidence(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "inbox.sqlite3"
+    enqueue_event(_event("reconcile-success"), path=db_path)
+    claimed = claim_next_due_event(path=db_path)
+    assert claimed is not None
+    unknown_ref = "slack:webhook:transport:response_unknown"
+    record_channel_state(
+        claimed.event_id,
+        "slack",
+        "outcome_unknown",
+        path=db_path,
+        destination_ref=unknown_ref,
+        error_category="outcome_unknown",
+    )
+    record_processing_outcome_unknown(
+        claimed,
+        RuntimeError("provider reconciliation required"),
+        path=db_path,
+    )
+    evidence_digest = unknown_delivery_evidence_digest(
+        claimed.event_id,
+        "slack",
+        path=db_path,
+    )
+    readback = {
+        "event_id": claimed.event_id,
+        "channel": "slack",
+        "provider_outcome": "accepted",
+        "provider_reference": "slack:history:fixture-message-1",
+    }
+
+    receipt = record_channel_reconciliation(
+        claimed.event_id,
+        "slack",
+        reconciliation_id="fixture-reconcile-success-1",
+        expected_unknown_evidence_digest=evidence_digest,
+        expected_original_provider_reference=unknown_ref,
+        terminal_outcome="reconciled_succeeded",
+        provider_reference="slack:history:fixture-message-1",
+        readback_result=readback,
+        artifact_digest="sha256:" + ("1" * 64),
+        provider_idempotency_key="fixture-reconcile-success-1",
+        path=db_path,
+    )
+    replay = record_channel_reconciliation(
+        claimed.event_id,
+        "slack",
+        reconciliation_id="fixture-reconcile-success-1",
+        expected_unknown_evidence_digest=evidence_digest,
+        expected_original_provider_reference=unknown_ref,
+        terminal_outcome="reconciled_succeeded",
+        provider_reference="slack:history:fixture-message-1",
+        readback_result=readback,
+        artifact_digest="sha256:" + ("1" * 64),
+        provider_idempotency_key="fixture-reconcile-success-1",
+        path=db_path,
+    )
+
+    assert replay == receipt
+    assert (
+        get_channel_reconciliation_receipt(
+            claimed.event_id,
+            "slack",
+            path=db_path,
+        )
+        == receipt
+    )
+    assert receipt["schema"] == "ChannelReconciliationReceiptV1"
+    assert receipt["action_id"] == "fixture-reconcile-success-1"
+    assert receipt["target"] == {
+        "event_id": claimed.event_id,
+        "channel": "slack",
+    }
+    assert receipt["original_unknown_evidence_digest"] == evidence_digest
+    assert receipt["original_provider_reference"] == unknown_ref
+    assert receipt["terminal_outcome"] == "reconciled_succeeded"
+    assert receipt["provider_reference"] == "slack:history:fixture-message-1"
+    assert receipt["readback_result"] == readback
+    assert str(receipt["readback_digest"]).startswith("sha256:")
+    assert get_channel_state(claimed.event_id, "slack", path=db_path) == "outcome_unknown"
+    channel_receipt = get_channel_receipts(claimed.event_id, "slack", path=db_path)
+    assert channel_receipt["destination_ref"] == unknown_ref
+    stored = get_event(claimed.event_id, path=db_path)
+    assert stored is not None
+    assert stored.status == "reconciled_succeeded"
+    assert claim_next_due_event(path=db_path) is None
+    assert collect_health(path=db_path)["reconciliation_required_count"] == 0
+    with pytest.raises(ValueError, match="no longer matches"):
+        mark_delivered(
+            claimed.event_id,
+            expected_attempt_count=claimed.attempt_count,
+            outcome="processed",
+            classified_level=claimed.event.classified_level,
+            path=db_path,
+        )
+    with pytest.raises(ValueError, match="no longer matches"):
+        record_processing_failure(
+            claimed,
+            RuntimeError("stale worker"),
+            path=db_path,
+        )
+    with pytest.raises(ValueError, match="no longer matches"):
+        record_processing_deferred(
+            claimed,
+            datetime.now(UTC) + timedelta(minutes=1),
+            path=db_path,
+        )
+    still_reconciled = get_event(claimed.event_id, path=db_path)
+    assert still_reconciled is not None
+    assert still_reconciled.status == "reconciled_succeeded"
+
+
+def test_reconciliation_rejects_stale_binding_conflicts_and_mutation(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "inbox.sqlite3"
+    enqueue_event(_event("reconcile-conflict"), path=db_path)
+    claimed = claim_next_due_event(path=db_path)
+    assert claimed is not None
+    unknown_ref = "slack:webhook:http:5xx"
+    record_channel_state(
+        claimed.event_id,
+        "slack",
+        "outcome_unknown",
+        path=db_path,
+        destination_ref=unknown_ref,
+        error_category="outcome_unknown",
+    )
+    record_processing_outcome_unknown(
+        claimed,
+        RuntimeError("provider reconciliation required"),
+        path=db_path,
+    )
+    evidence_digest = unknown_delivery_evidence_digest(
+        claimed.event_id,
+        "slack",
+        path=db_path,
+    )
+    readback = {
+        "event_id": claimed.event_id,
+        "channel": "slack",
+        "provider_outcome": "absent",
+        "provider_reference": "slack:history-query:fixture-2",
+    }
+
+    with pytest.raises(ValueError, match="evidence digest"):
+        record_channel_reconciliation(
+            claimed.event_id,
+            "slack",
+            reconciliation_id="fixture-reconcile-conflict-1",
+            expected_unknown_evidence_digest="sha256:" + ("0" * 64),
+            expected_original_provider_reference=unknown_ref,
+            terminal_outcome="reconciled_absent",
+            provider_reference="slack:history-query:fixture-2",
+            readback_result=readback,
+            artifact_digest="sha256:" + ("2" * 64),
+            provider_idempotency_key="fixture-reconcile-conflict-1",
+            path=db_path,
+        )
+    with pytest.raises(ValueError, match="original provider reference"):
+        record_channel_reconciliation(
+            claimed.event_id,
+            "slack",
+            reconciliation_id="fixture-reconcile-conflict-1",
+            expected_unknown_evidence_digest=evidence_digest,
+            expected_original_provider_reference="slack:webhook:other",
+            terminal_outcome="reconciled_absent",
+            provider_reference="slack:history-query:fixture-2",
+            readback_result=readback,
+            artifact_digest="sha256:" + ("2" * 64),
+            provider_idempotency_key="fixture-reconcile-conflict-1",
+            path=db_path,
+        )
+    changed_readback = {**readback, "provider_outcome": "accepted"}
+    with pytest.raises(ValueError, match="provider_outcome"):
+        record_channel_reconciliation(
+            claimed.event_id,
+            "slack",
+            reconciliation_id="fixture-reconcile-conflict-1",
+            expected_unknown_evidence_digest=evidence_digest,
+            expected_original_provider_reference=unknown_ref,
+            terminal_outcome="reconciled_absent",
+            provider_reference="slack:history-query:fixture-2",
+            readback_result=changed_readback,
+            artifact_digest="sha256:" + ("2" * 64),
+            provider_idempotency_key="fixture-reconcile-conflict-1",
+            path=db_path,
+        )
+
+    receipt = record_channel_reconciliation(
+        claimed.event_id,
+        "slack",
+        reconciliation_id="fixture-reconcile-conflict-1",
+        expected_unknown_evidence_digest=evidence_digest,
+        expected_original_provider_reference=unknown_ref,
+        terminal_outcome="reconciled_absent",
+        provider_reference="slack:history-query:fixture-2",
+        readback_result=readback,
+        artifact_digest="sha256:" + ("2" * 64),
+        provider_idempotency_key="fixture-reconcile-conflict-1",
+        path=db_path,
+    )
+    assert receipt["terminal_outcome"] == "reconciled_absent"
+    with pytest.raises(ValueError, match="already has reconciliation"):
+        record_channel_reconciliation(
+            claimed.event_id,
+            "slack",
+            reconciliation_id="fixture-reconcile-conflict-2",
+            expected_unknown_evidence_digest=evidence_digest,
+            expected_original_provider_reference=unknown_ref,
+            terminal_outcome="reconciled_absent",
+            provider_reference="slack:history-query:fixture-2",
+            readback_result=readback,
+            artifact_digest="sha256:" + ("2" * 64),
+            provider_idempotency_key="fixture-reconcile-conflict-2",
+            path=db_path,
+        )
+    with sqlite3.connect(db_path) as conn:
+        with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+            conn.execute(
+                "UPDATE channel_reconciliation_receipts "
+                "SET provider_reference = 'changed' WHERE reconciliation_id = ?",
+                ("fixture-reconcile-conflict-1",),
+            )
+        with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+            conn.execute(
+                "DELETE FROM channel_reconciliation_receipts WHERE reconciliation_id = ?",
+                ("fixture-reconcile-conflict-1",),
+            )
+        with pytest.raises(sqlite3.IntegrityError, match="outcome_unknown evidence"):
+            conn.execute(
+                "UPDATE channel_deliveries SET state = 'accepted' "
+                "WHERE event_id = ? AND channel = 'slack'",
+                (claimed.event_id,),
+            )
+        with pytest.raises(sqlite3.IntegrityError, match="outcome_unknown evidence"):
+            conn.execute(
+                "DELETE FROM channel_deliveries "
+                "WHERE event_id = ? AND channel = 'slack'",
+                (claimed.event_id,),
+            )
+        with pytest.raises(sqlite3.IntegrityError, match="status is terminal"):
+            conn.execute(
+                "UPDATE durable_events SET status = 'queued' WHERE event_id = ?",
+                (claimed.event_id,),
+            )
+        with pytest.raises(sqlite3.IntegrityError, match="evidence is append-only"):
+            conn.execute(
+                "DELETE FROM durable_events WHERE event_id = ?",
+                (claimed.event_id,),
+            )
 
 
 def test_durable_deferral_survives_restart_without_consuming_attempt_budget(
@@ -460,6 +813,10 @@ def test_schema_migration_is_additive_and_preserves_existing_rows(tmp_path: Path
     with sqlite3.connect(db_path) as conn:
         columns = {row[1] for row in conn.execute("PRAGMA table_info(durable_events)")}
         channel_columns = {row[1] for row in conn.execute("PRAGMA table_info(channel_deliveries)")}
+        reconciliation_columns = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(channel_reconciliation_receipts)")
+        }
         version = conn.execute(
             "SELECT value FROM schema_metadata WHERE key = 'schema_version'"
         ).fetchone()
@@ -477,7 +834,17 @@ def test_schema_migration_is_additive_and_preserves_existing_rows(tmp_path: Path
         "backoff_until",
         "last_error_category",
     } <= channel_columns
-    assert version == ("5",)
+    assert {
+        "reconciliation_id",
+        "event_id",
+        "channel",
+        "original_unknown_evidence_digest",
+        "terminal_outcome",
+        "provider_reference",
+        "readback_digest",
+        "receipt_json",
+    } <= reconciliation_columns
+    assert version == ("7",)
 
 
 def test_retention_preserves_delivery_history_and_unresolved_dead_letters(
@@ -491,6 +858,7 @@ def test_retention_preserves_delivery_history_and_unresolved_dead_letters(
     record_channel_state(claimed.event_id, "slack", "accepted", path=db_path)
     mark_delivered(
         claimed.event_id,
+        expected_attempt_count=claimed.attempt_count,
         outcome="processed",
         classified_level=claimed.event.classified_level,
         path=db_path,
@@ -526,6 +894,7 @@ def test_suppressed_event_is_persisted_as_terminal_state(tmp_path: Path) -> None
 
     mark_delivered(
         claimed.event_id,
+        expected_attempt_count=claimed.attempt_count,
         outcome="suppressed",
         classified_level=claimed.event.classified_level,
         path=db_path,

@@ -46,6 +46,7 @@ terminal-notifier \
 
 HUB_PAYLOAD=$(jq -n \
   --arg source "cc" \
+  --arg producer "cc" \
   --arg level "normal" \
   --arg title "Session Complete" \
   --arg repo "$REPO" \
@@ -59,6 +60,7 @@ HUB_PAYLOAD=$(jq -n \
     event_type: "claude.session.completed",
     source_revision: $source_revision,
     source: $source,
+    producer: $producer,
     level: $level,
     title: $title,
     body: (($repo + (if $branch == "" then "" else " (" + $branch + ")" end) + ": Done")[:2000]),

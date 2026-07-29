@@ -1,5 +1,217 @@
 # Current State
 
+## Envelope-Gated Delivery Check (2026-07-17)
+
+`notification-hub delivery-check` is now plan-only by default. An apply-ready
+`NotificationDeliveryCheckPlanV2` additionally binds the exact owner-private
+claim and receipt directory, preventing the same envelope from being consumed
+again under another filesystem namespace. The plan also binds the exact sorted
+channel set, product transport scope, source revision, required readback
+fields, and a canonical digest. Informational plans without a state directory
+cannot execute. `verify-runtime
+--verify-slack` and `--verify-push` include the same plan without invoking a
+transport.
+
+Live execution requires `--apply`, an exact unexpired one-shot
+`IrreversibleActionEnvelopeV1`, and an owner-private claim-state directory. The
+envelope must bind the plan digest and canonical targets, allow exactly the
+number of selected channels, carry the product-policy precondition and
+provider idempotency key, and require channel-result readback. The separate
+notification-hub live-smoke policy must also approve execution. Neither
+mechanism grants the other. Unbound v1 plans fail closed.
+
+The action is claimed before any transport call. Accepted, failed-before-effect,
+and ambiguous outcomes are recorded with provider-specific references in an
+immutable authority receipt. An ambiguous result stops every remaining
+channel, is classified `outcome_unknown`, and cannot be automatically retried
+under the consumed action. This source repair used only fixture envelopes,
+fake transports, temporary claim directories, and isolated runtime state; it
+did not send or activate a live notification.
+
+Before the claim, apply atomically persists the exact canonical plan and holds
+an owner-private per-action OS lock through transport execution and receipt
+publication. `finalize-delivery-check-claim` takes the corresponding shared
+nonblocking lock, validates the persisted plan, exact envelope digest, and
+claim timestamp, and appends only an `outcome_unknown` receipt when terminal
+provider truth is unavailable. It has no transport call, provider query, or
+claim/retry path. A separate-process fixture pauses immediately after the real
+claim, proves finalization is denied while apply is alive, terminates the
+executor, and proves receipt-only recovery with the plan and claim bytes
+unchanged. Repeated finalization reuses the first immutable receipt, and
+tampered terminal evidence fails closed.
+
+## Delivery-Check Receipt Supersession (2026-07-17)
+
+A single-channel delivery-check `outcome_unknown` can now be resolved without
+resending or querying a provider. `supersede-delivery-check-receipt` is
+plan-only by default and accepts an owner-private operator-supplied readback
+whose exact schema proves either `accepted` or `absent`. Multi-channel and
+mixed-result originals are rejected because one provider artifact cannot
+safely resolve several effects.
+
+The plan binds the immutable original plan and authority-receipt paths and
+digests, provider-readback path and digest, channel, provider reference, and a
+fresh receipt-state directory. Apply rebuilds that plan from disk before
+creating claim state, then consumes a fresh exact one-shot envelope under a new
+action ID. Changed evidence therefore cannot consume older authority. The
+superseding receipt links the original action and both evidence digests;
+`accepted` resolves the original ambiguity to `succeeded`, while `absent`
+resolves it to `failed_before_effect`. The original receipt is never updated or
+deleted.
+
+If the process stops after the fresh claim, the separate
+`finalize-delivery-check-supersession-claim` command validates the persisted
+plan, claim-time envelope, and current evidence, then emits only the missing
+receipt. Exact replay returns the existing byte-stable receipt. The
+supersession module has no transport or provider client dependency, and fixture
+tests patch both transports to prove apply and finalization remain no-send.
+No live notification, provider query, retry, approval mint, or external
+activation was performed for this repair.
+
+## Authenticated Producer Boundary (2026-07-17)
+
+`POST /events` now requires an exact producer ID header and bearer credential.
+The daemon validates that credential against a product-local, owner-private
+digest policy. Payloads cannot select a different producer principal.
+Unauthenticated requests, invalid credentials, principal mismatch, unavailable
+policy, and destination escalation fail before durable inbox persistence.
+
+Each producer grant owns its destination allowlist. Intake computes the exact
+push, Slack, and mandatory local-log destinations selected by current routing,
+checks them against the grant, and persists the authorized set into the event.
+Later routing-policy changes therefore cannot widen an accepted event.
+`/health` degrades when the producer policy is unavailable or invalid without
+exposing producer IDs or credential digests.
+
+The repo-owned Codex and Claude hooks now identify themselves as `codex` and
+`cc`; the durable producer helper reads their raw tokens from separate
+owner-private, non-symlinked files and sends credentials only in headers. The
+smoke command and MCP wrapper use their own fixed producer principals.
+No credential was generated, installed, rotated, or activated as part of this
+source repair.
+
+## Ambiguous Delivery Reconciliation Update (2026-07-17)
+
+Slack response-loss and HTTP 5xx outcomes are no longer retried automatically.
+The durable event enters `reconciliation_required`, and stale-lease recovery
+preserves that quarantine across process interruption.
+
+The inbox now supports a domain-local, append-only
+`ChannelReconciliationReceiptV1`. A reconciliation must bind the exact event,
+channel, original unknown-evidence digest, original provider reference,
+terminal outcome, and provider readback. The receipt and terminal
+`reconciled_succeeded` or `reconciled_absent` transition commit atomically.
+Exact replay returns the stored receipt; conflicting replay, receipt update,
+receipt deletion, and provider resend remain unsupported. No HTTP endpoint,
+live provider query, or retry authority is added by this change.
+
+The `reconcile-delivery` CLI renders a read-only
+`ChannelReconciliationPlanV2` by default from an exact inbox path and an
+owner-private provider-readback fixture. The plan binds an explicit
+`--claim-state-dir`, or the deterministic `claims` directory beside the inbox
+when none is supplied. `--apply` additionally requires an exact, unexpired,
+one-shot `IrreversibleActionEnvelopeV1` and that same owner-private
+claim-state directory. Unbound v1 plans fail closed. The envelope must bind the rendered plan digest,
+canonical database/event/channel/evidence targets, source revision, one-effect
+bound, unknown-evidence preconditions, and required readback fields. Applying
+the command records only the supplied readback; it never queries a provider,
+sends a notification, or retries an ambiguous delivery.
+
+Once authority is claimed, every handled SQLite failure triggers read-only
+terminal-state inspection. An unchanged, evidence-matching quarantine emits
+`failed_before_effect`; an exact committed database receipt recovers the
+operation as `reconciled_succeeded` or `reconciled_absent`; and unreadable or
+conflicting state emits `outcome_unknown`. Each classification is persisted as
+an immutable `IrreversibleActionReceiptV1` beside the one-shot claim. None of
+these paths retries the database transition or contacts the provider.
+
+Abrupt-interruption recovery uses the separate
+`finalize-reconciliation-claim` command and the previously rendered
+owner-private plan artifact. Before consuming an envelope, `--apply`
+atomically preserves that canonical plan beside the claim so recovery does not
+depend on process memory or shell output. Finalization fails before database
+readback if the persisted plan is missing, symlinked, or differs from the
+caller-supplied plan. The finalizer accepts expired envelopes only when the
+existing claim digest binds that exact envelope and its `claimed_at` was inside
+the original authorization window. It reads current database state and emits or
+returns the immutable authority receipt; it has no code path to the
+reconciliation mutation. Concurrent finalizers converge on the first valid
+atomically published receipt. If their read-only classifications differ during
+a state transition, the loser validates and returns the winner rather than
+writing a second receipt or surfacing a misleading recovery failure.
+Apply and finalization are also separated by an owner-private per-action OS
+lock. Apply holds the exclusive lock from before claim consumption through
+database transition and authority-receipt publication. Finalizers use a shared
+nonblocking lock, so they can converge with each other but cannot classify a
+claim while its apply process is still live. A process crash releases the lock
+without deleting the durable claim, plan, or lock-file evidence. A
+separate-process fixture holds the real kernel lock, proves finalization is
+denied, terminates the holder, and then proves receipt-only recovery succeeds
+with the plan, claim, and lock-file bytes unchanged.
+The first validated lock inode is also pinned in an atomically published,
+owner-private identity artifact. Replacing the lock pathname cannot create a
+second valid lock domain: later callers fail closed when the opened device and
+inode do not match the durable identity. Once plan, claim, or receipt evidence
+exists, a missing identity also fails closed instead of initializing a new lock
+domain.
+Fault-injection fixtures cover identity-link failure, directory-fsync failure,
+and separate-process termination immediately after the atomic identity link.
+Each failure leaves either no identity or one complete matching identity before
+any plan or claim exists; retry reuses only valid evidence and converges on one
+terminal receipt.
+The canonical plan has the same crash-consistency coverage. Link failure leaves
+no plan or claim, while directory-fsync failure or process termination after
+the atomic plan link leaves the complete plan but no claim. A changed plan
+cannot reuse that action ID; only the exact persisted plan can continue to
+one-shot claim consumption and one terminal receipt.
+A separate-process post-claim fixture also pauses immediately after the real
+shared claim function returns and before the database sink. Finalization is
+denied while that executor holds the action lock. After process termination,
+receipt-only finalization preserves the plan, claim, lock, identity, and
+database bytes and records `failed_before_effect` with effect count zero; it
+never replays the reconciliation transition.
+The complementary post-commit fixture pauses after the database transaction
+and append-only channel receipt commit but before authority-receipt emission.
+After executor termination, the finalizer requires an exact database receipt
+match and recovers `reconciled_succeeded` with effect count one. It preserves
+the committed database and durable action bytes, emits only the missing
+authority receipt, and never replays the reconciliation transition.
+The authority-receipt publisher is also covered at its atomic hard-link
+boundary. If the executor terminates after the complete receipt becomes visible
+but before directory fsync or normal return, finalization validates and reuses
+that exact receipt. It performs no database classification, mutation, or second
+publication, and repeated finalization remains byte-stable.
+
+An `outcome_unknown` authority receipt can be resolved only by the separate
+`supersede-reconciliation-receipt` workflow. Its plan binds the immutable
+original receipt path and digest, original reconciliation plan, and newly
+readable database evidence. Apply re-reads all inputs, consumes a fresh exact
+one-shot envelope under a new action ID, and appends a linked receipt. It never
+updates or deletes the original receipt and never calls the reconciliation
+mutation. If the process stops after that fresh claim but before receipt
+emission, `finalize-reconciliation-claim` validates the persisted supersession
+plan, exact claim-time envelope, original receipt digest, and original plan,
+then emits only the missing append-only receipt. Expiry after a valid claim is
+accepted; broad authority, changed evidence, and mismatched receipt directories
+remain fail-closed.
+A separate-process supersession fixture now pauses immediately after the real
+fresh claim is published. Finalization is denied while that executor holds the
+action lock. After process termination, receipt-only finalization preserves the
+original `outcome_unknown` receipt, original plan, database, supersession plan,
+claim, lock, and identity bytes; it appends exactly one superseding receipt and
+never calls the reconciliation mutation or database readback.
+The superseding receipt publisher is covered at its atomic hard-link boundary
+as well. If its executor terminates after the complete receipt becomes visible
+but before directory fsync or normal return, finalization validates and reuses
+those exact bytes. It performs no database readback, reconciliation mutation,
+or second publication, preserves the original evidence, and remains byte-stable
+on replay.
+Independent-process finalizers are synchronized after both observe the receipt
+as absent and immediately before publication. Their real hard-link collision
+converges on one immutable superseding receipt with identical reports, no
+temporary receipt artifacts, and no database access or reconciliation
+mutation. Original evidence and all durable action bytes remain unchanged.
+
 ## Health Authority Update (2026-07-17)
 
 `GET /health` now includes the durable inbox, producer outbox, and BridgeDB
@@ -851,9 +1063,9 @@ tuning pass.
   Burn-in now reports health failures separately from repeated-event noise candidates and includes
   Slack-eligible volume by source/level. Repeated-event candidates now include review-only
   noise-rule suggestions, and recent Slack delivery failures now degrade burn-in health.
-- Explicit delivery checks are available through `notification-hub delivery-check` and the
-  `verify-runtime --verify-slack` / `--verify-push` flags, so Slack and push transport can be
-  tested intentionally without making default verification noisy.
+- Delivery-check plans are available through `notification-hub delivery-check` and the
+  `verify-runtime --verify-slack` / `--verify-push` flags without sending. Only delivery-check
+  `--apply` can invoke a transport, after exact one-shot authority is consumed.
 - A local explain command can preview classification, routing, and delivery without sending anything.
 - A local policy-check command can audit the ruleset for overlaps, shadowing, and no-op rules,
   and now suggests likely fixes for each warning. It also compares live noise rules with the repo
@@ -1191,8 +1403,9 @@ Expected outcome after rerunning the verifier:
   delivery failure counts
 - `notification-hub verify-runtime`: read-only by default; degrades when doctor, policy, runtime
   wiring, recent burn-in health, or an explicitly requested delivery check is degraded
-- `notification-hub delivery-check --slack` / `--push`: sends one explicit transport-check
-  notification only when requested
+- `notification-hub delivery-check --slack` / `--push`: renders an exact transport-check plan;
+  pass `--claim-state-dir` to bind an apply-ready plan; `--apply` additionally
+  requires a matching one-shot envelope for that exact directory
 - `notification-hub-policy-check`: `status: ok`, `warn`, or `degraded`, depending on the active
   policy file and sample-policy drift, plus warning-specific fix suggestions when issues are found
 - `notification-hub-explain`: returns a non-mutating classification/routing/delivery preview
