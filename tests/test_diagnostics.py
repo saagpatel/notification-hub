@@ -191,11 +191,11 @@ def test_collect_runtime_wiring_renders_home_token_before_comparing(
     template_text = (
         "<!-- install notes stay in the repo template only -->\n"
         "Label\ncom.saagar.notification-hub\n"
-        "WorkingDirectory\n__HOME__/Projects/notification-hub\n"
+        "WorkingDirectory\n__HOME__/.local/state/notification-hub/runtime-current\n"
     )
     installed_text = (
         "Label\ncom.saagar.notification-hub\n"
-        f"WorkingDirectory\n{home}/Projects/notification-hub\n"
+        f"WorkingDirectory\n{home}/.local/state/notification-hub/runtime-current\n"
     )
 
     launch_agent = tmp_path / "com.saagar.notification-hub.plist"
@@ -236,7 +236,7 @@ def test_collect_runtime_wiring_allows_only_bridge_cursor_launch_agent_override(
     template_text = f"""<?xml version="1.0" encoding="UTF-8"?>
 <plist version="1.0"><dict>
 <key>Label</key><string>com.saagar.notification-hub</string>
-<key>WorkingDirectory</key><string>{home}/Projects/notification-hub</string>
+<key>WorkingDirectory</key><string>{home}/.local/state/notification-hub/runtime-current</string>
 <key>EnvironmentVariables</key><dict>
 <key>HOME</key><string>{home}</string>
 </dict></dict></plist>

@@ -27,6 +27,10 @@ DEFAULT_MAX_ATTEMPTS = 20
 LEGACY_PRODUCER_BY_SOURCE = {"cc": "cc", "codex": "codex"}
 
 
+class PayloadDefect(ValueError):
+    """A stored event is malformed and cannot become valid through retry."""
+
+
 def load_producer_token(producer_id: str) -> str:
     """Load the producer's owner-private token without placing it in payloads."""
     configured_path = os.environ.get("NOTIFICATION_HUB_PRODUCER_TOKEN_FILE")
@@ -205,29 +209,35 @@ def deliver_due(*, path: Path = OUTBOX_PATH, limit: int = MAX_DRAIN) -> int:
             event_id = str(row["event_id"])
             attempt_count = int(row["attempt_count"]) + 1
             max_attempts = int(row["max_attempts"])
-            payload = json.loads(str(row["payload_json"]))
-            producer_id = payload.get("producer") if isinstance(payload, dict) else None
-            if not isinstance(producer_id, str) or not producer_id:
-                raise ValueError("producer payload requires producer identity")
-            token = load_producer_token(producer_id)
-            request = urllib.request.Request(
-                HUB_URL,
-                data=str(row["payload_json"]).encode(),
-                headers={
-                    "Authorization": f"Bearer {token}",
-                    "Content-Type": "application/json",
-                    "X-Notification-Hub-Producer": producer_id,
-                },
-                method="POST",
-            )
             try:
+                payload = json.loads(str(row["payload_json"]))
+                producer_id = (
+                    payload.get("producer") if isinstance(payload, dict) else None
+                )
+                if not isinstance(producer_id, str) or not producer_id:
+                    raise PayloadDefect("producer payload requires producer identity")
+                token = load_producer_token(producer_id)
+                request = urllib.request.Request(
+                    HUB_URL,
+                    data=str(row["payload_json"]).encode(),
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "Content-Type": "application/json",
+                        "X-Notification-Hub-Producer": producer_id,
+                    },
+                    method="POST",
+                )
                 with urllib.request.urlopen(request, timeout=2) as response:
                     status = int(getattr(response, "status", 0))
                 if status < 200 or status >= 300:
                     raise urllib.error.HTTPError(HUB_URL, status, "non-success", {}, None)
             except Exception as exc:
-                permanent = isinstance(exc, urllib.error.HTTPError) and (
-                    400 <= exc.code < 500 and exc.code not in {408, 429}
+                # Stored-payload defects cannot heal through retry. Token-file
+                # failures remain transient because an operator can repair them.
+                permanent = isinstance(exc, (PayloadDefect, json.JSONDecodeError)) or (
+                    isinstance(exc, urllib.error.HTTPError)
+                    and 400 <= exc.code < 500
+                    and exc.code not in {408, 429}
                 )
                 exhausted = attempt_count >= max_attempts
                 state = "rejected" if permanent else "dead_lettered" if exhausted else "queued"

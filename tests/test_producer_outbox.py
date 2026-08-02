@@ -143,6 +143,50 @@ def test_legacy_queued_source_is_migrated_without_blocking_later_rows(
     assert observed_producers == ["codex", "codex"]
 
 
+def test_malformed_rows_are_rejected_without_blocking_later_delivery(
+    tmp_path: Path,
+) -> None:
+    module = _module()
+    outbox = tmp_path / "producer.sqlite3"
+    current = _payload("producer:current-after-defects:1")
+    module.enqueue(current, path=outbox)
+    missing_identity = _payload("producer:missing-identity:1")
+    missing_identity.pop("producer")
+
+    with sqlite3.connect(outbox) as conn:
+        conn.executemany(
+            "INSERT INTO producer_events "
+            "(event_id, payload_json, payload_digest, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            [
+                ("producer:invalid-json:1", "{", "invalid-json", 0, 0),
+                (
+                    missing_identity["event_id"],
+                    json.dumps(missing_identity, sort_keys=True, separators=(",", ":")),
+                    module.payload_digest(missing_identity),
+                    1,
+                    1,
+                ),
+            ],
+        )
+
+    with patch.object(module.urllib.request, "urlopen", return_value=AcceptedResponse()):
+        assert module.deliver_due(path=outbox) == 1
+
+    with sqlite3.connect(outbox) as conn:
+        rows = dict(
+            conn.execute(
+                "SELECT event_id, state || ':' || COALESCE(last_error_category, '') "
+                "FROM producer_events"
+            ).fetchall()
+        )
+    assert rows == {
+        "producer:current-after-defects:1": "accepted:",
+        "producer:invalid-json:1": "rejected:JSONDecodeError",
+        "producer:missing-identity:1": "rejected:PayloadDefect",
+    }
+
+
 def test_http_timeout_after_possible_acceptance_retries_idempotently(tmp_path: Path) -> None:
     module = _module()
     outbox = tmp_path / "producer.sqlite3"
