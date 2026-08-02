@@ -107,6 +107,42 @@ def test_hub_downtime_persists_event_and_retry_accepts_same_id(tmp_path: Path) -
     assert accepted == ("accepted", 2, "http:201")
 
 
+def test_legacy_queued_source_is_migrated_without_blocking_later_rows(
+    tmp_path: Path,
+) -> None:
+    module = _module()
+    outbox = tmp_path / "producer.sqlite3"
+    legacy = _payload("producer:legacy-source:1")
+    legacy["source"] = "codex"
+    legacy.pop("producer")
+    current = _payload("producer:current-source:1")
+    current["source"] = "codex"
+    current["producer"] = "codex"
+    module.enqueue(legacy, path=outbox)
+    module.enqueue(current, path=outbox)
+    observed_producers: list[str | None] = []
+
+    def accept(request: object, *, timeout: int) -> AcceptedResponse:
+        observed_producers.append(request.get_header("X-notification-hub-producer"))
+        assert timeout == 2
+        return AcceptedResponse()
+
+    with patch.object(module.urllib.request, "urlopen", side_effect=accept):
+        assert module.deliver_due(path=outbox) == 2
+
+    with sqlite3.connect(outbox) as conn:
+        migrated_json, migrated_digest, state = conn.execute(
+            "SELECT payload_json, payload_digest, state FROM producer_events "
+            "WHERE event_id = ?",
+            ("producer:legacy-source:1",),
+        ).fetchone()
+    migrated = json.loads(migrated_json)
+    assert migrated["producer"] == "codex"
+    assert migrated_digest == module.payload_digest(migrated)
+    assert state == "accepted"
+    assert observed_producers == ["codex", "codex"]
+
+
 def test_http_timeout_after_possible_acceptance_retries_idempotently(tmp_path: Path) -> None:
     module = _module()
     outbox = tmp_path / "producer.sqlite3"

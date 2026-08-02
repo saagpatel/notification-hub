@@ -28,6 +28,9 @@ under the consumed action. This source repair used only fixture envelopes,
 fake transports, temporary claim directories, and isolated runtime state; it
 did not send or activate a live notification.
 
+Plan-only delivery checks continue to exit zero, while an applied check whose
+result is `degraded` now preserves a nonzero process exit for automation.
+
 Before the claim, apply atomically persists the exact canonical plan and holds
 an owner-private per-action OS lock through transport execution and receipt
 publication. `finalize-delivery-check-claim` takes the corresponding shared
@@ -90,11 +93,21 @@ smoke command and MCP wrapper use their own fixed producer principals.
 No credential was generated, installed, rotated, or activated as part of this
 source repair.
 
+During upgrade, queued hook rows from the pre-auth helper are migrated only
+through the fixed historical `cc` and `codex` source-to-producer mapping. Their
+canonical payload and digest are updated together before delivery so a legacy
+row cannot starve newer producer traffic.
+
 ## Ambiguous Delivery Reconciliation Update (2026-07-17)
 
 Slack response-loss and HTTP 5xx outcomes are no longer retried automatically.
 The durable event enters `reconciliation_required`, and stale-lease recovery
 preserves that quarantine across process interruption.
+
+Stale processing leases with an external push or Slack channel still in
+`attempted` are quarantined the same way. A crash in that window cannot prove
+whether the provider accepted the request, so automatic retry would risk a
+duplicate notification.
 
 The inbox now supports a domain-local, append-only
 `ChannelReconciliationReceiptV1`. A reconciliation must bind the exact event,

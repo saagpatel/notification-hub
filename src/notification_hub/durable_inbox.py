@@ -1223,7 +1223,8 @@ def reclaim_stale_processing(
                   SELECT 1
                   FROM channel_deliveries
                   WHERE channel_deliveries.event_id = durable_events.event_id
-                    AND channel_deliveries.state = 'outcome_unknown'
+                    AND channel_deliveries.channel IN ('push', 'slack')
+                    AND channel_deliveries.state IN ('attempted', 'outcome_unknown')
               )
             """,
             (now_iso, now_iso),

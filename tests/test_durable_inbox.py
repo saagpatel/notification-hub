@@ -294,6 +294,24 @@ def test_reclaim_stale_unknown_outcome_requires_reconciliation_instead_of_retry(
     assert claim_next_due_event(path=db_path) is None
 
 
+def test_reclaim_stale_attempted_delivery_requires_reconciliation_instead_of_retry(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "inbox.sqlite3"
+    enqueue_event(_event("stale-attempted"), path=db_path)
+    claimed = claim_next_due_event(path=db_path, lease_seconds=-1)
+    assert claimed is not None
+    record_channel_state(claimed.event_id, "slack", "attempted", path=db_path)
+
+    reclaimed = reclaim_stale_processing(path=db_path)
+
+    assert reclaimed == 0
+    stored = get_event(claimed.event_id, path=db_path)
+    assert stored is not None
+    assert stored.status == "reconciliation_required"
+    assert claim_next_due_event(path=db_path) is None
+
+
 def test_restart_before_first_attempt_preserves_queued_event(tmp_path: Path) -> None:
     db_path = tmp_path / "inbox.sqlite3"
     enqueue_event(_event("restart-before-attempt"), path=db_path)

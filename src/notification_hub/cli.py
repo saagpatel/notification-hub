@@ -176,12 +176,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         except (OSError, ValueError) as exc:
             print(f"delivery-check failed: {exc}", file=sys.stderr)
             return 2
-        return _emit_report(
+        _emit_report(
             report,
             json_output=args.json,
             print_report=print_delivery_check_report,
             success_status=None,
         )
+        return 0 if not args.apply or report["status"] == "ok" else 1
 
     if args.command == "finalize-delivery-check-claim":
         try:

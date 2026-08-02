@@ -121,6 +121,31 @@ def test_reconcile_delivery_defaults_to_plan_only(capsys: CaptureFixture[str]) -
     mock_apply.assert_not_called()
 
 
+def test_delivery_check_apply_exits_nonzero_when_degraded(
+    capsys: CaptureFixture[str],
+) -> None:
+    with patch(
+        "notification_hub.cli.run_delivery_check",
+        return_value={"status": "degraded", "terminal_outcome": "outcome_unknown"},
+    ):
+        exit_code = main(
+            [
+                "delivery-check",
+                "--slack",
+                "--apply",
+                "--envelope",
+                "/tmp/fixture-envelope.json",
+                "--claim-state-dir",
+                "/tmp/fixture-claims",
+                "--json",
+            ]
+        )
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert '"status": "degraded"' in captured.out
+
+
 def test_reconcile_delivery_apply_binds_and_forwards_claim_directory() -> None:
     plan = {"plan_digest": "sha256:" + ("1" * 64)}
     claims = Path("/tmp/fixture-reconciliation-claims")

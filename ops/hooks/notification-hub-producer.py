@@ -24,6 +24,7 @@ OUTBOX_PATH = Path(
 )
 MAX_DRAIN = 20
 DEFAULT_MAX_ATTEMPTS = 20
+LEGACY_PRODUCER_BY_SOURCE = {"cc": "cc", "codex": "codex"}
 
 
 def load_producer_token(producer_id: str) -> str:
@@ -70,6 +71,30 @@ def payload_digest(payload: dict[str, object]) -> str:
     ).hexdigest()
 
 
+def _migrate_legacy_queued_producers(conn: sqlite3.Connection) -> None:
+    """Bind pre-auth hook rows to their fixed historical producer identity."""
+    rows = conn.execute(
+        "SELECT event_id, payload_json FROM producer_events WHERE state = 'queued'"
+    ).fetchall()
+    for row in rows:
+        try:
+            payload = json.loads(str(row["payload_json"]))
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(payload, dict) or payload.get("producer") is not None:
+            continue
+        producer_id = LEGACY_PRODUCER_BY_SOURCE.get(payload.get("source"))
+        if producer_id is None:
+            continue
+        payload["producer"] = producer_id
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        conn.execute(
+            "UPDATE producer_events SET payload_json = ?, payload_digest = ? "
+            "WHERE event_id = ? AND state = 'queued'",
+            (encoded, payload_digest(payload), str(row["event_id"])),
+        )
+
+
 def connect(path: Path = OUTBOX_PATH) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     conn = sqlite3.connect(path)
@@ -113,6 +138,7 @@ def connect(path: Path = OUTBOX_PATH) -> sqlite3.Connection:
     ):
         if name not in columns:
             conn.execute(f"ALTER TABLE producer_events ADD COLUMN {name} {sql_type}")
+    _migrate_legacy_queued_producers(conn)
     os.chmod(path, 0o600)
     return conn
 
