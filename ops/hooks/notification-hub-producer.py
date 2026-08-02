@@ -202,7 +202,7 @@ def deliver_due(*, path: Path = OUTBOX_PATH, limit: int = MAX_DRAIN) -> int:
         rows = conn.execute(
             "SELECT event_id, payload_json, attempt_count, max_attempts FROM producer_events "
             "WHERE state = 'queued' AND next_attempt_at <= ? "
-            "ORDER BY created_at ASC LIMIT ?",
+            "ORDER BY next_attempt_at ASC, created_at ASC LIMIT ?",
             (now, max(1, min(limit, MAX_DRAIN))),
         ).fetchall()
         for row in rows:

@@ -99,6 +99,44 @@ def test_token_file_failure_remains_retryable(tmp_path: Path) -> None:
     assert state == ("queued", 1, "FileNotFoundError")
 
 
+def test_credential_retries_do_not_starve_later_producers(tmp_path: Path) -> None:
+    module = _module()
+    outbox = tmp_path / "producer.sqlite3"
+    for index in range(module.MAX_DRAIN):
+        blocked = _payload(f"producer:blocked:{index}")
+        blocked["producer"] = "blocked"
+        module.enqueue(blocked, path=outbox)
+    healthy = _payload("producer:healthy:1")
+    healthy["producer"] = "healthy"
+    module.enqueue(healthy, path=outbox)
+
+    def token_for(producer_id: str) -> str:
+        if producer_id == "blocked":
+            raise FileNotFoundError
+        return "fixture-producer-token"
+
+    with (
+        patch.object(module, "load_producer_token", side_effect=token_for),
+        patch.object(module.urllib.request, "urlopen", return_value=AcceptedResponse()),
+        patch.object(module.time, "time", return_value=100.0),
+    ):
+        assert module.deliver_due(path=outbox) == 0
+
+    with (
+        patch.object(module, "load_producer_token", side_effect=token_for),
+        patch.object(module.urllib.request, "urlopen", return_value=AcceptedResponse()),
+        patch.object(module.time, "time", return_value=106.0),
+    ):
+        assert module.deliver_due(path=outbox) == 1
+
+    with sqlite3.connect(outbox) as conn:
+        state = conn.execute(
+            "SELECT state, attempt_count FROM producer_events WHERE event_id = ?",
+            ("producer:healthy:1",),
+        ).fetchone()
+    assert state == ("accepted", 1)
+
+
 def test_hub_downtime_persists_event_and_retry_accepts_same_id(tmp_path: Path) -> None:
     module = _module()
     outbox = tmp_path / "producer.sqlite3"
