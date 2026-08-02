@@ -87,7 +87,10 @@ def _migrate_legacy_queued_producers(conn: sqlite3.Connection) -> None:
             continue
         if not isinstance(payload, dict) or payload.get("producer") is not None:
             continue
-        producer_id = LEGACY_PRODUCER_BY_SOURCE.get(payload.get("source"))
+        source = payload.get("source")
+        if not isinstance(source, str):
+            continue
+        producer_id = LEGACY_PRODUCER_BY_SOURCE.get(source)
         if producer_id is None:
             continue
         payload["producer"] = producer_id

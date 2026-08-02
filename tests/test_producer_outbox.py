@@ -205,6 +205,9 @@ def test_malformed_rows_are_rejected_without_blocking_later_delivery(
     module.enqueue(current, path=outbox)
     missing_identity = _payload("producer:missing-identity:1")
     missing_identity.pop("producer")
+    invalid_source = _payload("producer:invalid-source:1")
+    invalid_source.pop("producer")
+    invalid_source["source"] = []
 
     with sqlite3.connect(outbox) as conn:
         conn.executemany(
@@ -219,6 +222,13 @@ def test_malformed_rows_are_rejected_without_blocking_later_delivery(
                     module.payload_digest(missing_identity),
                     1,
                     1,
+                ),
+                (
+                    invalid_source["event_id"],
+                    json.dumps(invalid_source, sort_keys=True, separators=(",", ":")),
+                    module.payload_digest(invalid_source),
+                    2,
+                    2,
                 ),
             ],
         )
@@ -236,6 +246,7 @@ def test_malformed_rows_are_rejected_without_blocking_later_delivery(
     assert rows == {
         "producer:current-after-defects:1": "accepted:",
         "producer:invalid-json:1": "rejected:JSONDecodeError",
+        "producer:invalid-source:1": "rejected:PayloadDefect",
         "producer:missing-identity:1": "rejected:PayloadDefect",
     }
 
