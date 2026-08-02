@@ -27,9 +27,9 @@ from notification_hub.delivery_check_supersession import (
     finalize_delivery_check_receipt_supersession_claim,
 )
 
-SHARED_ENVELOPE_MODULE = Path(
-    "/Users/d/.codex/scripts/security/irreversible_action_envelope.py"
-)
+SHARED_ENVELOPE_MODULE = (
+    Path(__file__).parent / "fixtures" / "irreversible_action_envelope.py"
+).resolve()
 
 
 def _write_original_envelope(path: Path, plan: dict[str, object]) -> None:

@@ -41,9 +41,9 @@ from notification_hub.reconciliation import (
     sha256_json,
 )
 
-SHARED_ENVELOPE_MODULE = Path(
-    "/Users/d/.codex/scripts/security/irreversible_action_envelope.py"
-)
+SHARED_ENVELOPE_MODULE = (
+    Path(__file__).parent / "fixtures" / "irreversible_action_envelope.py"
+).resolve()
 
 
 def _unknown_event(db_path: Path, event_id: str = "fixture:reconcile:1") -> StoredEvent:
