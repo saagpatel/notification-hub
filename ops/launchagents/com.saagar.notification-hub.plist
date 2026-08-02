@@ -7,8 +7,6 @@
   The default Label matches the project-owned LaunchAgent path.
 
   Install:
-    Create runtime-current as a detached worktree at the reviewed commit.
-    Sync its dependencies in frozen, non-editable mode before installing this plist.
     sed 's|__HOME__|'"$HOME"'|g' ops/launchagents/com.saagar.notification-hub.plist \
       > ~/Library/LaunchAgents/com.saagar.notification-hub.plist
     launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.saagar.notification-hub.plist
@@ -22,9 +20,6 @@
       <string>/opt/homebrew/bin/uv</string>
       <string>run</string>
       <string>--frozen</string>
-      <string>--no-sync</string>
-      <string>python</string>
-      <string>-m</string>
       <string>uvicorn</string>
       <string>notification_hub.server:app</string>
       <string>--host</string>
@@ -33,7 +28,7 @@
       <string>9199</string>
     </array>
     <key>WorkingDirectory</key>
-    <string>__HOME__/.local/state/notification-hub/runtime-current</string>
+    <string>__HOME__/Projects/notification-hub</string>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
@@ -48,8 +43,6 @@
       <string>__HOME__</string>
       <key>PATH</key>
       <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
-      <key>PYTHONPATH</key>
-      <string>__HOME__/.local/state/notification-hub/runtime-current/src</string>
     </dict>
   </dict>
 </plist>

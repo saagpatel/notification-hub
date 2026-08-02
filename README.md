@@ -771,11 +771,10 @@ Runtime change checklist:
   without spamming repeated Slack-failure warnings.
 - If a Slack webhook is added later, the daemon will retry Keychain lookup automatically within
   about a minute, so a manual restart is usually not required.
-- LaunchAgent support lives at `~/Library/LaunchAgents/com.saagar.notification-hub.plist`.
+- LaunchAgent support lives at `~/Library/LaunchAgents/com.yourname.notification-hub.plist`.
   The template at `ops/launchagents/com.saagar.notification-hub.plist` uses `__HOME__` tokens and
-  runs a detached, reviewed `~/.local/state/notification-hub/runtime-current` worktree with frozen,
-  no-sync dependencies. Public adapters may rename the label, but must update their installed path
-  and local diagnostic constants consistently.
+  a `com.yourname` label placeholder — substitute your home directory and rename the label to your
+  own reverse-domain prefix before installing.
 - Repo-owned runtime templates live under `ops/`: the LaunchAgent template, both hook templates,
   and the durable producer helper are the source of truth for machine-local wiring. Failed hook
   posts remain queued in `~/.local/share/notification-hub/producer-outbox.sqlite3` and retry on a
@@ -792,26 +791,18 @@ Runtime change checklist:
 Refresh local runtime wiring from repo templates:
 
 ```bash
-# Prepare runtime-current separately at an exact reviewed commit, hydrate it in
-# frozen non-editable mode, and verify that checkout before applying live wiring.
-NOTIFICATION_HUB_RUNTIME_DIR="$HOME/.local/state/notification-hub/runtime-current"
-test "$(git -C "$NOTIFICATION_HUB_RUNTIME_DIR" rev-parse HEAD)" = "<reviewed-sha>"
-test -x "$NOTIFICATION_HUB_RUNTIME_DIR/.venv/bin/python"
-sed 's|__HOME__|'"$HOME"'|g' \
+# Substitute your home dir and rename the label to your reverse-domain prefix first:
+sed 's|__HOME__|'"$HOME"'|g; s|com\.yourname|com.yourname|g' \
   ops/launchagents/com.saagar.notification-hub.plist \
-  > ~/Library/LaunchAgents/com.saagar.notification-hub.plist
+  > ~/Library/LaunchAgents/com.yourname.notification-hub.plist
 install -m 755 ops/hooks/claude-notify.sh ~/.claude/hooks/notify.sh
 install -m 755 ops/hooks/codex-notify-local.py ~/.codex/hooks/notify_local.py
 install -m 755 ops/hooks/notification-hub-producer.py ~/.claude/hooks/notification-hub-producer.py
 install -m 755 ops/hooks/notification-hub-producer.py ~/.codex/hooks/notification-hub-producer.py
-launchctl bootout "gui/$(id -u)" ~/Library/LaunchAgents/com.saagar.notification-hub.plist 2>/dev/null || true
-launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.saagar.notification-hub.plist
-launchctl kickstart -k "gui/$(id -u)/com.saagar.notification-hub"
+launchctl bootout "gui/$(id -u)" ~/Library/LaunchAgents/com.yourname.notification-hub.plist 2>/dev/null || true
+launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.yourname.notification-hub.plist
+launchctl kickstart -k "gui/$(id -u)/com.yourname.notification-hub"
 ```
-
-The source update, runtime-current checkout change, dependency hydration, file installation, and
-LaunchAgent restart are separate actions. A source commit or passing test suite does not prove that
-the machine-local wiring has adopted it.
 
 ## Docs
 

@@ -1,12 +1,6 @@
 # Current State
 
-## Detached Runtime And Producer Helper Contract (2026-08-02)
-
-The checked-in LaunchAgent template targets a detached, reviewed
-`~/.local/state/notification-hub/runtime-current` worktree and starts it with
-`uv run --frozen --no-sync python -m uvicorn` plus an explicit runtime
-`PYTHONPATH`. This keeps a mutable development checkout from becoming the
-daemon source merely because the service restarts.
+## Producer Helper Contract (2026-08-02)
 
 The producer-helper template preserves the fixed `cc` and `codex` migration
 for queued pre-auth rows and also rejects malformed stored JSON or missing
@@ -14,10 +8,10 @@ producer identity as permanent payload defects. Those rows cannot become valid
 through retry and no longer block later valid queued events. Token-file errors
 remain retryable because an operator can repair the local credential file.
 
-These are source contracts only. Updating this repository does not change the
-installed LaunchAgent, either installed hook/helper copy, the active process,
-credentials, provider state, or durable inbox/outbox state. Machine-local
-adoption remains a separate explicitly authorized and verified action.
+This is a source contract only. Updating this repository does not change either
+installed helper copy, credentials, provider state, or durable inbox/outbox
+state. Machine-local adoption remains a separate explicitly authorized and
+verified action.
 
 ## Envelope-Gated Delivery Check (2026-07-17)
 

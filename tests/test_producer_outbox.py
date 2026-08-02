@@ -84,6 +84,21 @@ def test_missing_or_broad_producer_token_file_fails_before_request(
         module.load_producer_token("personal-ops")
 
 
+def test_token_file_failure_remains_retryable(tmp_path: Path) -> None:
+    module = _module()
+    outbox = tmp_path / "producer.sqlite3"
+    module.enqueue(_payload("producer:credential-repair:1"), path=outbox)
+
+    with patch.object(module, "load_producer_token", side_effect=FileNotFoundError):
+        assert module.deliver_due(path=outbox) == 0
+
+    with sqlite3.connect(outbox) as conn:
+        state = conn.execute(
+            "SELECT state, attempt_count, last_error_category FROM producer_events"
+        ).fetchone()
+    assert state == ("queued", 1, "FileNotFoundError")
+
+
 def test_hub_downtime_persists_event_and_retry_accepts_same_id(tmp_path: Path) -> None:
     module = _module()
     outbox = tmp_path / "producer.sqlite3"
