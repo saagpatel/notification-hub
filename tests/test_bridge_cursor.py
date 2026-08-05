@@ -159,3 +159,88 @@ def test_source_rewrite_below_cursor_is_rejected(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="cursor regression"):
         poll_bridge_protected_activity(bridge, inbox_path=inbox)
     assert get_consumer_cursor(CONSUMER_NAME, path=inbox) == 20
+
+
+def _bridge_with_long_summary(path: Path, length: int) -> None:
+    """A protected row whose summary exceeds Event.body, followed by an ordinary one.
+
+    The trailing row is the point: the live failure was not that one notification was
+    lost, it was that every protected row queued behind the over-long one stopped
+    moving. A test that only checks the long row itself would pass against a consumer
+    that still wedges.
+    """
+    with sqlite3.connect(path) as conn:
+        conn.executescript(
+            """
+            CREATE TABLE activity_log (
+                id INTEGER PRIMARY KEY,
+                source TEXT NOT NULL,
+                timestamp TEXT NOT NULL,
+                project_name TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                canonical_key TEXT,
+                tags TEXT NOT NULL
+            );
+            """
+        )
+        conn.execute(
+            "INSERT INTO activity_log VALUES (30, 'cc', '2026-08-05', 'alpha', ?, 'org/alpha',"
+            " '[\"LEDGER\"]')",
+            ("L" * length,),
+        )
+        conn.execute(
+            "INSERT INTO activity_log VALUES (40, 'cc', '2026-08-05', 'beta', 'behind the poison"
+            " pill', 'org/beta', '[\"SHIPPED\"]')"
+        )
+
+
+def test_over_long_summary_does_not_wedge_the_cursor(tmp_path: Path) -> None:
+    # Observed live 2026-08-05: 261 consecutive poll failures on one row, bridge
+    # activity delivery stopped for the duration. The cursor never advanced because the
+    # ValidationError aborted the batch before advance_consumer_cursor ran.
+    bridge = tmp_path / "bridge.db"
+    inbox = tmp_path / "inbox.db"
+    _bridge_with_long_summary(bridge, bridge_cursor.BODY_MAX_LENGTH + 5_000)
+
+    result = poll_bridge_protected_activity(bridge, inbox_path=inbox, backfill_on_first_run=True)
+
+    assert result.consumed == 2
+    assert result.cursor_after == 40
+    assert get_event("bridge-db:activity:40", path=inbox) is not None
+
+
+def test_the_truncated_body_fits_and_says_it_was_truncated(tmp_path: Path) -> None:
+    bridge = tmp_path / "bridge.db"
+    inbox = tmp_path / "inbox.db"
+    _bridge_with_long_summary(bridge, bridge_cursor.BODY_MAX_LENGTH + 5_000)
+
+    poll_bridge_protected_activity(bridge, inbox_path=inbox, backfill_on_first_run=True)
+
+    record = get_event("bridge-db:activity:30", path=inbox)
+    assert record is not None
+    assert len(record.event.body) <= bridge_cursor.BODY_MAX_LENGTH
+    assert record.event.body.endswith(bridge_cursor.BODY_TRUNCATION_NOTICE)
+    assert record.event.body.startswith("LLLL")
+
+
+def test_a_summary_at_the_limit_is_left_alone(tmp_path: Path) -> None:
+    bridge = tmp_path / "bridge.db"
+    inbox = tmp_path / "inbox.db"
+    _bridge_with_long_summary(bridge, bridge_cursor.BODY_MAX_LENGTH)
+
+    poll_bridge_protected_activity(bridge, inbox_path=inbox, backfill_on_first_run=True)
+
+    record = get_event("bridge-db:activity:30", path=inbox)
+    assert record is not None
+    assert record.event.body == "L" * bridge_cursor.BODY_MAX_LENGTH
+
+
+def test_the_limit_is_read_from_the_event_contract_not_restated(tmp_path: Path) -> None:
+    # If Event.body's max_length moves and this constant does not follow, the wedge
+    # comes back silently.
+    from notification_hub.models import Event
+
+    declared = [
+        c.max_length for c in Event.model_fields["body"].metadata if hasattr(c, "max_length")
+    ]
+    assert declared == [bridge_cursor.BODY_MAX_LENGTH]
