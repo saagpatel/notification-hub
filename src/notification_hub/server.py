@@ -3,22 +3,26 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import secrets
 import sqlite3
 import time
-from collections.abc import AsyncGenerator, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, TypedDict, cast
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from notification_hub.bridge_cursor import poll_bridge_protected_activity
 from notification_hub.config import (
     BRIDGE_DB_PATH,
     BRIDGE_FILE,
+    HOST,
+    PORT,
     bridge_cursor_enabled,
     get_policy_config,
 )
@@ -111,6 +115,15 @@ _REVIEW_SAFE_ERROR_MESSAGES = {
     "package validation failed",
     "review package path missing",
 }
+_REVIEW_MUTATION_HEADER = "x-notification-hub-review-token"
+_REVIEW_MUTATION_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+_REVIEW_ALLOWED_ORIGINS = frozenset(
+    {
+        f"http://{HOST}:{PORT}",
+        f"http://localhost:{PORT}",
+    }
+)
+_review_mutation_token = secrets.token_urlsafe(32)
 
 _start_time: float = 0.0
 _event_count: int = 0
@@ -556,6 +569,39 @@ app = FastAPI(
 )
 
 
+@app.middleware("http")
+async def enforce_review_mutation_boundary(
+    request: Request,
+    call_next: Callable[[Request], Awaitable[Response]],
+) -> Response:
+    """Require local-page authority before any review-surface mutation."""
+    is_review_mutation = (
+        request.method in _REVIEW_MUTATION_METHODS
+        and (request.url.path == "/review" or request.url.path.startswith("/review/"))
+    )
+    if not is_review_mutation:
+        return await call_next(request)
+
+    origin = request.headers.get("origin")
+    if origin is not None and origin not in _REVIEW_ALLOWED_ORIGINS:
+        return JSONResponse(
+            status_code=403,
+            content={"detail": "review mutation origin is not allowed"},
+        )
+
+    supplied_token = request.headers.get(_REVIEW_MUTATION_HEADER)
+    if supplied_token is None or not secrets.compare_digest(
+        supplied_token,
+        _review_mutation_token,
+    ):
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "review mutation authentication failed"},
+        )
+
+    return await call_next(request)
+
+
 REVIEW_HTML = """<!doctype html>
 <html lang="en">
 <head>
@@ -795,6 +841,13 @@ REVIEW_HTML = """<!doctype html>
     const importQueue = document.getElementById("importQueue");
     const importQueueFilter = document.getElementById("importQueueFilter");
     const actionProposalReviewWindowHours = __ACTION_PROPOSAL_REVIEW_WINDOW_HOURS__;
+    const reviewMutationToken = __REVIEW_MUTATION_TOKEN__;
+
+    function reviewMutationFetch(path, options = {}) {
+      const headers = new Headers(options.headers || {});
+      headers.set("X-Notification-Hub-Review-Token", reviewMutationToken);
+      return fetch(path, { ...options, headers });
+    }
 
     function item(html) {
       const li = document.createElement("li");
@@ -1296,7 +1349,7 @@ REVIEW_HTML = """<!doctype html>
       if (!groupKey) {
         return null;
       }
-      const res = await fetch(path, {
+      const res = await reviewMutationFetch(path, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1370,7 +1423,7 @@ REVIEW_HTML = """<!doctype html>
       if (!window.confirm("Record this proposal group outcome locally?")) {
         return;
       }
-      const data = await fetch("/review/action-proposal-group/outcome", {
+      const data = await reviewMutationFetch("/review/action-proposal-group/outcome", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1392,7 +1445,7 @@ REVIEW_HTML = """<!doctype html>
       if (!dismissalKey) {
         return;
       }
-      const res = await fetch(`/review/action-proposal/${encodeURIComponent(dismissalKey)}/dismiss`, {
+      const res = await reviewMutationFetch(`/review/action-proposal/${encodeURIComponent(dismissalKey)}/dismiss`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ reason: "Review UI dismissed repeated proposal as known noise." })
@@ -1440,7 +1493,7 @@ REVIEW_HTML = """<!doctype html>
       if (!dismissalKey) {
         return;
       }
-      const res = await fetch(`/review/action-proposal/${encodeURIComponent(dismissalKey)}/undismiss`, {
+      const res = await reviewMutationFetch(`/review/action-proposal/${encodeURIComponent(dismissalKey)}/undismiss`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ reason: "Review UI reactivated this proposal." })
@@ -1490,7 +1543,7 @@ REVIEW_HTML = """<!doctype html>
     async function saveReviewSession() {
       const dailyRes = await fetch("/review/operator-daily-state?hours=24&limit=5");
       const daily = await dailyRes.json();
-      const sessionRes = await fetch(
+      const sessionRes = await reviewMutationFetch(
         "/review/operator-review-session/report?hours=2&limit=25",
         { method: "POST" }
       );
@@ -1601,7 +1654,7 @@ REVIEW_HTML = """<!doctype html>
       );
     }
     async function runHandoffDrill() {
-      const res = await fetch("/review/operator-handoff-drill?save_burn_in_report=true", { method: "POST" });
+      const res = await reviewMutationFetch("/review/operator-handoff-drill?save_burn_in_report=true", { method: "POST" });
       const data = await res.json();
       const scenario = data.scenario || {};
       const burnIn = data.queue_burn_in || {};
@@ -1625,7 +1678,7 @@ REVIEW_HTML = """<!doctype html>
       );
     }
     async function post(path) {
-      const res = await fetch(path, { method: "POST" });
+      const res = await reviewMutationFetch(path, { method: "POST" });
       const data = await res.json();
       await load();
       return data;
@@ -1694,7 +1747,7 @@ REVIEW_HTML = """<!doctype html>
       if (!name) {
         return;
       }
-      const res = await fetch(`/review/package/${encodeURIComponent(name)}`, { method: "DELETE" });
+      const res = await reviewMutationFetch(`/review/package/${encodeURIComponent(name)}`, { method: "DELETE" });
       const data = await res.json();
       if (data.status !== "ok") {
         packageDetail.replaceChildren(
@@ -1709,7 +1762,7 @@ REVIEW_HTML = """<!doctype html>
       if (!name) {
         return;
       }
-      const res = await fetch(`/review/package/${encodeURIComponent(name)}/queue`, { method: "POST" });
+      const res = await reviewMutationFetch(`/review/package/${encodeURIComponent(name)}/queue`, { method: "POST" });
       const data = await res.json();
       packageDetail.replaceChildren(
         item(`<div class="line"><span class="title">${esc(name)}</span><span class="meta">${esc(data.status)}</span></div>`),
@@ -1886,7 +1939,7 @@ REVIEW_HTML = """<!doctype html>
         body.promotion_outcome = "pending";
         body.promotion_outcome_note = "Review UI marked the handoff promoted; record the personal-ops outcome later.";
       }
-      const res = await fetch(`/review/import-queue/${encodeURIComponent(queueId)}`, {
+      const res = await reviewMutationFetch(`/review/import-queue/${encodeURIComponent(queueId)}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body)
@@ -2124,7 +2177,20 @@ async def review() -> HTMLResponse:
         REVIEW_HTML.replace(
             "__ACTION_PROPOSAL_REVIEW_WINDOW_HOURS__",
             str(ACTION_PROPOSAL_REVIEW_WINDOW_HOURS),
-        )
+        ).replace(
+            "__REVIEW_MUTATION_TOKEN__",
+            json.dumps(_review_mutation_token),
+        ),
+        headers={
+            "Cache-Control": "no-store",
+            "Content-Security-Policy": (
+                "default-src 'self'; script-src 'unsafe-inline'; "
+                "style-src 'unsafe-inline'; img-src data:; connect-src 'self'; "
+                "frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+            ),
+            "Referrer-Policy": "no-referrer",
+            "X-Frame-Options": "DENY",
+        },
     )
 
 

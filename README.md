@@ -90,6 +90,21 @@ The repo-owned hooks use producer IDs `codex` and `cc`. The smoke command uses
 its raw token from `NOTIFICATION_HUB_PRODUCER_TOKEN`. Each ID needs its own
 unique token digest and destination allowlist.
 
+## Review Surface Security
+
+The daemon still binds the operator review UI to `127.0.0.1:9199`. Loopback is
+not the browser security boundary by itself, so every mutating `/review` request
+also requires a per-process capability token issued only in the uncached local
+review page. The page sends that token in
+`X-Notification-Hub-Review-Token`; missing or invalid tokens fail before the
+route can write local state. Requests carrying a browser `Origin` header are
+accepted only from `http://127.0.0.1:9199` or `http://localhost:9199`.
+
+The capability rotates whenever the daemon restarts. Refresh an already-open
+review page after a restart before saving, queueing, dismissing, or updating
+local review state. Read-only review routes and producer-authenticated
+`POST /events` keep their existing contracts.
+
 ## Local Development
 
 ```bash

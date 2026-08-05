@@ -17,7 +17,11 @@ from notification_hub.server import app
 @pytest.fixture
 async def client() -> AsyncIterator[AsyncClient]:
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as c:
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        headers={"X-Notification-Hub-Review-Token": "fixture-review-token"},
+    ) as c:
         yield c
 
 
