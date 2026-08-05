@@ -32,6 +32,7 @@ async def client() -> AsyncIterator[AsyncClient]:
         headers={
             "Authorization": "Bearer fixture-codex-token",
             "X-Notification-Hub-Producer": "codex",
+            "X-Notification-Hub-Review-Token": "fixture-review-token",
         },
     ) as c:
         yield c
@@ -140,6 +141,12 @@ def isolate_runtime_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> It
     monkeypatch.setattr(server_mod, "_retention_task", None)
     monkeypatch.setattr(server_mod, "_durable_inbox_task", None)
     monkeypatch.setattr(server_mod, "_bridge_cursor_task", None)
+    monkeypatch.setattr(
+        server_mod,
+        "_review_mutation_token",
+        "fixture-review-token",
+        raising=False,
+    )
     server_mod.reset_retention_runtime_state()
     server_mod.reset_bridge_cursor_runtime_status()
 
