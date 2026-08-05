@@ -21,6 +21,45 @@ CONSUMER_NAME = "bridge-db-protected-activity-v1"
 BRIDGE_DB_PRODUCER = "bridge-db-cursor"
 
 
+def _event_body_limit() -> int:
+    """Read the Event contract's own body limit rather than restating it.
+
+    Hardcoding 2000 here would let the two drift, and a drift in this direction is not
+    a cosmetic bug: it wedges the cursor permanently (see _fit_body).
+    """
+    for constraint in Event.model_fields["body"].metadata:
+        limit = getattr(constraint, "max_length", None)
+        if limit is not None:
+            return int(limit)
+    raise RuntimeError("Event.body no longer declares a max_length for the cursor to honour")
+
+
+BODY_MAX_LENGTH = _event_body_limit()
+BODY_TRUNCATION_NOTICE = " [truncated; full text in bridge-db activity_log]"
+
+
+def _fit_body(summary: str) -> str:
+    """Clip an over-long activity summary to what Event will accept.
+
+    A bridge-db row whose summary exceeded Event.body's limit raised ValidationError
+    inside the poll loop, which aborts the whole batch BEFORE the cursor advances. The
+    next poll re-reads the same row and fails identically, so one over-long summary
+    stops every protected row behind it, forever. Observed live on 2026-08-05: 261
+    consecutive failures, no bridge activity delivered for nine minutes and climbing,
+    from a single row an agent wrote with a long summary.
+
+    Truncating rather than skipping is deliberate. The row is legitimate data that
+    simply exceeds a transport limit, so the operator should still be told it happened;
+    the notice points at the full text, which is never modified or removed.
+    """
+    if len(summary) <= BODY_MAX_LENGTH:
+        return summary
+    keep = BODY_MAX_LENGTH - len(BODY_TRUNCATION_NOTICE)
+    if keep <= 0:
+        return BODY_TRUNCATION_NOTICE[:BODY_MAX_LENGTH]
+    return summary[:keep] + BODY_TRUNCATION_NOTICE
+
+
 @dataclass(frozen=True)
 class BridgePollResult:
     consumed: int
@@ -97,7 +136,7 @@ def poll_bridge_protected_activity(
             source=source,
             level="normal" if "SHIPPED" in tags else "info",
             title=f"Bridge: {row['project_name']}",
-            body=str(row["summary"]),
+            body=_fit_body(str(row["summary"])),
             project=str(row["canonical_key"] or row["project_name"]),
             timestamp=_logical_timestamp(str(row["timestamp"])),
             event_type="bridge.shipped" if "SHIPPED" in tags else "bridge.ledger",
