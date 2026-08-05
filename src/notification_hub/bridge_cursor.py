@@ -15,11 +15,10 @@ from notification_hub.durable_inbox import (
     get_consumer_cursor,
 )
 from notification_hub.models import BRIDGE_SOURCE_ALIASES, Event
-from notification_hub.pipeline import build_stored_event
+from notification_hub.pipeline import build_stored_event, required_destinations_for_event
 
 CONSUMER_NAME = "bridge-db-protected-activity-v1"
 BRIDGE_DB_PRODUCER = "bridge-db-cursor"
-BRIDGE_DB_DESTINATIONS = ["log", "slack"]
 
 
 @dataclass(frozen=True)
@@ -106,7 +105,9 @@ def poll_bridge_protected_activity(
             sequence=row_id,
             privacy_class="internal",
             producer=BRIDGE_DB_PRODUCER,
-            required_destinations=BRIDGE_DB_DESTINATIONS,
+        )
+        event = event.model_copy(
+            update={"required_destinations": required_destinations_for_event(event)}
         )
         enqueue_event(build_stored_event(event), path=inbox_path)
         advance_consumer_cursor(CONSUMER_NAME, row_id, path=inbox_path)

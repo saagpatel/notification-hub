@@ -193,6 +193,17 @@ def explain_event(event: Event) -> EventExplanation:
     )
 
 
+def required_destinations_for_event(event: Event) -> list[str]:
+    """Freeze the exact destinations selected by current classification and routing."""
+    explanation = explain_event(event)
+    destinations = {"log"}
+    if explanation.push_delivery:
+        destinations.add("push")
+    if explanation.slack_delivery:
+        destinations.add("slack")
+    return sorted(destinations)
+
+
 def _routing_rule_to_dict(rule: RoutingRule | None) -> dict[str, object] | None:
     """Convert a routing rule to a JSON-ready dictionary."""
     if rule is None:

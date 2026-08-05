@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator
 from contextlib import contextmanager
+from typing import Literal
 from unittest.mock import patch
 
 import pytest
@@ -406,10 +407,17 @@ async def test_create_event_freezes_exact_authorized_destinations(
     assert record.event.required_destinations == ["log", "push", "slack"]
 
 
-def test_bridge_file_adapter_supplies_bounded_product_authority() -> None:
+@pytest.mark.parametrize(
+    ("level", "destinations"),
+    [("normal", ["log", "slack"]), ("info", ["log"])],
+)
+def test_bridge_file_adapter_supplies_bounded_product_authority(
+    level: Literal["normal", "info"],
+    destinations: list[str],
+) -> None:
     event = Event(
         source="bridge_watcher",
-        level="normal",
+        level=level,
         title="Bridge shipped",
         body="Internal bridge evidence.",
     )
@@ -419,7 +427,7 @@ def test_bridge_file_adapter_supplies_bounded_product_authority() -> None:
     persisted = event.model_copy(
         update={
             "producer": "bridge-markdown-watcher",
-            "required_destinations": ["log", "slack"],
+            "required_destinations": destinations,
         }
     )
     persist.assert_called_once_with(persisted)

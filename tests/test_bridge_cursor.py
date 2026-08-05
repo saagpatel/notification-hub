@@ -98,6 +98,33 @@ def test_backfill_consumes_protected_rows_with_deterministic_ids(tmp_path: Path)
     assert collect_health(path=inbox)["queued_count"] == 1
 
 
+def test_ledger_rows_remain_log_only(tmp_path: Path) -> None:
+    bridge = tmp_path / "bridge.db"
+    inbox = tmp_path / "inbox.db"
+    _bridge(bridge)
+    poll_bridge_protected_activity(bridge, inbox_path=inbox, backfill_on_first_run=True)
+    with sqlite3.connect(bridge) as conn:
+        conn.execute(
+            "INSERT INTO activity_log VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                30,
+                "codex",
+                "2026-07-13",
+                "gamma",
+                "ledger row",
+                "org/gamma",
+                '["LEDGER"]',
+            ),
+        )
+
+    result = poll_bridge_protected_activity(bridge, inbox_path=inbox)
+
+    assert result.consumed == 1
+    record = get_event("bridge-db:activity:30", path=inbox)
+    assert record is not None
+    assert record.event.required_destinations == ["log"]
+
+
 def test_retry_after_cursor_write_loss_is_idempotent(tmp_path: Path) -> None:
     bridge = tmp_path / "bridge.db"
     inbox = tmp_path / "inbox.db"
