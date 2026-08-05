@@ -27,9 +27,12 @@ from notification_hub.delivery_check_supersession import (
     finalize_delivery_check_receipt_supersession_claim,
 )
 
-SHARED_ENVELOPE_MODULE = Path(
-    "/Users/d/.codex/scripts/security/irreversible_action_envelope.py"
+from tests.envelope_support import (  # noqa: E402
+    SHARED_ENVELOPE_MODULE,
+    requires_shared_envelope_module,
 )
+
+pytestmark = requires_shared_envelope_module
 
 
 def _write_original_envelope(path: Path, plan: dict[str, object]) -> None:
