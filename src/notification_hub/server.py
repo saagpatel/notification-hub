@@ -405,7 +405,14 @@ def _handle_bridge_event(event: Event) -> None:
     """Callback for bridge file watcher — persist first, worker delivers later."""
     global _event_count
     try:
-        _persist_event_for_processing(event)
+        _persist_event_for_processing(
+            event.model_copy(
+                update={
+                    "producer": "bridge-markdown-watcher",
+                    "required_destinations": ["log", "slack"],
+                }
+            )
+        )
         _event_count += 1
     except Exception:
         logger.exception("Failed to persist bridge watcher event")

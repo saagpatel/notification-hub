@@ -504,7 +504,15 @@ def process_stored_event_with_result(
                 if result.outcome_unknown
                 else "failed"
             )
-            channel_state_recorder(channel, state, evidence)
+            try:
+                channel_state_recorder(channel, state, evidence)
+            except Exception as exc:
+                if state in {"accepted", "outcome_unknown"}:
+                    raise DeliveryOutcomeUnknown(
+                        f"{channel} receipt persistence failed after provider attempt; "
+                        "reconciliation is required before retry"
+                    ) from exc
+                raise
         if result.outcome_unknown:
             raise DeliveryOutcomeUnknown(
                 f"{channel} delivery outcome unknown for event {stored.event_id}"

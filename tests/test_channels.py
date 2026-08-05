@@ -291,6 +291,25 @@ class TestSlackFormatting:
         assert redacted.project is not None and "/Users/d" not in redacted.project
         assert "[local-path-redacted]" in redacted.body
 
+    @pytest.mark.parametrize(
+        ("body", "secret"),
+        [
+            ('password="correct horse fixture-double-quoted-secret"', "fixture-double-quoted-secret"),
+            ("api_key='correct horse fixture-single-quoted-secret'", "fixture-single-quoted-secret"),
+            ('secret="unterminated fixture-unterminated-secret', "fixture-unterminated-secret"),
+            ('webhook="fixture-webhook-secret"', "fixture-webhook-secret"),
+        ],
+    )
+    def test_external_redaction_covers_quoted_and_webhook_assignments(
+        self,
+        body: str,
+        secret: str,
+    ) -> None:
+        redacted = redact_for_external_delivery(_make_event(body=body))
+
+        assert secret not in redacted.body
+        assert "[redacted]" in redacted.body
+
     def test_secret_event_external_copy_contains_no_original_content(self) -> None:
         event = _make_event(title="Password leaked", body="password=hunter2").model_copy(
             update={"privacy_class": "secret", "context": {"token": "abc"}}
@@ -683,6 +702,64 @@ class TestSendSlackRetry:
             result = send_slack(event)
         assert result is True
         assert mock_post.call_count == 2
+
+    def test_retries_proxy_connection_failure_then_succeeds(self) -> None:
+        event = _make_event()
+        side_effects = [httpx.ProxyError("proxy connect failed"), self._resp(200)]
+        with (
+            patch(self._WEBHOOK, return_value=self._URL),
+            patch(self._POST, side_effect=side_effects) as mock_post,
+            patch(self._SLEEP) as mock_sleep,
+        ):
+            result = send_slack(event)
+
+        assert result is True
+        assert mock_post.call_count == 2
+        mock_sleep.assert_called_once()
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            httpx.TransportError("opaque transport failure"),
+            httpx.CloseError("connection closed during cleanup"),
+        ],
+    )
+    def test_unproven_transport_failure_is_unknown_and_never_retried(
+        self,
+        error: httpx.TransportError,
+    ) -> None:
+        event = _make_event()
+        with (
+            patch(self._WEBHOOK, return_value=self._URL),
+            patch(self._POST, side_effect=error) as mock_post,
+            patch(self._SLEEP) as mock_sleep,
+        ):
+            result = send_slack_with_result(event)
+
+        assert result.outcome_unknown is True
+        assert result.error_category == "slack_outcome_unknown"
+        mock_post.assert_called_once()
+        mock_sleep.assert_not_called()
+
+    def test_unsupported_protocol_is_terminal_configuration_failure_without_retry(
+        self,
+    ) -> None:
+        event = _make_event()
+        with (
+            patch(self._WEBHOOK, return_value=self._URL),
+            patch(
+                self._POST,
+                side_effect=httpx.UnsupportedProtocol("fixture unsupported protocol"),
+            ) as mock_post,
+            patch(self._SLEEP) as mock_sleep,
+        ):
+            result = send_slack_with_result(event)
+
+        assert result.accepted is False
+        assert result.outcome_unknown is False
+        assert result.error_category == "slack_configuration_error"
+        mock_post.assert_called_once()
+        mock_sleep.assert_not_called()
 
     def test_does_not_retry_read_timeout_with_unknown_provider_outcome(self) -> None:
         event = _make_event()

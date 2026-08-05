@@ -18,6 +18,8 @@ from notification_hub.models import BRIDGE_SOURCE_ALIASES, Event
 from notification_hub.pipeline import build_stored_event
 
 CONSUMER_NAME = "bridge-db-protected-activity-v1"
+BRIDGE_DB_PRODUCER = "bridge-db-cursor"
+BRIDGE_DB_DESTINATIONS = ["log", "slack"]
 
 
 @dataclass(frozen=True)
@@ -103,6 +105,8 @@ def poll_bridge_protected_activity(
             source_revision=str(row_id),
             sequence=row_id,
             privacy_class="internal",
+            producer=BRIDGE_DB_PRODUCER,
+            required_destinations=BRIDGE_DB_DESTINATIONS,
         )
         enqueue_event(build_stored_event(event), path=inbox_path)
         advance_consumer_cursor(CONSUMER_NAME, row_id, path=inbox_path)
