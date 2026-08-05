@@ -35,6 +35,8 @@ def _event() -> StoredEvent:
         level="normal",
         title="Fixture delivery",
         body="Isolated destination only.",
+        producer="fixture-readback",
+        required_destinations=["log", "push", "slack"],
     )
 
 

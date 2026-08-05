@@ -53,6 +53,8 @@ def _unknown_event(db_path: Path, event_id: str = "fixture:reconcile:1") -> Stor
         level="normal",
         title="Fixture reconciliation",
         body="Isolated provider readback only.",
+        producer="fixture-reconciliation",
+        required_destinations=["log", "slack"],
     )
     enqueue_event(event, path=db_path)
     claimed = claim_next_due_event(path=db_path)

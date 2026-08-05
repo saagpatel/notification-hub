@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator
 from contextlib import contextmanager
+from typing import Literal
 from unittest.mock import patch
 
 import pytest
@@ -19,6 +20,7 @@ from notification_hub.durable_inbox import (
     get_channel_state,
     get_event,
 )
+from notification_hub.models import Event
 from notification_hub.pipeline import (
     DeliveryError,
     get_suppression_engine,
@@ -403,6 +405,32 @@ async def test_create_event_freezes_exact_authorized_destinations(
     assert record is not None
     assert record.event.producer == "codex"
     assert record.event.required_destinations == ["log", "push", "slack"]
+
+
+@pytest.mark.parametrize(
+    ("level", "destinations"),
+    [("normal", ["log", "slack"]), ("info", ["log"])],
+)
+def test_bridge_file_adapter_supplies_bounded_product_authority(
+    level: Literal["normal", "info"],
+    destinations: list[str],
+) -> None:
+    event = Event(
+        source="bridge_watcher",
+        level=level,
+        title="Bridge shipped",
+        body="Internal bridge evidence.",
+    )
+    with patch.object(server_mod, "_persist_event_for_processing") as persist:
+        server_mod._handle_bridge_event(event)
+
+    persisted = event.model_copy(
+        update={
+            "producer": "bridge-markdown-watcher",
+            "required_destinations": destinations,
+        }
+    )
+    persist.assert_called_once_with(persisted)
 
 
 async def test_create_event_accepts_restricted_log_only_contract(
