@@ -93,6 +93,8 @@ def test_backfill_consumes_protected_rows_with_deterministic_ids(tmp_path: Path)
     record = get_event("bridge-db:activity:20", path=inbox)
     assert record is not None
     assert record.event.source_revision == "20"
+    assert record.event.authorization_principal == "bridge-db-cursor"
+    assert record.event.authorized_destinations == ["log", "slack"]
     assert collect_health(path=inbox)["queued_count"] == 1
 
 

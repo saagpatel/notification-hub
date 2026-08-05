@@ -248,8 +248,8 @@ async def _retention_loop() -> None:
 def _persist_event_for_processing(
     event: Event,
     *,
-    authorization_principal: str | None = None,
-    authorized_destinations: set[str] | None = None,
+    authorization_principal: str,
+    authorized_destinations: set[str],
 ) -> StoredEvent:
     """Persist an event before any delivery attempt or producer acknowledgement."""
     stored = build_stored_event(
@@ -392,7 +392,11 @@ def _handle_bridge_event(event: Event) -> None:
     """Callback for bridge file watcher — persist first, worker delivers later."""
     global _event_count
     try:
-        _persist_event_for_processing(event)
+        _persist_event_for_processing(
+            event,
+            authorization_principal="bridge-markdown-watcher",
+            authorized_destinations={"log", "slack"},
+        )
         _event_count += 1
     except Exception:
         logger.exception("Failed to persist bridge watcher event")

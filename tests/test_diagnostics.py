@@ -113,6 +113,8 @@ def test_collect_doctor_report_degrades_on_dead_lettered_events() -> None:
             body="This event exhausted retries.",
             project="notification-hub",
             classified_level="info",
+            authorization_principal="fixture-diagnostics",
+            authorized_destinations=["log"],
         ),
         max_attempts=1,
     )

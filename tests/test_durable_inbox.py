@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -11,6 +13,7 @@ import pytest
 import notification_hub.durable_inbox as durable_inbox
 from notification_hub.durable_inbox import (
     IdempotencyConflictError,
+    MissingEventAuthorityError,
     accepted_channels,
     channel_state_counts,
     channels_in_state,
@@ -83,6 +86,8 @@ def _event(event_id: str = "evt1") -> StoredEvent:
         body="Persist me before ack.",
         project="notification-hub",
         classified_level="info",
+        authorization_principal="fixture-producer",
+        authorized_destinations=["log"],
     )
 
 
@@ -130,6 +135,48 @@ def test_enqueue_event_rejects_conflicting_payload_for_same_event_id(tmp_path: P
         enqueue_event(conflicting, path=db_path)
 
     assert collect_health(path=db_path)["queued_count"] == 1
+
+
+def test_enqueue_event_rejects_missing_durable_authority(tmp_path: Path) -> None:
+    event = _event("missing-authority").model_copy(
+        update={"authorization_principal": None, "authorized_destinations": None}
+    )
+
+    with pytest.raises(MissingEventAuthorityError, match="durable authority"):
+        enqueue_event(event, path=tmp_path / "inbox.sqlite3")
+
+
+def test_concurrent_conflicting_idempotency_claims_have_one_winner(tmp_path: Path) -> None:
+    db_path = tmp_path / "inbox.sqlite3"
+    init_schema(db_path)
+    barrier = threading.Barrier(3)
+    first = _event("raced-id").model_copy(update={"body": "first principal payload"})
+    second = _event("raced-id").model_copy(
+        update={
+            "body": "second principal payload",
+            "authorization_principal": "other-producer",
+        }
+    )
+
+    def submit(event: StoredEvent) -> StoredEvent:
+        barrier.wait()
+        return enqueue_event(event, path=db_path)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(submit, event) for event in (first, second)]
+        barrier.wait()
+        outcomes: list[StoredEvent | BaseException] = []
+        for future in futures:
+            try:
+                outcomes.append(future.result())
+            except BaseException as exc:  # noqa: BLE001 - asserted below
+                outcomes.append(exc)
+
+    assert sum(isinstance(value, StoredEvent) for value in outcomes) == 1
+    assert sum(isinstance(value, IdempotencyConflictError) for value in outcomes) == 1
+    winner = get_event("raced-id", path=db_path)
+    assert winner is not None
+    assert winner.event.authorization_principal in {"fixture-producer", "other-producer"}
 
 
 def test_claim_and_mark_processed_transition(tmp_path: Path) -> None:
@@ -461,7 +508,9 @@ def test_dead_letter_disposition_clears_actionable_health_without_deleting_histo
 
 def test_schema_migration_is_additive_and_preserves_existing_rows(tmp_path: Path) -> None:
     db_path = tmp_path / "legacy.sqlite3"
-    event = _event("legacy-row")
+    event = _event("legacy-row").model_copy(
+        update={"authorization_principal": None, "authorized_destinations": None}
+    )
     now = datetime.now(UTC).isoformat()
     with sqlite3.connect(db_path) as conn:
         conn.execute(
@@ -515,6 +564,12 @@ def test_schema_migration_is_additive_and_preserves_existing_rows(tmp_path: Path
         "last_error_category",
     } <= channel_columns
     assert version == ("5",)
+
+    assert claim_next_due_event(path=db_path) is None
+    quarantined = get_event("legacy-row", path=db_path)
+    assert quarantined is not None
+    assert quarantined.status == "dead_lettered"
+    assert quarantined.last_error_type == "MissingEventAuthority"
 
 
 def test_retention_preserves_delivery_history_and_unresolved_dead_letters(
