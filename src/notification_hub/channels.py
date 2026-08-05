@@ -66,9 +66,21 @@ _PUSH_NOTIFIER_CANDIDATES: tuple[str, ...] = (
 )
 _LOCAL_PATH_RE = re.compile(r"/(?:Users|private|var|tmp)/[^\s)\]}]+")
 _SECRET_ASSIGNMENT_RE = re.compile(
-    r"(?i)\b(token|secret|password|api[_-]?key|authorization)\b\s*[:=]\s*[^\s,;]+"
+    r"(?i)\b(token|secret|password|api[_-]?key|authorization|webhook)"
+    r"\b\s*[:=]\s*(?:bearer\s+)?"
+    r'(?:"(?:\\.|[^"\\])*(?:"|$)|\'(?:\\.|[^\'\\])*(?:\'|$)|[^\s,;]+)'
 )
 _BROADCAST_MENTION_RE = re.compile(r"(?<![\w.])@(channel|here|everyone)\b", re.IGNORECASE)
+_SLACK_SAFE_TO_RETRY_TRANSPORT_ERRORS = (
+    httpx.ConnectError,
+    httpx.ConnectTimeout,
+    httpx.PoolTimeout,
+    httpx.ProxyError,
+)
+_SLACK_CONFIGURATION_TRANSPORT_ERRORS = (
+    httpx.LocalProtocolError,
+    httpx.UnsupportedProtocol,
+)
 
 
 def _live_transport_blocked() -> bool:
@@ -341,30 +353,39 @@ def _post_to_slack_with_result(
         retry_after: float | None = None
         try:
             resp = httpx.post(webhook_url, json=payload, timeout=_SLACK_TIMEOUT_SECONDS)
-        except httpx.TransportError as exc:
+        except _SLACK_CONFIGURATION_TRANSPORT_ERRORS as exc:
+            logger.warning(
+                "Slack %s has terminal transport configuration failure (%s); not retrying",
+                description,
+                type(exc).__name__,
+            )
+            return ChannelDeliveryResult(False, error_category="slack_configuration_error")
+        except _SLACK_SAFE_TO_RETRY_TRANSPORT_ERRORS as exc:
             reason = type(exc).__name__
             error_category = (
                 "slack_timeout"
                 if isinstance(exc, httpx.TimeoutException)
                 else "slack_network_error"
             )
-            if isinstance(
-                exc,
-                (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout),
-            ):
-                transient = True
-            else:
-                logger.warning(
-                    "Slack %s has ambiguous transport outcome (%s); reconciliation required",
-                    description,
-                    reason,
-                )
-                return ChannelDeliveryResult(
-                    False,
-                    receipt="slack:webhook:transport:response_unknown",
-                    error_category=error_category,
-                    outcome_unknown=True,
-                )
+            transient = True
+        except httpx.TransportError as exc:
+            # Unknown and future transport subclasses are not proof that no
+            # provider effect occurred. Fail closed against automatic replay.
+            logger.warning(
+                "Slack %s has ambiguous transport outcome (%s); reconciliation required",
+                description,
+                type(exc).__name__,
+            )
+            return ChannelDeliveryResult(
+                False,
+                receipt="slack:webhook:transport:response_unknown",
+                error_category=(
+                    "slack_timeout"
+                    if isinstance(exc, httpx.TimeoutException)
+                    else "slack_outcome_unknown"
+                ),
+                outcome_unknown=True,
+            )
         except Exception as exc:
             # Permanent/setup error (bad URL, unsupported protocol). Log the type
             # only — exception messages can embed the webhook URL (a bearer token).

@@ -111,6 +111,8 @@ def test_restart_backlog_rate_limit_defers_without_spending_attempt(
         classified_level="normal",
         title="Session complete",
         body="Backlog fixture",
+        producer="fixture-restart-backlog",
+        required_destinations=["log", "slack"],
     )
     enqueue_event(event, path=inbox)
     claimed = claim_next_due_event(path=inbox)
@@ -176,6 +178,8 @@ def test_restart_backlog_pressure_cannot_create_dead_letter_storm(
                 classified_level="urgent",
                 title=f"Approval needed {index}",
                 body="Backlog pressure fixture",
+                producer="fixture-backlog-pressure",
+                required_destinations=["log", "push", "slack"],
             ),
             path=inbox,
         )

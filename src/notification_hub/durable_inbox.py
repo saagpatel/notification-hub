@@ -44,6 +44,10 @@ class IdempotencyConflictError(ValueError):
     """Raised when an event id is reused with a different canonical payload."""
 
 
+class MissingEventAuthorityError(ValueError):
+    """Raised when a new durable event lacks an exact producer/destination binding."""
+
+
 def event_payload_digest(event: StoredEvent) -> str:
     """Return a stable digest that excludes server receipt metadata."""
     if event.payload_digest is not None:
@@ -865,11 +869,19 @@ def enqueue_event(
     max_attempts: int = DEFAULT_MAX_ATTEMPTS,
 ) -> StoredEvent:
     """Persist an accepted event before the caller acknowledges receipt."""
+    if not event.producer or "log" not in event.required_destinations:
+        raise MissingEventAuthorityError(
+            "new durable events require an explicit producer and destination authority"
+        )
     init_schema(path)
     now = isoformat()
     payload_json = event.model_dump_json()
     payload_digest = event_payload_digest(event)
     with _managed_connection(path) as conn:
+        # Serialize the idempotency decision with the insert. A deferred
+        # transaction permits conflicting callers to observe no row before
+        # INSERT OR IGNORE silently chooses one payload.
+        conn.execute("BEGIN IMMEDIATE")
         existing = conn.execute(
             "SELECT payload_json, payload_digest FROM durable_events WHERE event_id = ?",
             (event.event_id,),
@@ -921,13 +933,19 @@ def enqueue_event(
             ),
         )
         row = conn.execute(
-            "SELECT payload_json FROM durable_events WHERE event_id = ?",
+            "SELECT payload_json, payload_digest FROM durable_events WHERE event_id = ?",
             (event.event_id,),
         ).fetchone()
 
     if row is None:
         raise RuntimeError("durable inbox insert did not return the accepted event")
-    return StoredEvent.model_validate_json(str(row["payload_json"]))
+    accepted_event = StoredEvent.model_validate_json(str(row["payload_json"]))
+    accepted_digest = str(row["payload_digest"] or event_payload_digest(accepted_event))
+    if accepted_digest != payload_digest:
+        raise IdempotencyConflictError(
+            f"event_id {event.event_id!r} already exists with a different payload digest"
+        )
+    return accepted_event
 
 
 def _record_from_row(row: sqlite3.Row) -> DurableEventRecord:
@@ -986,6 +1004,24 @@ def claim_next_due_event(
             return None
 
         event_id = str(row["event_id"])
+        event = StoredEvent.model_validate_json(str(row["payload_json"]))
+        if not event.producer or "log" not in event.required_destinations:
+            conn.execute(
+                """
+                UPDATE durable_events
+                SET status = 'dead_lettered',
+                    lease_until = NULL,
+                    next_attempt_at = NULL,
+                    dead_lettered_at = ?,
+                    last_error = 'legacy durable row lacks authenticated authority; reconciliation required',
+                    last_error_type = 'MissingEventAuthority',
+                    updated_at = ?
+                WHERE event_id = ?
+                """,
+                (now, now, event_id),
+            )
+            conn.commit()
+            return None
         attempt_count = int(row["attempt_count"]) + 1
         conn.execute(
             """
@@ -1006,7 +1042,7 @@ def claim_next_due_event(
         updated["updated_at"] = now
         return DurableEventRecord(
             event_id=str(updated["event_id"]),
-            event=StoredEvent.model_validate_json(str(updated["payload_json"])),
+            event=event,
             status="processing",
             attempt_count=attempt_count,
             max_attempts=int(updated["max_attempts"]),

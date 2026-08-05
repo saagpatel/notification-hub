@@ -791,6 +791,40 @@ class TestRateLimiting:
 
 
 class TestPushFailureResilience:
+    def test_provider_acceptance_with_failed_receipt_write_becomes_outcome_unknown(
+        self, tmp_log: Path
+    ) -> None:
+        event = build_stored_event(
+            _event(
+                body="Session complete",
+                level="normal",
+                required_destinations=["log", "slack"],
+            )
+        )
+
+        def fail_after_attempt(_channel: str, state: str, _evidence: str | None) -> None:
+            if state == "accepted":
+                raise OSError("fixture receipt store unavailable")
+
+        with (
+            patch(
+                "notification_hub.pipeline.send_slack_with_result",
+                return_value=ChannelDeliveryResult(
+                    True, receipt="slack:webhook:http:2xx"
+                ),
+            ) as sender,
+            pytest.raises(DeliveryOutcomeUnknown, match="receipt persistence"),
+        ):
+            process_stored_event_with_result(
+                event,
+                raise_on_delivery_failure=True,
+                channel_state_recorder=fail_after_attempt,
+                durable_mode=True,
+            )
+
+        sender.assert_called_once()
+        assert not tmp_log.exists()
+
     def test_outcome_unknown_is_persisted_and_raises_non_retryable_error(
         self, tmp_log: Path
     ) -> None:

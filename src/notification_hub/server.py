@@ -91,9 +91,9 @@ from notification_hub.pipeline import (
     DeliveryDeferred,
     DeliveryOutcomeUnknown,
     build_stored_event,
-    explain_event,
     get_suppression_engine,
     process_stored_event_with_result,
+    required_destinations_for_event,
 )
 from notification_hub.producer_auth import (
     ProducerAuthenticationError,
@@ -405,7 +405,14 @@ def _handle_bridge_event(event: Event) -> None:
     """Callback for bridge file watcher — persist first, worker delivers later."""
     global _event_count
     try:
-        _persist_event_for_processing(event)
+        _persist_event_for_processing(
+            event.model_copy(
+                update={
+                    "producer": "bridge-markdown-watcher",
+                    "required_destinations": required_destinations_for_event(event),
+                }
+            )
+        )
         _event_count += 1
     except Exception:
         logger.exception("Failed to persist bridge watcher event")
@@ -2057,12 +2064,7 @@ def _authorize_producer_event(request: Request, event: Event) -> Event:
     if event.producer is not None and event.producer != grant.producer_id:
         raise HTTPException(status_code=403, detail="producer identity mismatch")
 
-    explanation = explain_event(event)
-    destinations = {"log"}
-    if explanation.push_delivery:
-        destinations.add("push")
-    if explanation.slack_delivery:
-        destinations.add("slack")
+    destinations = set(required_destinations_for_event(event))
     if not destinations <= grant.allowed_destinations:
         raise HTTPException(status_code=403, detail="destination is not authorized")
     return event.model_copy(
