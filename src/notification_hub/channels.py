@@ -77,7 +77,18 @@ _WEBHOOK_URL_RE = re.compile(
 )
 _SECRET_ASSIGNMENT_RE = re.compile(
     r"(?i)\b(token|secret|password|api[_-]?key|authorization|webhook)"
-    r"\b\s*[:=]\s*(?:bearer\s+)?[^\s,;]+"
+    r"\b\s*[:=]\s*(?:bearer\s+)?"
+    r'(?:"(?:\\.|[^"\\])*(?:"|$)|\'(?:\\.|[^\'\\])*(?:\'|$)|[^\s,;]+)'
+)
+_SLACK_SAFE_TO_RETRY_TRANSPORT_ERRORS = (
+    httpx.ConnectError,
+    httpx.ConnectTimeout,
+    httpx.PoolTimeout,
+    httpx.ProxyError,
+)
+_SLACK_CONFIGURATION_TRANSPORT_ERRORS = (
+    httpx.LocalProtocolError,
+    httpx.UnsupportedProtocol,
 )
 
 
@@ -340,9 +351,10 @@ def _post_to_slack_with_result(
 ) -> ChannelDeliveryResult:
     """POST once unless the failure proves provider acceptance was impossible.
 
-    Connection-establishment failures and HTTP 429 remain bounded-retry cases.
-    Read/write/protocol failures plus HTTP 408/5xx are outcome-unknown and return
-    immediately for reconciliation. Other 4xx responses are terminal failures.
+    Only failures that prove no provider request was sent and HTTP 429 remain
+    bounded-retry cases. Ambiguous transport failures plus HTTP 408/5xx are
+    outcome-unknown and return immediately for reconciliation. Configuration
+    failures and other 4xx responses are terminal failures.
     """
     for attempt in range(1, _SLACK_MAX_ATTEMPTS + 1):
         retry_after: float | None = None
@@ -365,13 +377,36 @@ def _post_to_slack_with_result(
                 "outcome_unknown",
                 error_category="slack_outcome_unknown",
             )
-        except httpx.TransportError as exc:
-            # Connection establishment failures are safe to retry because no
-            # provider acceptance could have occurred.
+        except _SLACK_CONFIGURATION_TRANSPORT_ERRORS as exc:
+            logger.warning(
+                "Slack %s has terminal transport configuration failure (%s); not retrying",
+                description,
+                type(exc).__name__,
+            )
+            return ChannelDeliveryResult(
+                False,
+                "failed",
+                error_category="slack_configuration_error",
+            )
+        except _SLACK_SAFE_TO_RETRY_TRANSPORT_ERRORS as exc:
+            # These failures occur before a request can reach the provider.
             transient = True
             reason = type(exc).__name__
             error_category = (
                 "slack_timeout" if isinstance(exc, httpx.TimeoutException) else "slack_network_error"
+            )
+        except httpx.TransportError as exc:
+            # Unknown and future transport subclasses are not proof that no
+            # provider effect occurred. Fail closed against automatic replay.
+            logger.warning(
+                "Slack %s has unproven transport outcome (%s); reconciliation required",
+                description,
+                type(exc).__name__,
+            )
+            return ChannelDeliveryResult(
+                False,
+                "outcome_unknown",
+                error_category="slack_outcome_unknown",
             )
         except Exception as exc:
             # Permanent/setup error (bad URL, unsupported protocol). Log the type

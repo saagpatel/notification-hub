@@ -330,6 +330,15 @@ class TestSlackFormatting:
         [
             ("Authorization: Bearer fixture-authz-secret", "fixture-authz-secret"),
             ("AUTHORIZATION=BEARER fixture-equals-secret", "fixture-equals-secret"),
+            (
+                'password="correct horse fixture-double-quoted-secret"',
+                "fixture-double-quoted-secret",
+            ),
+            (
+                "api_key='correct horse fixture-single-quoted-secret'",
+                "fixture-single-quoted-secret",
+            ),
+            ('secret="unterminated fixture-unterminated-secret', "fixture-unterminated-secret"),
             ("Mixed case BeArEr fixture-standalone-secret", "fixture-standalone-secret"),
             ("Quoted BeArEr 'fixture-quoted-secret'", "fixture-quoted-secret"),
             ("Authorization: Bearer\nfixture-line-secret", "fixture-line-secret"),
@@ -590,6 +599,61 @@ class TestSendSlack:
         assert result.error_category == category
         assert result.outcome == outcome
         assert mock_post.call_count == attempts
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            httpx.TransportError("opaque transport failure"),
+            httpx.CloseError("connection closed during cleanup"),
+        ],
+    )
+    def test_unproven_transport_failure_is_unknown_and_never_retried(
+        self,
+        error: httpx.TransportError,
+    ) -> None:
+        def raise_from_fake_transport(_request: httpx.Request) -> httpx.Response:
+            raise error
+
+        transport = httpx.MockTransport(raise_from_fake_transport)
+        with (
+            httpx.Client(transport=transport) as client,
+            patch(
+                "notification_hub.channels.get_slack_webhook_url",
+                return_value="https://hooks.slack.com/services/fixture",
+            ),
+            patch(
+                "notification_hub.channels.httpx.post",
+                side_effect=lambda url, **kwargs: client.post(url, **kwargs),
+            ) as mock_post,
+            patch("notification_hub.channels.time.sleep") as mock_sleep,
+        ):
+            result = send_slack_with_result(_make_event())
+
+        assert result.outcome == "outcome_unknown"
+        assert result.error_category == "slack_outcome_unknown"
+        mock_post.assert_called_once()
+        mock_sleep.assert_not_called()
+
+    def test_unsupported_protocol_is_terminal_configuration_failure_without_retry(
+        self,
+    ) -> None:
+        with (
+            patch(
+                "notification_hub.channels.get_slack_webhook_url",
+                return_value="https://hooks.slack.com/services/fixture",
+            ),
+            patch(
+                "notification_hub.channels.httpx.post",
+                side_effect=httpx.UnsupportedProtocol("fixture unsupported protocol"),
+            ) as mock_post,
+            patch("notification_hub.channels.time.sleep") as mock_sleep,
+        ):
+            result = send_slack_with_result(_make_event())
+
+        assert result.outcome == "failed"
+        assert result.error_category == "slack_configuration_error"
+        mock_post.assert_called_once()
+        mock_sleep.assert_not_called()
 
     @pytest.mark.parametrize(
         "error",

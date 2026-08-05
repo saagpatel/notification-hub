@@ -18,6 +18,7 @@ from notification_hub.models import Event, Level, Source
 from notification_hub.pipeline import (
     DeliveryDeferred,
     DeliveryError,
+    DeliveryOutcomeUnknown,
     QueueCapacityError,
     build_event_explanation_report,
     build_stored_event,
@@ -133,6 +134,36 @@ def test_stored_authorized_destinations_prevent_policy_reload_escalation(
     assert result.outcome == "processed"
     mock_push.assert_not_called()
     mock_slack.assert_not_called()
+
+
+def test_provider_acceptance_with_failed_receipt_write_becomes_outcome_unknown(
+    tmp_log: Path,
+) -> None:
+    stored = build_stored_event(
+        _event(body="Session complete", level="normal"),
+        authorization_principal="fixture-producer",
+        authorized_destinations={"log", "slack"},
+    )
+
+    def fail_after_attempt(_channel: str, state: str, _evidence: str | None) -> None:
+        if state == "accepted":
+            raise OSError("fixture receipt store unavailable")
+
+    with (
+        patch(
+            "notification_hub.pipeline.send_slack_with_result",
+            return_value=ChannelDeliveryResult(True, receipt="fixture:provider:accepted"),
+        ) as sender,
+        pytest.raises(DeliveryOutcomeUnknown, match="receipt persistence"),
+    ):
+        process_stored_event_with_result(
+            stored,
+            raise_on_delivery_failure=True,
+            channel_state_recorder=fail_after_attempt,
+            durable_mode=True,
+        )
+
+    sender.assert_called_once()
 
 
 class TestClassificationRouting:

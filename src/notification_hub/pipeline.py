@@ -262,14 +262,8 @@ def build_stored_event(
     authorization_principal: str | None = None,
     authorized_destinations: Collection[str] | None = None,
 ) -> StoredEvent:
-    """Assign server metadata and the current classified delivery level."""
+    """Assign server metadata without inventing durable delivery authority."""
     explanation = explain_event(event)
-    if authorized_destinations is None:
-        authorized_destinations = {
-            "log",
-            *(("push",) if explanation.push_delivery else ()),
-            *(("slack",) if explanation.slack_delivery else ()),
-        }
     payload = event.model_dump()
     requested_event_id = payload.pop("event_id", None)
     payload["producer"] = payload.get("producer") or event.source
@@ -289,7 +283,9 @@ def build_stored_event(
         classified_level=explanation.routing.level,
         payload_digest=payload_digest,
         authorization_principal=authorization_principal,
-        authorized_destinations=sorted(set(authorized_destinations)),
+        authorized_destinations=(
+            sorted(set(authorized_destinations)) if authorized_destinations is not None else None
+        ),
     )
 
 
@@ -527,7 +523,15 @@ def process_stored_event_with_result(
                 if result.outcome == "outcome_unknown"
                 else "failed"
             )
-            channel_state_recorder(channel, state, evidence)
+            try:
+                channel_state_recorder(channel, state, evidence)
+            except Exception as exc:
+                if state in {"accepted", "outcome_unknown"}:
+                    raise DeliveryOutcomeUnknown(
+                        f"{channel} receipt persistence failed after provider attempt; "
+                        "reconciliation is required before retry"
+                    ) from exc
+                raise
         if result.outcome == "outcome_unknown":
             raise DeliveryOutcomeUnknown(
                 f"{channel} provider outcome is unknown for event {stored.event_id}; "

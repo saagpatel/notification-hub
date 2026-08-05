@@ -365,6 +365,23 @@ async def test_intake_authorized_destinations_remain_delivery_ceiling(
     mock_slack.assert_not_called()
 
 
+def test_bridge_file_adapter_supplies_bounded_product_authority() -> None:
+    event = Event(
+        source="bridge_watcher",
+        level="normal",
+        title="Bridge shipped",
+        body="Internal bridge evidence.",
+    )
+    with patch.object(server_mod, "_persist_event_for_processing") as persist:
+        server_mod._handle_bridge_event(event)
+
+    persist.assert_called_once_with(
+        event,
+        authorization_principal="bridge-markdown-watcher",
+        authorized_destinations={"log", "slack"},
+    )
+
+
 async def test_create_event_persists_before_ack_with_stable_event_id(client: AsyncClient) -> None:
     payload = {
         "source": "codex",
