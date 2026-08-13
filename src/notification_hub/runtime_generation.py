@@ -235,6 +235,20 @@ def _make_read_only(root: Path) -> None:
     os.chmod(root, 0o555)
 
 
+def _remove_failed_staging(root: Path) -> None:
+    """Remove only an installer-owned failed staging directory."""
+    for path in sorted(root.rglob("*"), key=lambda item: len(item.parts), reverse=True):
+        metadata = path.lstat()
+        if stat.S_ISLNK(metadata.st_mode):
+            continue
+        if stat.S_ISDIR(metadata.st_mode):
+            os.chmod(path, 0o700)
+        elif stat.S_ISREG(metadata.st_mode):
+            os.chmod(path, 0o700 if metadata.st_mode & 0o111 else 0o600)
+    os.chmod(root, 0o700)
+    shutil.rmtree(root)
+
+
 def _atomic_symlink(root: Path, name: str, target: str) -> None:
     temporary = root / f".{name}.{os.getpid()}"
     if temporary.exists() or temporary.is_symlink():
@@ -337,10 +351,12 @@ def install_generation(
             launcher.write_text(_launcher_source(interpreter.resolve()), encoding="utf-8")
             os.chmod(launcher, 0o700)
             _make_read_only(staging)
+            os.chmod(staging, 0o700)
             os.replace(staging, release)
+            os.chmod(release, 0o555)
         finally:
             if staging.exists():
-                shutil.rmtree(staging)
+                _remove_failed_staging(staging)
     launcher = release / "bin" / "notification-hub-daemon"
     verified = json.loads(_run([str(launcher), "--verify-only"], cwd=release))
     if verified.get("generation_id") != generation_id:
