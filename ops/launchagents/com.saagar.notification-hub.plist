@@ -41,6 +41,8 @@
       <string>1</string>
       <key>NOTIFICATION_HUB_BRIDGE_CURSOR_ENABLED</key>
       <string>1</string>
+      <key>NOTIFICATION_HUB_PRESERVE_HISTORY</key>
+      <string>1</string>
     </dict>
   </dict>
 </plist>

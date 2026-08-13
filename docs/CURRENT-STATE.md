@@ -1,5 +1,16 @@
 # Current State
 
+## Preserve-History Runtime Mode (2026-08-13)
+
+The generation-bound LaunchAgent now sets `NOTIFICATION_HUB_PRESERVE_HISTORY=1`.
+In that mode, daemon startup and the durable worker never invoke terminal-event
+pruning, and the scheduled JSONL retention task is not created. Delivery,
+lease recovery, the Bridge cursor, and the durable worker otherwise start
+normally. Explicit manual retention remains available only as a separately
+authorized operator action. Runtime status labels the automatic retention
+state `preserve_history` instead of claiming that configured retention is
+active.
+
 ## Producer Helper Contract (2026-08-02)
 
 The producer-helper template preserves the fixed `cc` and `codex` migration

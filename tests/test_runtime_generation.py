@@ -75,3 +75,4 @@ def test_launchagent_uses_stable_generation_and_owner_private_umask() -> None:
     assert "<integer>63</integer>" in source
     assert "/opt/homebrew/bin/uv</string>" not in source
     assert "NOTIFICATION_HUB_BRIDGE_CURSOR_ENABLED" in source
+    assert "NOTIFICATION_HUB_PRESERVE_HISTORY" in source
