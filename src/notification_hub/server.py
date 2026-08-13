@@ -95,6 +95,7 @@ from notification_hub.pipeline import (
     process_stored_event_with_result,
     required_destinations_for_event,
 )
+from notification_hub.private_storage import ensure_runtime_storage_roots
 from notification_hub.producer_auth import (
     ProducerAuthenticationError,
     ProducerPolicyError,
@@ -496,6 +497,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     """Start bridge watcher on startup, stop on shutdown."""
     global _start_time, _observer, _retention_task, _durable_inbox_task, _bridge_cursor_task
     _start_time = time.monotonic()
+    ensure_runtime_storage_roots()
     _configure_retention_status()
     await asyncio.to_thread(init_durable_inbox_schema)
     recent_acceptances = await asyncio.to_thread(recent_channel_acceptance_times)

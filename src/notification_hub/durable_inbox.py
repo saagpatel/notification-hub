@@ -14,6 +14,7 @@ from typing import Literal, TypedDict, cast
 
 from notification_hub.config import DURABLE_INBOX_DB
 from notification_hub.models import Level, StoredEvent
+from notification_hub.private_storage import ensure_private_directory, protect_sqlite_family
 
 DurableEventStatus = Literal[
     "queued",
@@ -127,13 +128,14 @@ def _db_path(path: Path | None = None) -> Path:
 
 def _connect(path: Path | None = None) -> sqlite3.Connection:
     db_path = _db_path(path)
-    db_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    ensure_private_directory(db_path.parent)
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA busy_timeout = 5000")
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA synchronous = FULL")
+    protect_sqlite_family(db_path)
     return conn
 
 
