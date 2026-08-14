@@ -19,6 +19,12 @@ from notification_hub.pipeline import build_stored_event, required_destinations_
 
 CONSUMER_NAME = "bridge-db-protected-activity-v1"
 BRIDGE_DB_PRODUCER = "bridge-db-cursor"
+OWNER_READ_ONLY_CONTRACT = "OwnerReadOnlyContractV1"
+BRIDGE_SCHEMA_MIN = 23
+BRIDGE_SCHEMA_MAX = 23
+BRIDGE_ACTIVITY_COLUMNS = frozenset(
+    {"id", "source", "timestamp", "project_name", "summary", "canonical_key", "tags"}
+)
 
 
 def _event_body_limit() -> int:
@@ -74,6 +80,23 @@ def _connect_read_only(path: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(uri, uri=True)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA query_only = ON")
+    if int(conn.execute("PRAGMA query_only").fetchone()[0]) != 1:
+        conn.close()
+        raise RuntimeError("Bridge read contract could not enable query_only")
+    user_version = int(conn.execute("PRAGMA user_version").fetchone()[0])
+    if not BRIDGE_SCHEMA_MIN <= user_version <= BRIDGE_SCHEMA_MAX:
+        conn.close()
+        raise RuntimeError(
+            f"unsupported Bridge schema {user_version}; expected "
+            f"{BRIDGE_SCHEMA_MIN}..{BRIDGE_SCHEMA_MAX}"
+        )
+    columns = {
+        str(row[1]) for row in conn.execute("PRAGMA table_info(activity_log)").fetchall()
+    }
+    missing = BRIDGE_ACTIVITY_COLUMNS - columns
+    if missing:
+        conn.close()
+        raise RuntimeError(f"Bridge activity contract missing columns: {sorted(missing)}")
     return conn
 
 

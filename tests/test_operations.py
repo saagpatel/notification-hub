@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import sqlite3
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -85,6 +84,7 @@ def test_coordination_snapshot_can_save_to_bridge_db(tmp_path: Path) -> None:
             );
             """
         )
+    bridge_bytes_before = db_path.read_bytes()
 
     inbox_report: dict[str, object] = {
         "status": "ok",
@@ -127,12 +127,12 @@ def test_coordination_snapshot_can_save_to_bridge_db(tmp_path: Path) -> None:
             bridge_db_path=db_path,
         )
 
-    assert report["status"] == "ok"
-    assert report["bridge_save"]["status"] == "ok"
-    assert report["bridge_save"]["snapshot_id"] == 1
-    with sqlite3.connect(db_path) as conn:
-        row = conn.execute("SELECT system, snapshot_date, data FROM system_snapshots").fetchone()
-    assert row is not None
-    assert row[0] == "codex"
-    assert row[1] == report["bridge_snapshot_date"]
-    assert json.loads(row[2])["runtime"]["status"] == "ok"
+    assert report["status"] == "degraded"
+    assert report["bridge_save"]["attempted"] is False
+    assert report["bridge_save"]["status"] == "disabled_owner_transaction_required"
+    assert report["bridge_save"]["snapshot_id"] is None
+    assert report["bridge_save"]["error"] == (
+        "direct Bridge writes are disabled; use a principal-bound owner transaction"
+    )
+    assert db_path.read_bytes() == bridge_bytes_before
+    assert not Path(f"{db_path}-wal").exists()

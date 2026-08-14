@@ -7,7 +7,6 @@ import json
 import os
 import re
 import shutil
-import sqlite3
 import tempfile
 import time
 from datetime import UTC, datetime, timedelta
@@ -446,67 +445,22 @@ def _save_bridge_snapshot(
     snapshot_date: str,
     db_path: Path | None = None,
 ) -> BridgeSaveReport:
+    """Refuse the retired direct Bridge writer.
+
+    Notification Hub does not own BridgeDB mutations.  Keep this compatibility
+    entry point long enough for older callers to receive a deterministic
+    result, but never open or create the database from this path.  A future
+    replacement must cross Bridge's principal-bound owner transaction.
+    """
     target_path = db_path or Path(os.environ.get("BRIDGE_DB_PATH", str(DEFAULT_BRIDGE_DB_PATH)))
-    snapshot_json = json.dumps(snapshot)
-    try:
-        target_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        with sqlite3.connect(target_path) as conn:
-            conn.execute("PRAGMA busy_timeout=5000")
-            conn.execute("PRAGMA foreign_keys=ON")
-            cursor = conn.execute(
-                """
-                INSERT INTO system_snapshots (system, snapshot_date, data)
-                VALUES (?, ?, ?)
-                """,
-                ("codex", snapshot_date, snapshot_json),
-            )
-            snapshot_id = cursor.lastrowid
-            if snapshot_id is not None:
-                conn.execute(
-                    "DELETE FROM content_index WHERE source_type = ? AND source_id = ?",
-                    ("snapshot", str(snapshot_id)),
-                )
-                conn.execute(
-                    "INSERT INTO content_index (source_type, source_id, text) VALUES (?, ?, ?)",
-                    ("snapshot", str(snapshot_id), snapshot_json),
-                )
-            conn.execute(
-                """
-                DELETE FROM system_snapshots
-                WHERE system = ? AND id NOT IN (
-                    SELECT id FROM system_snapshots WHERE system = ?
-                    ORDER BY created_at DESC LIMIT ?
-                )
-                """,
-                ("codex", "codex", BRIDGE_SNAPSHOT_RETENTION_PER_SYSTEM),
-            )
-            conn.execute(
-                """
-                DELETE FROM content_index
-                WHERE source_type = 'snapshot'
-                AND NOT EXISTS (
-                    SELECT 1 FROM system_snapshots
-                    WHERE CAST(system_snapshots.id AS TEXT) = content_index.source_id
-                )
-                """
-            )
-        return {
-            "attempted": True,
-            "status": "ok",
-            "db_path": str(target_path),
-            "snapshot_id": snapshot_id,
-            "snapshot_date": snapshot_date,
-            "error": None,
-        }
-    except sqlite3.Error:
-        return {
-            "attempted": True,
-            "status": "degraded",
-            "db_path": str(target_path),
-            "snapshot_id": None,
-            "snapshot_date": snapshot_date,
-            "error": _GENERIC_OPERATION_ERROR,
-        }
+    return {
+        "attempted": False,
+        "status": "disabled_owner_transaction_required",
+        "db_path": str(target_path),
+        "snapshot_id": None,
+        "snapshot_date": snapshot_date,
+        "error": "direct Bridge writes are disabled; use a principal-bound owner transaction",
+    }
 
 
 def load_action_review_package_detail(
@@ -2503,7 +2457,7 @@ def run_coordination_snapshot(
         "ok"
         if inbox["status"] == "ok"
         and runtime_status["status"] == "ok"
-        and bridge_save["status"] != "degraded"
+        and bridge_save["status"] in {"not_requested", "ok"}
         else "degraded"
     )
     error = inbox["error"] if inbox["error"] is not None else None

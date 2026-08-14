@@ -28,6 +28,7 @@ def _bridge(path: Path) -> None:
             INSERT INTO activity_log VALUES
               (10, 'cc', '2026-07-12', 'alpha', 'ordinary row', 'org/alpha', '[]'),
               (20, 'codex', '2026-07-12', 'beta', 'shipped row', 'org/beta', '["SHIPPED"]');
+            PRAGMA user_version = 23;
             """
         )
 
@@ -54,6 +55,12 @@ def test_bridge_poll_closes_read_only_connection(monkeypatch: pytest.MonkeyPatch
             return False
 
         def execute(self, sql: str, *_args):
+            if "query_only" in sql:
+                return Cursor((1,))
+            if "user_version" in sql:
+                return Cursor((23,))
+            if "table_info" in sql:
+                return Cursor(rows=[(0, name) for name in bridge_cursor.BRIDGE_ACTIVITY_COLUMNS])
             if "MAX(id)" in sql:
                 return Cursor({"value": 0})
             return Cursor(rows=[])
@@ -68,6 +75,32 @@ def test_bridge_poll_closes_read_only_connection(monkeypatch: pytest.MonkeyPatch
     poll_bridge_protected_activity(Path("unused"))
 
     assert connection.closed is True
+
+
+def test_read_contract_rejects_write_and_preserves_bridge_bytes(tmp_path: Path) -> None:
+    bridge = tmp_path / "bridge.db"
+    _bridge(bridge)
+    before = bridge.read_bytes()
+
+    connection = bridge_cursor._connect_read_only(bridge)
+    try:
+        with pytest.raises(sqlite3.OperationalError):
+            connection.execute("INSERT INTO activity_log VALUES (30, 'x', '2026-08-13', 'x', 'x', 'x', '[]')")
+    finally:
+        connection.close()
+
+    assert bridge.read_bytes() == before
+    assert not Path(f"{bridge}-wal").exists()
+
+
+def test_read_contract_rejects_unsupported_schema(tmp_path: Path) -> None:
+    bridge = tmp_path / "bridge.db"
+    _bridge(bridge)
+    with sqlite3.connect(bridge) as connection:
+        connection.execute("PRAGMA user_version = 22")
+
+    with pytest.raises(RuntimeError, match="unsupported Bridge schema 22"):
+        bridge_cursor._connect_read_only(bridge)
 
 
 def test_first_run_bootstraps_without_replaying_history(tmp_path: Path) -> None:
@@ -210,6 +243,7 @@ def _bridge_with_long_summary(path: Path, length: int) -> None:
                 canonical_key TEXT,
                 tags TEXT NOT NULL
             );
+            PRAGMA user_version = 23;
             """
         )
         conn.execute(
