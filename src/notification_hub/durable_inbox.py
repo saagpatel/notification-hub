@@ -36,6 +36,7 @@ RETRY_BACKOFF_CAP_SECONDS = 600
 PROCESSED_RETENTION_DAYS = 30
 PROCESSED_RETENTION_ROWS = 10_000
 DEAD_LETTER_RETENTION_DAYS = 90
+DELIVERY_HISTORY_RETENTION_DAYS = 180
 DEAD_LETTER_DEGRADED_AFTER_SECONDS = 24 * 60 * 60
 BACKLOG_DEGRADED_AFTER_SECONDS = 300
 
@@ -1285,19 +1286,29 @@ def prune_retained_events(
     processed_retention_days: int = PROCESSED_RETENTION_DAYS,
     processed_retention_rows: int = PROCESSED_RETENTION_ROWS,
     dead_letter_retention_days: int = DEAD_LETTER_RETENTION_DAYS,
+    delivery_history_retention_days: int = DELIVERY_HISTORY_RETENTION_DAYS,
 ) -> int:
-    """Apply time/row-bounded retention to completed rows that carry no durable delivery evidence.
+    """Apply time/row-bounded retention across the completed-event classes.
 
-    Retention is deliberately PARTIAL. A processed/suppressed/dead-lettered event is only
-    prunable while no ``channel_deliveries`` and no ``channel_reconciliation_receipts`` row
-    references it — both foreign keys are ``ON DELETE RESTRICT``. A push/Slack event therefore
-    keeps its delivery-evidence rows, and thus the parent event, INDEFINITELY, as does any
-    reconciled event and any row with ``outcome_unknown`` evidence (trigger-protected as
-    immutable). Only log-only / never-delivered completed rows are bounded here; the durable
-    store still grows monotonically for the delivered-event class. Ageing out delivery evidence
-    is a retention-policy change, not a bug fix — it would reverse
-    ``test_retention_preserves_delivery_history_and_unresolved_dead_letters`` and needs an
-    explicit operator decision on the window and the immutable-row exclusions.
+    Three bounded classes, plus an immutable core that is never pruned:
+
+    * Log-only / never-delivered ``processed``/``suppressed`` rows: pruned past
+      ``processed_retention_days`` outside the newest ``processed_retention_rows``,
+      only while no ``channel_deliveries`` reference them.
+    * ``dead_lettered`` rows with a disposition and no delivery evidence: pruned
+      past ``dead_letter_retention_days``.
+    * Delivered-class ``processed``/``suppressed`` history (rows that DO carry
+      ``channel_deliveries``): aged out past ``delivery_history_retention_days``
+      (operator policy, default 180d) so the dominant row class stops growing
+      without bound. The ``channel_deliveries`` FK is ``ON DELETE RESTRICT``, so
+      the delivery rows are removed before the parent.
+
+    The immutable core survives INDEFINITELY by construction: any event carrying an
+    ``outcome_unknown`` delivery (trigger-protected against deletion) or a
+    ``channel_reconciliation_receipts`` row (``ON DELETE RESTRICT`` and immutable)
+    is excluded from the delivered-class age-out. Reconciled events retain their
+    ``outcome_unknown`` evidence, so both exclusions cover them; the receipt
+    exclusion additionally guarantees the age-out can never hit a RESTRICT abort.
     """
     init_schema(path)
     now_dt = now or utc_now()
@@ -1337,7 +1348,44 @@ def prune_retained_events(
             """,
             (dead_letter_cutoff,),
         ).rowcount
-    return deleted_processed + deleted_dead
+        delivery_cutoff = isoformat(now_dt - timedelta(days=delivery_history_retention_days))
+        # Delivered-class age-out. Eligible only when every piece of evidence is
+        # safely disposable: no outcome_unknown delivery (trigger-immutable) and no
+        # reconciliation receipt (RESTRICT + immutable). Delete the child delivery
+        # rows first, then the parent, so the RESTRICT FK is satisfied.
+        aged_delivered_ids = [
+            str(row["event_id"])
+            for row in conn.execute(
+                """
+                SELECT event_id FROM durable_events
+                WHERE status IN ('processed', 'suppressed')
+                  AND processed_at IS NOT NULL
+                  AND processed_at < ?
+                  AND EXISTS (
+                    SELECT 1 FROM channel_deliveries
+                    WHERE channel_deliveries.event_id = durable_events.event_id
+                  )
+                  AND NOT EXISTS (
+                    SELECT 1 FROM channel_deliveries
+                    WHERE channel_deliveries.event_id = durable_events.event_id
+                      AND channel_deliveries.state = 'outcome_unknown'
+                  )
+                  AND NOT EXISTS (
+                    SELECT 1 FROM channel_reconciliation_receipts
+                    WHERE channel_reconciliation_receipts.event_id
+                          = durable_events.event_id
+                  )
+                """,
+                (delivery_cutoff,),
+            ).fetchall()
+        ]
+        deleted_delivered = 0
+        for event_id in aged_delivered_ids:
+            conn.execute("DELETE FROM channel_deliveries WHERE event_id = ?", (event_id,))
+            deleted_delivered += conn.execute(
+                "DELETE FROM durable_events WHERE event_id = ?", (event_id,)
+            ).rowcount
+    return deleted_processed + deleted_dead + deleted_delivered
 
 
 def _parse_iso(value: str | None) -> datetime | None:
