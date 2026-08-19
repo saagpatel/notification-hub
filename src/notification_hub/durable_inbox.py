@@ -701,10 +701,8 @@ def record_channel_reconciliation(
                 str(existing["reconciliation_id"]) == reconciliation_id
                 and str(existing["event_id"]) == event_id
                 and str(existing["channel"]) == channel
-                and str(existing["original_unknown_evidence_digest"])
-                == actual_evidence_digest
-                and str(existing["original_provider_reference"])
-                == actual_original_reference
+                and str(existing["original_unknown_evidence_digest"]) == actual_evidence_digest
+                and str(existing["original_provider_reference"]) == actual_original_reference
                 and str(existing["terminal_outcome"]) == terminal_outcome
                 and str(existing["provider_reference"]) == provider_reference
                 and str(existing["readback_json"]) == _canonical_json(canonical_readback)
@@ -717,8 +715,7 @@ def record_channel_reconciliation(
             exact_replay = (
                 exact_replay
                 and stored_receipt.get("artifact_digest") == artifact_digest
-                and stored_receipt.get("provider_idempotency_key")
-                == provider_idempotency_key
+                and stored_receipt.get("provider_idempotency_key") == provider_idempotency_key
             )
             if not exact_replay:
                 raise ValueError("event, channel, or reconciliation id already has reconciliation")
@@ -1289,7 +1286,19 @@ def prune_retained_events(
     processed_retention_rows: int = PROCESSED_RETENTION_ROWS,
     dead_letter_retention_days: int = DEAD_LETTER_RETENTION_DAYS,
 ) -> int:
-    """Apply bounded retention for completed rows while keeping recent audit evidence."""
+    """Apply time/row-bounded retention to completed rows that carry no durable delivery evidence.
+
+    Retention is deliberately PARTIAL. A processed/suppressed/dead-lettered event is only
+    prunable while no ``channel_deliveries`` and no ``channel_reconciliation_receipts`` row
+    references it — both foreign keys are ``ON DELETE RESTRICT``. A push/Slack event therefore
+    keeps its delivery-evidence rows, and thus the parent event, INDEFINITELY, as does any
+    reconciled event and any row with ``outcome_unknown`` evidence (trigger-protected as
+    immutable). Only log-only / never-delivered completed rows are bounded here; the durable
+    store still grows monotonically for the delivered-event class. Ageing out delivery evidence
+    is a retention-policy change, not a bug fix — it would reverse
+    ``test_retention_preserves_delivery_history_and_unresolved_dead_letters`` and needs an
+    explicit operator decision on the window and the immutable-row exclusions.
+    """
     init_schema(path)
     now_dt = now or utc_now()
     processed_cutoff = isoformat(now_dt - timedelta(days=processed_retention_days))
