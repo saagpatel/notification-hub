@@ -486,9 +486,10 @@ def test_outcome_unknown_requires_reconciliation_and_cannot_be_claimed_for_retry
     assert stored.status == "reconciliation_required"
     assert stored.next_attempt_at is None
     assert claim_next_due_event(path=db_path) is None
-    assert get_channel_receipts(claimed.event_id, "slack", path=db_path)[
-        "destination_ref"
-    ] == "slack:webhook:transport:response_unknown"
+    assert (
+        get_channel_receipts(claimed.event_id, "slack", path=db_path)["destination_ref"]
+        == "slack:webhook:transport:response_unknown"
+    )
     health = collect_health(path=db_path)
     assert health["status"] == "degraded"
     assert health["reconciliation_required_count"] == 1
@@ -743,8 +744,7 @@ def test_reconciliation_rejects_stale_binding_conflicts_and_mutation(
             )
         with pytest.raises(sqlite3.IntegrityError, match="outcome_unknown evidence"):
             conn.execute(
-                "DELETE FROM channel_deliveries "
-                "WHERE event_id = ? AND channel = 'slack'",
+                "DELETE FROM channel_deliveries WHERE event_id = ? AND channel = 'slack'",
                 (claimed.event_id,),
             )
         with pytest.raises(sqlite3.IntegrityError, match="status is terminal"):
@@ -842,9 +842,7 @@ def test_dead_letter_disposition_clears_actionable_health_without_deleting_histo
 
 def test_schema_migration_is_additive_and_preserves_existing_rows(tmp_path: Path) -> None:
     db_path = tmp_path / "legacy.sqlite3"
-    event = _event("legacy-row").model_copy(
-        update={"producer": None, "required_destinations": []}
-    )
+    event = _event("legacy-row").model_copy(update={"producer": None, "required_destinations": []})
     now = datetime.now(UTC).isoformat()
     with sqlite3.connect(db_path) as conn:
         conn.execute(
@@ -881,8 +879,7 @@ def test_schema_migration_is_additive_and_preserves_existing_rows(tmp_path: Path
         columns = {row[1] for row in conn.execute("PRAGMA table_info(durable_events)")}
         channel_columns = {row[1] for row in conn.execute("PRAGMA table_info(channel_deliveries)")}
         reconciliation_columns = {
-            row[1]
-            for row in conn.execute("PRAGMA table_info(channel_reconciliation_receipts)")
+            row[1] for row in conn.execute("PRAGMA table_info(channel_reconciliation_receipts)")
         }
         version = conn.execute(
             "SELECT value FROM schema_metadata WHERE key = 'schema_version'"
@@ -955,8 +952,84 @@ def test_retention_preserves_delivery_history_and_unresolved_dead_letters(
         dead_letter_retention_days=1,
     )
 
+    # 120 days is inside the 180-day delivery-history window, so the delivered
+    # event is retained; the unresolved dead-letter has no disposition and is
+    # retained regardless of window.
     assert get_event("processed-with-receipt", path=db_path) is not None
     assert get_event("unresolved-dead", path=db_path) is not None
+
+
+def test_delivery_history_ages_out_past_the_retention_window(tmp_path: Path) -> None:
+    """The delivered row class is now bounded: a delivered event older than the
+    delivery-history window is aged out, while one inside the window survives."""
+    db_path = tmp_path / "inbox.sqlite3"
+
+    def _deliver(event_id: str) -> str:
+        enqueue_event(_event(event_id), path=db_path)
+        claimed = claim_next_due_event(path=db_path)
+        assert claimed is not None
+        record_channel_state(claimed.event_id, "slack", "accepted", path=db_path)
+        mark_delivered(
+            claimed.event_id,
+            expected_attempt_count=claimed.attempt_count,
+            outcome="processed",
+            classified_level=claimed.event.classified_level,
+            path=db_path,
+        )
+        return claimed.event_id
+
+    old_id = _deliver("delivered-old")
+    recent_id = _deliver("delivered-recent")
+    now = datetime.now(UTC)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "UPDATE durable_events SET processed_at = ? WHERE event_id = ?",
+            ((now - timedelta(days=200)).isoformat(), old_id),
+        )
+        conn.execute(
+            "UPDATE durable_events SET processed_at = ? WHERE event_id = ?",
+            ((now - timedelta(days=30)).isoformat(), recent_id),
+        )
+
+    deleted = prune_retained_events(path=db_path, now=now)
+
+    assert deleted == 1
+    assert get_event("delivered-old", path=db_path) is None
+    assert get_event("delivered-recent", path=db_path) is not None
+
+
+def test_delivery_age_out_preserves_immutable_outcome_unknown_evidence(
+    tmp_path: Path,
+) -> None:
+    """An event carrying trigger-immutable outcome_unknown evidence is never aged
+    out, even long past the delivery-history window, and its evidence is intact."""
+    db_path = tmp_path / "inbox.sqlite3"
+    enqueue_event(_event("unknown-outcome"), path=db_path)
+    claimed = claim_next_due_event(path=db_path, lease_seconds=-1)
+    assert claimed is not None
+    record_channel_state(
+        claimed.event_id,
+        "slack",
+        "outcome_unknown",
+        path=db_path,
+        destination_ref="slack:webhook:transport:response_unknown",
+    )
+    now = datetime.now(UTC)
+    with sqlite3.connect(db_path) as conn:
+        # Force the event into the age-out's candidate status while it still carries
+        # outcome_unknown evidence, so survival is proven by the outcome_unknown
+        # exclusion clause itself — not merely by the status filter. Drop that clause
+        # and this prune ABORTs on the trigger-protected delivery row.
+        conn.execute(
+            "UPDATE durable_events SET status = 'processed', processed_at = ? WHERE event_id = ?",
+            ((now - timedelta(days=400)).isoformat(), claimed.event_id),
+        )
+
+    deleted = prune_retained_events(path=db_path, now=now)
+
+    assert deleted == 0
+    assert get_event("unknown-outcome", path=db_path) is not None
+    assert get_channel_state(claimed.event_id, "slack", path=db_path) == "outcome_unknown"
 
 
 def test_suppressed_event_is_persisted_as_terminal_state(tmp_path: Path) -> None:
@@ -1015,13 +1088,8 @@ def test_health_ignores_old_retry_scheduled_for_a_future_deferral(tmp_path: Path
     assert health["status"] == "ok"
     assert health["retry_scheduled_count"] == 1
     assert health["oldest_pending_age_seconds"] is not None
-    assert (
-        health["oldest_pending_age_seconds"]
-        > durable_inbox.BACKLOG_DEGRADED_AFTER_SECONDS
-    )
-    assert health["next_action"] == (
-        "Deferred events are waiting for their scheduled retry times."
-    )
+    assert health["oldest_pending_age_seconds"] > durable_inbox.BACKLOG_DEGRADED_AFTER_SECONDS
+    assert health["next_action"] == ("Deferred events are waiting for their scheduled retry times.")
 
 
 def test_health_degrades_for_retry_overdue_beyond_backlog_threshold(tmp_path: Path) -> None:
@@ -1035,8 +1103,7 @@ def test_health_degrades_for_retry_overdue_beyond_backlog_threshold(tmp_path: Pa
         path=db_path,
     )
     overdue_at = (
-        datetime.now(UTC)
-        - timedelta(seconds=durable_inbox.BACKLOG_DEGRADED_AFTER_SECONDS + 1)
+        datetime.now(UTC) - timedelta(seconds=durable_inbox.BACKLOG_DEGRADED_AFTER_SECONDS + 1)
     ).isoformat()
     with sqlite3.connect(db_path) as conn:
         conn.execute(
