@@ -25,6 +25,7 @@ from notification_hub.operations import (
     OperatorHandoffDrillReport,
     OperatorReviewSessionReport,
     OperatorReviewSessionRetentionReport,
+    PartialDispositionReport,
     PersonalOpsActionExportReport,
     PersonalOpsImportQueueHealthCheckReport,
     PersonalOpsImportQueueHealthReport,
@@ -872,3 +873,16 @@ def print_bootstrap_report(report: BootstrapConfigReport) -> None:
     print(f"- config path: {report['config_path']}")
     if report["error"] is not None:
         print(f"- error: {report['error']}")
+
+
+def print_partial_disposition_report(report: PartialDispositionReport) -> None:
+    print(f"notification-hub disposition-partials: {report['status']}")
+    print(f"- channel: {report['channel']}")
+    print(f"- dry run: {report['dry_run']}")
+    if report["until"] is not None:
+        print(f"- until: {report['until']}")
+    print(f"- matched events: {report['matched_count']}")
+    print(f"- resolved events: {report['resolved_count']}")
+    if report["error"] is not None:
+        print(f"- error: {report['error']}")
+    print(f"- next action: {report['next_action']}")

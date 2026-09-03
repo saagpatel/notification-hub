@@ -954,6 +954,38 @@ def build_parser(prog: str = "notification-hub") -> argparse.ArgumentParser:
         help="Emit the retention report as JSON.",
     )
 
+    disposition_partials = subparsers.add_parser(
+        "disposition-partials",
+        help="Resolve every partial delivery whose only failing channel is the named one.",
+    )
+    disposition_partials.add_argument(
+        "--channel",
+        required=True,
+        help="The channel whose outage produced the partial deliveries.",
+    )
+    disposition_partials.add_argument(
+        "--disposition",
+        help="Operator reason recorded on every resolved event.",
+    )
+    disposition_partials.add_argument(
+        "--ref",
+        help="Operator reference recorded on every resolved event.",
+    )
+    disposition_partials.add_argument(
+        "--until",
+        help="Only resolve events terminal at or before this ISO-8601 timestamp.",
+    )
+    disposition_partials.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="List the events that would be resolved without writing anything.",
+    )
+    disposition_partials.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the disposition report as JSON.",
+    )
+
     bootstrap = subparsers.add_parser(
         "bootstrap-config",
         help="Copy the sample policy config into the live config location.",

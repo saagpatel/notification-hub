@@ -40,6 +40,7 @@ PROCESSED_RETENTION_ROWS = 10_000
 DEAD_LETTER_RETENTION_DAYS = 90
 DELIVERY_HISTORY_RETENTION_DAYS = 180
 DEAD_LETTER_DEGRADED_AFTER_SECONDS = 24 * 60 * 60
+CHANNEL_OUTAGE_AFTER_SECONDS = 60 * 60
 BACKLOG_DEGRADED_AFTER_SECONDS = 300
 
 
@@ -67,6 +68,16 @@ def event_payload_digest(event: StoredEvent) -> str:
     )
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+class ChannelOutage(TypedDict):
+    """A channel that has taken nothing since its last acceptance and is still failing."""
+
+    channel: str
+    last_accepted_at: str | None
+    failing_since: str | None
+    failures_since_last_acceptance: int
+    unresolved_partials: int
 
 
 class DurableInboxHealth(TypedDict):
@@ -97,6 +108,7 @@ class DurableInboxHealth(TypedDict):
     last_accepted_at: str | None
     last_processed_at: str | None
     last_dead_lettered_at: str | None
+    failing_channels: list[ChannelOutage]
     next_action: str
     error: str | None
 
@@ -857,6 +869,199 @@ def disposition_dead_letter(
         )
 
 
+_POSITIVE_STATE_PLACEHOLDERS = ", ".join("?" * len(TERMINAL_POSITIVE_CHANNEL_STATES))
+
+# One predicate for "the only thing wrong with this event was that channel", shared by the
+# count a health report shows and the rows a bulk disposition touches. If the two could
+# drift, an operator would resolve a population different from the one they were shown.
+#
+# The blamed channel must have actually failed. Every *other* channel must have a positive
+# receipt, which is stricter: an event still waiting on reconciliation elsewhere, or merely
+# buffered, is not explained by this outage and must not be swept up by it.
+_SOLE_FAILING_CHANNEL_PREDICATE = f"""
+    status = 'partially_delivered'
+    AND dead_letter_disposition IS NULL
+    AND EXISTS (
+        SELECT 1 FROM channel_deliveries d
+        WHERE d.event_id = durable_events.event_id
+          AND d.channel = ?
+          AND d.state = 'failed'
+    )
+    AND NOT EXISTS (
+        SELECT 1 FROM channel_deliveries d
+        WHERE d.event_id = durable_events.event_id
+          AND d.channel != ?
+          AND d.state NOT IN ({_POSITIVE_STATE_PLACEHOLDERS})
+    )
+"""
+
+
+def _sole_failing_channel_params(channel: str) -> tuple[str, ...]:
+    return (channel, channel, *TERMINAL_POSITIVE_CHANNEL_STATES)
+
+
+def _normalized_until(until: str) -> str:
+    """Reject an unparseable cutoff instead of comparing it as text.
+
+    SQLite compares `dead_lettered_at <= 'yesterday'` lexically and matches every row, so an
+    unparsed word does not narrow the sweep, it removes the bound entirely.
+    """
+    try:
+        parsed = datetime.fromisoformat(until)
+    except ValueError as exc:
+        raise ValueError(f"cutoff must be an ISO-8601 timestamp, got {until!r}") from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return isoformat(parsed)
+
+
+def _sole_failing_channel_clause(until: str | None) -> tuple[str, tuple[str, ...]]:
+    """Return the predicate and the trailing params a cutoff adds, for one shared query."""
+    if until is None:
+        return _SOLE_FAILING_CHANNEL_PREDICATE, ()
+    clause = (
+        f"{_SOLE_FAILING_CHANNEL_PREDICATE} "
+        "AND dead_lettered_at IS NOT NULL AND dead_lettered_at <= ?"
+    )
+    return clause, (_normalized_until(until),)
+
+
+def _select_sole_failing_channel_events(
+    conn: sqlite3.Connection, channel: str, until: str | None
+) -> tuple[str, ...]:
+    clause, extra = _sole_failing_channel_clause(until)
+    rows = conn.execute(
+        f"SELECT event_id FROM durable_events WHERE {clause} ORDER BY dead_lettered_at",  # noqa: S608
+        (*_sole_failing_channel_params(channel), *extra),
+    ).fetchall()
+    return tuple(str(row["event_id"]) for row in rows)
+
+
+def partial_deliveries_for_channel(
+    channel: str, *, until: str | None = None, path: Path | None = None
+) -> tuple[str, ...]:
+    """Return unresolved partial deliveries whose only failing channel is ``channel``."""
+    init_schema(path)
+    with _managed_connection(path) as conn:
+        return _select_sole_failing_channel_events(conn, channel, until)
+
+
+def _is_sustained_outage(
+    now: datetime, last_accepted_at: str | None, failing_since: str | None
+) -> bool:
+    """Distinguish a channel that is down from a channel that dropped one event.
+
+    A single failure between two acceptances is ordinary. What earns an operator's
+    attention is silence: nothing accepted for longer than the threshold while deliveries
+    keep failing. A channel that has never accepted anything is timed from its first
+    failure instead, because it has no acceptance to be silent since.
+    """
+    reference = _parse_iso(last_accepted_at) or _parse_iso(failing_since)
+    if reference is None:
+        return False
+    return (now - reference).total_seconds() >= CHANNEL_OUTAGE_AFTER_SECONDS
+
+
+def channel_outage_summary(*, path: Path | None = None) -> tuple[ChannelOutage, ...]:
+    """Return every channel that has accepted nothing since it started failing.
+
+    A pile of partial deliveries usually has one cause, and the cause is a channel, not
+    ninety-eight separate events. Naming the outage once is what turns "review every
+    partially delivered event" into a single fix an operator can actually make.
+    """
+    init_schema(path)
+    with _managed_connection(path) as conn:
+        return _channel_outage_summary(conn)
+
+
+def _channel_outage_summary(
+    conn: sqlite3.Connection, *, now: datetime | None = None
+) -> tuple[ChannelOutage, ...]:
+    now_dt = now or utc_now()
+    outages: list[ChannelOutage] = []
+    channels = [
+        str(row["channel"])
+        for row in conn.execute(
+            "SELECT DISTINCT channel FROM channel_deliveries ORDER BY channel"
+        ).fetchall()
+    ]
+    for channel in channels:
+        # `dispositioned` is a positive receipt that never writes `accepted_at`, so the
+        # watermark has to read the timestamp each positive state actually sets. Reading
+        # `accepted_at` alone would call a channel silent that had just taken an event.
+        accepted = conn.execute(
+            "SELECT MAX(COALESCE(accepted_at, dispositioned_at)) AS last_accepted_at "
+            f"FROM channel_deliveries WHERE channel = ? AND state IN ({_POSITIVE_STATE_PLACEHOLDERS})",  # noqa: E501
+            (channel, *TERMINAL_POSITIVE_CHANNEL_STATES),
+        ).fetchone()
+        last_accepted_at = cast(str | None, accepted["last_accepted_at"])
+        failure = conn.execute(
+            "SELECT COUNT(*) AS failures, MIN(updated_at) AS failing_since "
+            "FROM channel_deliveries WHERE channel = ? AND state = 'failed' "
+            "AND (? IS NULL OR updated_at > ?)",
+            (channel, last_accepted_at, last_accepted_at),
+        ).fetchone()
+        failures = int(failure["failures"] or 0)
+        failing_since = cast(str | None, failure["failing_since"])
+        if failures == 0 or not _is_sustained_outage(now_dt, last_accepted_at, failing_since):
+            continue
+        partials = conn.execute(
+            f"SELECT COUNT(*) AS count FROM durable_events WHERE {_SOLE_FAILING_CHANNEL_PREDICATE}",  # noqa: E501, S608
+            _sole_failing_channel_params(channel),
+        ).fetchone()
+        outages.append(
+            ChannelOutage(
+                channel=channel,
+                last_accepted_at=last_accepted_at,
+                failing_since=failing_since,
+                failures_since_last_acceptance=failures,
+                unresolved_partials=int(partials["count"] or 0),
+            )
+        )
+    return tuple(outages)
+
+
+def disposition_partial_deliveries_for_channel(
+    channel: str,
+    disposition: str,
+    disposition_ref: str,
+    *,
+    until: str | None = None,
+    path: Path | None = None,
+) -> tuple[str, ...]:
+    """Resolve every unresolved partial whose only failing channel is ``channel``.
+
+    Nothing resolves itself: an operator still supplies the reason and the reference, and
+    no history is deleted. What changes is the unit. One channel outage is one decision,
+    so it takes one disposition, not one per event it produced.
+    """
+    if not channel.strip():
+        raise ValueError("a channel outage disposition must name a channel")
+    if not disposition.strip() or not disposition_ref.strip():
+        raise ValueError("dead-letter disposition and reference must be non-empty")
+    init_schema(path)
+    now = isoformat()
+    clause, extra = _sole_failing_channel_clause(until)
+    with _managed_connection(path) as conn:
+        # One statement selects and writes, so a disposition filed between a read and a
+        # write cannot be overwritten with the outage's reason. The rows returned are the
+        # rows changed, which is what the caller reports back to the operator.
+        rows = conn.execute(
+            "UPDATE durable_events SET dead_letter_disposition = ?, "
+            "dead_letter_disposition_ref = ?, dead_letter_dispositioned_at = ?, "
+            f"updated_at = ? WHERE {clause} RETURNING event_id",  # noqa: S608
+            (
+                disposition,
+                disposition_ref,
+                now,
+                now,
+                *_sole_failing_channel_params(channel),
+                *extra,
+            ),
+        ).fetchall()
+    return tuple(str(row["event_id"]) for row in rows)
+
+
 def get_consumer_cursor(consumer: str, *, path: Path | None = None) -> int | None:
     init_schema(path)
     with _managed_connection(path) as conn:
@@ -1467,6 +1672,7 @@ def collect_health(*, path: Path | None = None, create: bool = False) -> Durable
             "last_accepted_at": None,
             "last_processed_at": None,
             "last_dead_lettered_at": None,
+            "failing_channels": [],
             "next_action": "Durable inbox has no accepted events yet.",
             "error": None,
         }
@@ -1526,6 +1732,7 @@ def collect_health(*, path: Path | None = None, create: bool = False) -> Durable
             delivery_counts["attempted"] = int(attempted_row["count"] or 0)
             for state in ("accepted", "delivered", "observed", "dispositioned"):
                 delivery_counts.setdefault(state, 0)
+            failing_channels = list(_channel_outage_summary(conn))
     except sqlite3.Error as exc:
         return {
             "status": "degraded",
@@ -1555,6 +1762,7 @@ def collect_health(*, path: Path | None = None, create: bool = False) -> Durable
             "last_accepted_at": None,
             "last_processed_at": None,
             "last_dead_lettered_at": None,
+            "failing_channels": [],
             "next_action": "Inspect the durable inbox SQLite database.",
             "error": str(exc),
         }
@@ -1583,6 +1791,19 @@ def collect_health(*, path: Path | None = None, create: bool = False) -> Durable
         oldest_actionable_dt is not None
         and (now_dt - oldest_actionable_dt).total_seconds() > BACKLOG_DEGRADED_AFTER_SECONDS
     )
+    # An outage is the cause a pile of partials shares, so it is what the operator is told
+    # to fix. It is also a standing condition rather than a queue to work through, so it is
+    # appended to whatever else ranks higher: push was silent for ten days behind a
+    # dead-letter backlog that outranked it, and nothing ever said so.
+    outage_named = False
+    outage_action = "; ".join(
+        f"Channel {outage['channel']} has accepted nothing since "
+        f"{outage['last_accepted_at'] or 'ever'} "
+        f"({outage['failures_since_last_acceptance']} failed deliveries, "
+        f"{outage['unresolved_partials']} unresolved partial deliveries): "
+        "restore the channel, then disposition its partial deliveries together."
+        for outage in failing_channels
+    )
     if reconciliation_required > 0:
         status = "degraded"
         next_action = "Reconcile every outcome-unknown delivery before any provider retry."
@@ -1592,9 +1813,10 @@ def collect_health(*, path: Path | None = None, create: bool = False) -> Durable
     elif stale_processing > 0:
         status = "degraded"
         next_action = "Reclaim stale processing leases, then verify the worker drains the inbox."
-    elif unresolved_partial > 0:
+    elif unresolved_partial > 0 or failing_channels:
         status = "degraded"
-        next_action = (
+        outage_named = bool(outage_action)
+        next_action = outage_action or (
             "Review every partially delivered event: one destination took it and another never did."
         )
     elif stale_backlog:
@@ -1606,6 +1828,9 @@ def collect_health(*, path: Path | None = None, create: bool = False) -> Durable
     else:
         status = "ok"
         next_action = "Durable inbox is clear."
+    if outage_action and not outage_named:
+        status = "degraded"
+        next_action = f"{next_action} {outage_action}"
 
     return {
         "status": status,
@@ -1635,6 +1860,7 @@ def collect_health(*, path: Path | None = None, create: bool = False) -> Durable
         "last_accepted_at": cast(str | None, aggregate["last_accepted_at"]),
         "last_processed_at": cast(str | None, aggregate["last_processed_at"]),
         "last_dead_lettered_at": cast(str | None, aggregate["last_dead_lettered_at"]),
+        "failing_channels": failing_channels,
         "next_action": next_action,
         "error": None,
     }

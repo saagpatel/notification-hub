@@ -15,11 +15,13 @@ from notification_hub.durable_inbox import (
     IdempotencyConflictError,
     MissingEventAuthorityError,
     accepted_channels,
+    channel_outage_summary,
     channel_state_counts,
     channels_in_state,
     claim_next_due_event,
     collect_health,
     disposition_dead_letter,
+    disposition_partial_deliveries_for_channel,
     enqueue_event,
     get_channel_receipts,
     get_channel_reconciliation_receipt,
@@ -27,6 +29,7 @@ from notification_hub.durable_inbox import (
     get_event,
     init_schema,
     mark_delivered,
+    partial_deliveries_for_channel,
     prune_retained_events,
     recent_channel_acceptance_times,
     reclaim_stale_processing,
@@ -1148,6 +1151,7 @@ def test_exhausted_attempts_with_one_accepted_channel_are_partially_delivered(
     assert health["unresolved_partially_delivered_count"] == 1
     assert health["dead_letter_count"] == 0
     assert health["status"] == "degraded"
+    # A single fresh failure is not yet an outage, so the instruction is still per-event.
     assert "partially delivered" in health["next_action"]
 
 
@@ -1228,3 +1232,279 @@ def test_partial_deliveries_are_retained_exactly_like_dead_letters(tmp_path: Pat
     stored = get_event(claimed.event_id, path=db_path)
     assert stored is not None
     assert stored.status == "partially_delivered"
+
+
+def _partial_via_channel(
+    event_id: str, db_path: Path, *, failed: str = "push", accepted: str = "slack"
+) -> str:
+    """Drive one event to `partially_delivered` with a single failing channel."""
+    enqueue_event(_event(event_id), path=db_path, max_attempts=1)
+    claimed = claim_next_due_event(path=db_path)
+    assert claimed is not None
+    record_channel_state(claimed.event_id, accepted, "accepted", path=db_path)
+    record_channel_state(claimed.event_id, failed, "failed", path=db_path)
+    record_processing_failure(claimed, RuntimeError(f"{failed} refused"), path=db_path)
+    return claimed.event_id
+
+
+def _age_failures(db_path: Path, channel: str, *, hours: int = 3) -> None:
+    """Backdate a channel's failures so they read as sustained, not momentary."""
+    old = (datetime.now(UTC) - timedelta(hours=hours)).isoformat()
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "UPDATE channel_deliveries SET updated_at = ? WHERE channel = ? AND state = 'failed'",
+            (old, channel),
+        )
+
+
+def test_a_channel_that_stopped_accepting_is_named_as_the_outage(tmp_path: Path) -> None:
+    """Ninety-eight partials had one cause. Health must point at the cause, not the pile."""
+    db_path = tmp_path / "inbox.sqlite3"
+    for index in range(3):
+        _partial_via_channel(f"outage-{index}", db_path)
+    _age_failures(db_path, "push")
+
+    outages = channel_outage_summary(path=db_path)
+
+    assert [outage["channel"] for outage in outages] == ["push"]
+    assert outages[0]["failures_since_last_acceptance"] == 3
+    assert outages[0]["unresolved_partials"] == 3
+    assert outages[0]["last_accepted_at"] is None
+    assert outages[0]["failing_since"] is not None
+    health = collect_health(path=db_path)
+    assert health["status"] == "degraded"
+    assert "Channel push" in health["next_action"]
+    assert health["failing_channels"] == list(outages)
+
+
+def test_a_channel_that_accepted_after_it_failed_is_not_an_outage(tmp_path: Path) -> None:
+    """An outage is failure *since* the last acceptance, not any failure ever seen."""
+    db_path = tmp_path / "inbox.sqlite3"
+    _partial_via_channel("recovered", db_path)
+    _age_failures(db_path, "push")
+    enqueue_event(_event("later"), path=db_path, max_attempts=1)
+    claimed = claim_next_due_event(path=db_path)
+    assert claimed is not None
+    record_channel_state(claimed.event_id, "push", "accepted", path=db_path)
+
+    assert channel_outage_summary(path=db_path) == ()
+
+
+def test_one_recent_failure_on_a_working_channel_is_not_an_outage(tmp_path: Path) -> None:
+    """Every event here fails one channel, so a bare failure test flags the healthy one too."""
+    db_path = tmp_path / "inbox.sqlite3"
+    _partial_via_channel("momentary", db_path)
+
+    outages = channel_outage_summary(path=db_path)
+
+    # Slack accepted a moment ago and push has only just started failing: neither is silent
+    # long enough to be worth an operator's attention yet.
+    assert outages == ()
+    assert collect_health(path=db_path)["failing_channels"] == []
+
+
+def test_a_dispositioned_receipt_counts_as_acceptance(tmp_path: Path) -> None:
+    """`dispositioned` is a positive receipt that never writes `accepted_at`."""
+    db_path = tmp_path / "inbox.sqlite3"
+    _partial_via_channel("dispositioned-receipt", db_path)
+    _age_failures(db_path, "push")
+    enqueue_event(_event("push-took-it"), path=db_path, max_attempts=1)
+    claimed = claim_next_due_event(path=db_path)
+    assert claimed is not None
+    record_channel_state(claimed.event_id, "push", "dispositioned", path=db_path)
+
+    assert channel_outage_summary(path=db_path) == ()
+
+
+def test_one_disposition_resolves_every_partial_the_outage_produced(tmp_path: Path) -> None:
+    """One channel outage is one operator decision, so it takes one disposition."""
+    db_path = tmp_path / "inbox.sqlite3"
+    expected = [_partial_via_channel(f"sweep-{index}", db_path) for index in range(3)]
+
+    resolved = disposition_partial_deliveries_for_channel(
+        "push", "push_outage_slack_delivered", "operator:2026-09-03", path=db_path
+    )
+
+    assert sorted(resolved) == sorted(expected)
+    health = collect_health(path=db_path)
+    assert health["partially_delivered_count"] == 3
+    assert health["unresolved_partially_delivered_count"] == 0
+    for event_id in expected:
+        stored = get_event(event_id, path=db_path)
+        assert stored is not None
+        assert stored.status == "partially_delivered"  # history is resolved, never deleted
+
+
+def test_a_partial_with_a_second_failing_channel_is_not_swept_up(tmp_path: Path) -> None:
+    """A bulk disposition may only claim events the named outage fully explains."""
+    db_path = tmp_path / "inbox.sqlite3"
+    push_only = _partial_via_channel("push-only", db_path)
+    enqueue_event(_event("two-failures"), path=db_path, max_attempts=1)
+    claimed = claim_next_due_event(path=db_path)
+    assert claimed is not None
+    record_channel_state(claimed.event_id, "slack", "accepted", path=db_path)
+    record_channel_state(claimed.event_id, "push", "failed", path=db_path)
+    record_channel_state(claimed.event_id, "email", "failed", path=db_path)
+    record_processing_failure(claimed, RuntimeError("two refused"), path=db_path)
+
+    resolved = disposition_partial_deliveries_for_channel(
+        "push", "push_outage", "operator:test", path=db_path
+    )
+
+    assert resolved == (push_only,)
+    health = collect_health(path=db_path)
+    assert health["unresolved_partially_delivered_count"] == 1
+
+
+def test_a_dead_letter_is_never_swept_up_by_a_channel_disposition(tmp_path: Path) -> None:
+    """The dead-letter count means "reached nobody". A bulk resolve must not touch it."""
+    db_path = tmp_path / "inbox.sqlite3"
+    enqueue_event(_event("nobody-got-it"), path=db_path, max_attempts=1)
+    claimed = claim_next_due_event(path=db_path)
+    assert claimed is not None
+    record_channel_state(claimed.event_id, "push", "failed", path=db_path)
+    record_processing_failure(claimed, RuntimeError("push refused"), path=db_path)
+
+    assert (
+        disposition_partial_deliveries_for_channel(
+            "push", "push_outage", "operator:test", path=db_path
+        )
+        == ()
+    )
+    health = collect_health(path=db_path)
+    assert health["unresolved_dead_letter_count"] == 1
+
+
+def test_the_population_counted_is_the_population_resolved(tmp_path: Path) -> None:
+    """An operator acts on the number they were shown, so the two must be one query."""
+    db_path = tmp_path / "inbox.sqlite3"
+    for index in range(4):
+        _partial_via_channel(f"parity-{index}", db_path)
+    _age_failures(db_path, "push")
+
+    outage = channel_outage_summary(path=db_path)[0]
+    listed = partial_deliveries_for_channel("push", path=db_path)
+    resolved = disposition_partial_deliveries_for_channel(
+        "push", "push_outage", "operator:test", path=db_path
+    )
+
+    assert outage["unresolved_partials"] == len(listed) == len(resolved) == 4
+    assert sorted(listed) == sorted(resolved)
+
+
+def test_until_bounds_a_bulk_disposition(tmp_path: Path) -> None:
+    """An operator resolving a closed outage must not silently claim events after it."""
+    db_path = tmp_path / "inbox.sqlite3"
+    old_event = _partial_via_channel("before-cutoff", db_path)
+    recent_event = _partial_via_channel("after-cutoff", db_path)
+    old = (datetime.now(UTC) - timedelta(days=5)).isoformat()
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "UPDATE durable_events SET dead_lettered_at = ? WHERE event_id = ?",
+            (old, old_event),
+        )
+    cutoff = (datetime.now(UTC) - timedelta(days=1)).isoformat()
+
+    resolved = disposition_partial_deliveries_for_channel(
+        "push", "push_outage", "operator:test", until=cutoff, path=db_path
+    )
+
+    assert resolved == (old_event,)
+    stored = get_event(recent_event, path=db_path)
+    assert stored is not None
+    assert collect_health(path=db_path)["unresolved_partially_delivered_count"] == 1
+
+
+@pytest.mark.parametrize(
+    ("channel", "disposition", "reference"),
+    [("", "reason", "ref"), ("push", "  ", "ref"), ("push", "reason", "")],
+)
+def test_a_bulk_disposition_still_demands_a_channel_reason_and_reference(
+    tmp_path: Path, channel: str, disposition: str, reference: str
+) -> None:
+    db_path = tmp_path / "inbox.sqlite3"
+    _partial_via_channel("needs-args", db_path)
+
+    with pytest.raises(ValueError):
+        disposition_partial_deliveries_for_channel(channel, disposition, reference, path=db_path)
+
+    assert collect_health(path=db_path)["unresolved_partially_delivered_count"] == 1
+
+
+def test_an_outage_is_still_named_behind_a_higher_ranked_backlog(tmp_path: Path) -> None:
+    """Push was silent for ten days behind a dead-letter backlog that outranked it."""
+    db_path = tmp_path / "inbox.sqlite3"
+    _partial_via_channel("outage-under-backlog", db_path)
+    _age_failures(db_path, "push")
+    enqueue_event(_event("reached-nobody"), path=db_path, max_attempts=1)
+    claimed = claim_next_due_event(path=db_path)
+    assert claimed is not None
+    record_channel_state(claimed.event_id, "slack", "failed", path=db_path)
+    record_processing_failure(claimed, RuntimeError("both refused"), path=db_path)
+
+    health = collect_health(path=db_path)
+
+    assert health["unresolved_dead_letter_count"] == 1  # outranks the partial review
+    assert "unresolved dead-lettered event" in health["next_action"]
+    assert "Channel push" in health["next_action"]  # and the outage is still said out loud
+    # Slack failed this one event moments ago; it is working, and must not be named too.
+    assert [outage["channel"] for outage in health["failing_channels"]] == ["push"]
+
+
+def test_an_already_dispositioned_event_is_not_reclaimed_or_overwritten(tmp_path: Path) -> None:
+    """A bulk sweep must never replace a reason an operator already wrote for one event."""
+    db_path = tmp_path / "inbox.sqlite3"
+    already = _partial_via_channel("already-resolved", db_path)
+    still_open = _partial_via_channel("still-open", db_path)
+    disposition_dead_letter(already, "reviewed_by_hand", "ticket:41", path=db_path)
+
+    resolved = disposition_partial_deliveries_for_channel(
+        "push", "push_outage", "operator:test", path=db_path
+    )
+
+    assert resolved == (still_open,)
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT dead_letter_disposition, dead_letter_disposition_ref "
+            "FROM durable_events WHERE event_id = ?",
+            (already,),
+        ).fetchone()
+    assert row == ("reviewed_by_hand", "ticket:41")
+
+
+def test_an_unparseable_cutoff_is_refused_rather_than_compared_as_text(tmp_path: Path) -> None:
+    """SQLite matches `dead_lettered_at <= 'yesterday'` on every row, widening the sweep."""
+    db_path = tmp_path / "inbox.sqlite3"
+    _partial_via_channel("cutoff-typo", db_path)
+
+    with pytest.raises(ValueError, match="ISO-8601"):
+        disposition_partial_deliveries_for_channel(
+            "push", "push_outage", "operator:test", until="yesterday", path=db_path
+        )
+
+    assert collect_health(path=db_path)["unresolved_partially_delivered_count"] == 1
+
+
+def test_a_channel_awaiting_reconciliation_is_not_a_failure_to_sweep(tmp_path: Path) -> None:
+    """`outcome_unknown` is protected evidence, not a failure this outage explains."""
+    db_path = tmp_path / "inbox.sqlite3"
+    enqueue_event(_event("unknown-outcome"), path=db_path, max_attempts=1)
+    claimed = claim_next_due_event(path=db_path)
+    assert claimed is not None
+    record_channel_state(claimed.event_id, "slack", "accepted", path=db_path)
+    record_channel_state(
+        claimed.event_id,
+        "push",
+        "outcome_unknown",
+        destination_ref="provider:unknown-1",
+        path=db_path,
+    )
+    record_processing_failure(claimed, RuntimeError("push outcome unknown"), path=db_path)
+
+    assert (
+        disposition_partial_deliveries_for_channel(
+            "push", "push_outage", "operator:test", path=db_path
+        )
+        == ()
+    )
+    assert collect_health(path=db_path)["unresolved_partially_delivered_count"] == 1
