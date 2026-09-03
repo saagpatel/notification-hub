@@ -22,6 +22,7 @@ DurableEventStatus = Literal[
     "processed",
     "suppressed",
     "dead_lettered",
+    "partially_delivered",
     "reconciliation_required",
     "reconciled_succeeded",
     "reconciled_absent",
@@ -81,6 +82,8 @@ class DurableInboxHealth(TypedDict):
     dead_letter_count: int
     unresolved_dead_letter_count: int
     recent_dead_letter_count: int
+    partially_delivered_count: int
+    unresolved_partially_delivered_count: int
     delivery_state_counts: dict[str, int]
     attempted_count: int
     accepted_count: int
@@ -291,15 +294,31 @@ def init_schema(path: Path | None = None) -> None:
         )
 
 
+# A channel that reached any of these has a durable receipt: the destination took the
+# event and no retry may resend to it. Named once so "did this event reach anyone?"
+# and "which channels may a retry skip?" cannot drift apart.
+TERMINAL_POSITIVE_CHANNEL_STATES = ("accepted", "delivered", "observed", "dispositioned")
+
+
 def accepted_channels(event_id: str, *, path: Path | None = None) -> frozenset[str]:
     init_schema(path)
     with _managed_connection(path) as conn:
         rows = conn.execute(
             "SELECT channel FROM channel_deliveries WHERE event_id = ? "
-            "AND state IN ('accepted', 'delivered', 'observed', 'dispositioned')",
-            (event_id,),
+            f"AND state IN ({', '.join('?' * len(TERMINAL_POSITIVE_CHANNEL_STATES))})",
+            (event_id, *TERMINAL_POSITIVE_CHANNEL_STATES),
         ).fetchall()
     return frozenset(str(row["channel"]) for row in rows)
+
+
+def _has_terminal_positive_channel(conn: sqlite3.Connection, event_id: str) -> bool:
+    """Did any destination accept this event before the attempts ran out?"""
+    row = conn.execute(
+        "SELECT 1 FROM channel_deliveries WHERE event_id = ? "
+        f"AND state IN ({', '.join('?' * len(TERMINAL_POSITIVE_CHANNEL_STATES))}) LIMIT 1",
+        (event_id, *TERMINAL_POSITIVE_CHANNEL_STATES),
+    ).fetchone()
+    return row is not None
 
 
 def record_channel_state(
@@ -824,8 +843,10 @@ def disposition_dead_letter(
         ).fetchone()
         if row is None:
             raise KeyError(event_id)
-        if str(row["status"]) != "dead_lettered":
-            raise ValueError("only dead-lettered events can be dispositioned")
+        if str(row["status"]) not in {"dead_lettered", "partially_delivered"}:
+            raise ValueError(
+                "only dead-lettered or partially delivered events can be dispositioned"
+            )
         conn.execute(
             "UPDATE durable_events SET dead_letter_disposition = ?, "
             "dead_letter_disposition_ref = ?, dead_letter_dispositioned_at = ?, "
@@ -1110,10 +1131,20 @@ def record_processing_failure(
     error_type = error.__class__.__name__
     with _managed_connection(path) as conn:
         if record.attempt_count >= record.max_attempts:
+            # Exhausted attempts are terminal either way, but they are not the same
+            # outcome. An event no destination took is a dead letter: nobody got it.
+            # An event one destination accepted and another refused reached a human;
+            # calling that a dead letter overstates the failure, and the count is
+            # read as "notifications that reached nobody". Between 2026-08-24 and
+            # 2026-09-03, 98 events were filed as dead letters after Slack had
+            # already accepted them, because push could not raise a macOS
+            # notification. `dead_lettered_at` stays the terminal timestamp for both.
+            partial = _has_terminal_positive_channel(conn, record.event_id)
+            status: DurableEventStatus = "partially_delivered" if partial else "dead_lettered"
             cursor = conn.execute(
                 """
                 UPDATE durable_events
-                SET status = 'dead_lettered',
+                SET status = ?,
                     lease_until = NULL,
                     next_attempt_at = NULL,
                     dead_lettered_at = ?,
@@ -1125,6 +1156,7 @@ def record_processing_failure(
                   AND attempt_count = ?
                 """,
                 (
+                    status,
                     now,
                     error_text,
                     error_type,
@@ -1135,7 +1167,7 @@ def record_processing_failure(
             )
             if cursor.rowcount != 1:
                 raise ValueError("processing failure no longer matches the claimed attempt")
-            return "dead_lettered"
+            return status
 
         delay = retry_delay_seconds(record.attempt_count)
         next_attempt_at = isoformat(now_dt + timedelta(seconds=delay))
@@ -1334,10 +1366,14 @@ def prune_retained_events(
             """,
             (processed_cutoff, processed_retention_rows),
         ).rowcount
+        # Both terminal statuses answer to one retention rule. Neither can actually be
+        # deleted while it owns a channel receipt (ADR 0003), and a partially delivered
+        # event owns one by definition, so this branch will not fire for it today; the
+        # status set is symmetric so the two cannot drift if that guard ever changes.
         deleted_dead = conn.execute(
             """
             DELETE FROM durable_events
-            WHERE status = 'dead_lettered'
+            WHERE status IN ('dead_lettered', 'partially_delivered')
               AND dead_lettered_at IS NOT NULL
               AND dead_lettered_at < ?
               AND dead_letter_disposition IS NOT NULL
@@ -1415,6 +1451,8 @@ def collect_health(*, path: Path | None = None, create: bool = False) -> Durable
             "dead_letter_count": 0,
             "unresolved_dead_letter_count": 0,
             "recent_dead_letter_count": 0,
+            "partially_delivered_count": 0,
+            "unresolved_partially_delivered_count": 0,
             "delivery_state_counts": {},
             "attempted_count": 0,
             "accepted_count": 0,
@@ -1463,6 +1501,11 @@ def collect_health(*, path: Path | None = None, create: bool = False) -> Durable
                     SUM(CASE WHEN status = 'dead_lettered'
                         AND dead_letter_disposition IS NULL
                         THEN 1 ELSE 0 END) AS unresolved_dead_letter_count,
+                    SUM(CASE WHEN status = 'partially_delivered'
+                        THEN 1 ELSE 0 END) AS partially_delivered_count,
+                    SUM(CASE WHEN status = 'partially_delivered'
+                        AND dead_letter_disposition IS NULL
+                        THEN 1 ELSE 0 END) AS unresolved_partially_delivered_count,
                     SUM(CASE WHEN status = 'processing'
                         AND lease_until IS NOT NULL
                         AND lease_until < ?
@@ -1496,6 +1539,8 @@ def collect_health(*, path: Path | None = None, create: bool = False) -> Durable
             "dead_letter_count": 0,
             "unresolved_dead_letter_count": 0,
             "recent_dead_letter_count": 0,
+            "partially_delivered_count": 0,
+            "unresolved_partially_delivered_count": 0,
             "delivery_state_counts": {},
             "attempted_count": 0,
             "accepted_count": 0,
@@ -1521,6 +1566,8 @@ def collect_health(*, path: Path | None = None, create: bool = False) -> Durable
     dead = counts.get("dead_lettered", 0)
     unresolved_dead = int(aggregate["unresolved_dead_letter_count"] or 0)
     recent_dead = int(aggregate["recent_dead_letter_count"] or 0)
+    partially_delivered = counts.get("partially_delivered", 0)
+    unresolved_partial = int(aggregate["unresolved_partially_delivered_count"] or 0)
     oldest_pending_at = cast(str | None, aggregate["oldest_pending_at"])
     oldest_actionable_at = cast(str | None, aggregate["oldest_actionable_at"])
     stale_processing = int(aggregate["stale_processing_count"] or 0)
@@ -1543,6 +1590,11 @@ def collect_health(*, path: Path | None = None, create: bool = False) -> Durable
     elif stale_processing > 0:
         status = "degraded"
         next_action = "Reclaim stale processing leases, then verify the worker drains the inbox."
+    elif unresolved_partial > 0:
+        status = "degraded"
+        next_action = (
+            "Review every partially delivered event: one destination took it and another never did."
+        )
     elif stale_backlog:
         status = "degraded"
         next_action = "Inspect the durable inbox worker; due events are not draining."
@@ -1567,6 +1619,8 @@ def collect_health(*, path: Path | None = None, create: bool = False) -> Durable
         "dead_letter_count": dead,
         "unresolved_dead_letter_count": unresolved_dead,
         "recent_dead_letter_count": recent_dead,
+        "partially_delivered_count": partially_delivered,
+        "unresolved_partially_delivered_count": unresolved_partial,
         "delivery_state_counts": delivery_counts,
         "attempted_count": delivery_counts["attempted"],
         "accepted_count": delivery_counts["accepted"],

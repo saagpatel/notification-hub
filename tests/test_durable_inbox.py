@@ -1118,3 +1118,113 @@ def test_health_degrades_for_retry_overdue_beyond_backlog_threshold(tmp_path: Pa
     assert health["next_action"] == (
         "Inspect the durable inbox worker; due events are not draining."
     )
+
+
+def test_exhausted_attempts_with_one_accepted_channel_are_partially_delivered(
+    tmp_path: Path,
+) -> None:
+    """The live case: Slack accepted, push could not raise a macOS notification.
+
+    Between 2026-08-24 and 2026-09-03, 98 such events were filed as dead letters,
+    so the dead-letter count read as "reached nobody" while every one of them had
+    reached Slack.
+    """
+    db_path = tmp_path / "inbox.sqlite3"
+    enqueue_event(_event("partial"), path=db_path, max_attempts=1)
+    claimed = claim_next_due_event(path=db_path)
+    assert claimed is not None
+    record_channel_state(claimed.event_id, "slack", "accepted", path=db_path)
+    record_channel_state(claimed.event_id, "push", "failed", path=db_path)
+
+    status = record_processing_failure(claimed, RuntimeError("push refused"), path=db_path)
+
+    stored = get_event(claimed.event_id, path=db_path)
+    assert status == "partially_delivered"
+    assert stored is not None
+    assert stored.status == "partially_delivered"
+    assert stored.dead_lettered_at is not None  # terminal timestamp, both outcomes
+    health = collect_health(path=db_path)
+    assert health["partially_delivered_count"] == 1
+    assert health["unresolved_partially_delivered_count"] == 1
+    assert health["dead_letter_count"] == 0
+    assert health["status"] == "degraded"
+    assert "partially delivered" in health["next_action"]
+
+
+def test_exhausted_attempts_with_no_accepted_channel_stay_dead_lettered(
+    tmp_path: Path,
+) -> None:
+    """The distinction only means something if the old outcome still happens."""
+    db_path = tmp_path / "inbox.sqlite3"
+    enqueue_event(_event("nobody"), path=db_path, max_attempts=1)
+    claimed = claim_next_due_event(path=db_path)
+    assert claimed is not None
+    record_channel_state(claimed.event_id, "slack", "failed", path=db_path)
+    record_channel_state(claimed.event_id, "push", "failed", path=db_path)
+
+    status = record_processing_failure(claimed, RuntimeError("both refused"), path=db_path)
+
+    assert status == "dead_lettered"
+    health = collect_health(path=db_path)
+    assert health["dead_letter_count"] == 1
+    assert health["partially_delivered_count"] == 0
+
+
+def test_a_buffered_channel_is_not_an_acceptance(tmp_path: Path) -> None:
+    """`buffered` is policy deferral, not a receipt; it must not soften the outcome."""
+    db_path = tmp_path / "inbox.sqlite3"
+    enqueue_event(_event("buffered-only"), path=db_path, max_attempts=1)
+    claimed = claim_next_due_event(path=db_path)
+    assert claimed is not None
+    record_channel_state(claimed.event_id, "push", "buffered", path=db_path)
+
+    status = record_processing_failure(claimed, RuntimeError("never sent"), path=db_path)
+
+    assert status == "dead_lettered"
+
+
+def test_partially_delivered_events_can_be_dispositioned(tmp_path: Path) -> None:
+    db_path = tmp_path / "inbox.sqlite3"
+    enqueue_event(_event("partial-disposition"), path=db_path, max_attempts=1)
+    claimed = claim_next_due_event(path=db_path)
+    assert claimed is not None
+    record_channel_state(claimed.event_id, "slack", "accepted", path=db_path)
+    record_processing_failure(claimed, RuntimeError("push refused"), path=db_path)
+
+    disposition_dead_letter(
+        claimed.event_id, "accepted-by-slack", "operator:2026-09-03", path=db_path
+    )
+
+    health = collect_health(path=db_path)
+    assert health["partially_delivered_count"] == 1
+    assert health["unresolved_partially_delivered_count"] == 0
+    stored = get_event(claimed.event_id, path=db_path)
+    assert stored is not None
+    assert stored.status == "partially_delivered"
+
+
+def test_partial_deliveries_are_retained_exactly_like_dead_letters(tmp_path: Path) -> None:
+    """Retention refuses to delete any row owning a channel receipt (ADR 0003).
+
+    A partially delivered event owns one by definition, so it is retained for the same
+    reason a dead letter with receipts is, not for a new one.
+    """
+    db_path = tmp_path / "inbox.sqlite3"
+    enqueue_event(_event("partial-retention"), path=db_path, max_attempts=1)
+    claimed = claim_next_due_event(path=db_path)
+    assert claimed is not None
+    record_channel_state(claimed.event_id, "slack", "accepted", path=db_path)
+    record_processing_failure(claimed, RuntimeError("push refused"), path=db_path)
+    disposition_dead_letter(claimed.event_id, "accepted-by-slack", "operator:test", path=db_path)
+    old = (datetime.now(UTC) - timedelta(days=400)).isoformat()
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "UPDATE durable_events SET dead_lettered_at = ?, updated_at = ? WHERE event_id = ?",
+            (old, old, claimed.event_id),
+        )
+
+    prune_retained_events(path=db_path)
+
+    stored = get_event(claimed.event_id, path=db_path)
+    assert stored is not None
+    assert stored.status == "partially_delivered"
