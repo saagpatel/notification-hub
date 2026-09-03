@@ -910,8 +910,10 @@ def _normalized_until(until: str) -> str:
         parsed = datetime.fromisoformat(until)
     except ValueError as exc:
         raise ValueError(f"cutoff must be an ISO-8601 timestamp, got {until!r}") from exc
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
+    # Rows are stored in UTC and compared as text, so an offset cutoff has to be converted
+    # rather than serialized as given: `01:00+05:00` sorts above `00:00+00:00` while being
+    # four hours earlier, which would resolve events from after the cutoff.
+    parsed = parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
     return isoformat(parsed)
 
 
@@ -955,8 +957,14 @@ def _is_sustained_outage(
     attention is silence: nothing accepted for longer than the threshold while deliveries
     keep failing. A channel that has never accepted anything is timed from its first
     failure instead, because it has no acceptance to be silent since.
+
+    Both halves must hold, so the clock starts at the *later* of the two. A channel idle
+    for days that fails once just now has a stale acceptance and a fresh failure; timing
+    from the acceptance alone would call that transient failure a sustained outage.
     """
-    reference = _parse_iso(last_accepted_at) or _parse_iso(failing_since)
+    accepted = _parse_iso(last_accepted_at)
+    failing = _parse_iso(failing_since)
+    reference = max(accepted, failing) if accepted and failing else accepted or failing
     if reference is None:
         return False
     return (now - reference).total_seconds() >= CHANNEL_OUTAGE_AFTER_SECONDS

@@ -1260,3 +1260,20 @@ def test_cli_disposition_partials_refuses_a_write_without_a_reason(
     assert exit_code == 1
     assert report["status"] == "error"
     assert collect_health()["unresolved_partially_delivered_count"] == 1
+
+
+def test_cli_disposition_partials_dry_run_reports_a_bad_cutoff_as_an_error(
+    capsys: CaptureFixture[str],
+) -> None:
+    """The preview is the cautious path; a typo must not surface as a traceback."""
+    _seed_push_outage_partial("cli-dry-run-bad-cutoff")
+
+    exit_code = main(
+        ["disposition-partials", "--channel", "push", "--until", "yesterday", "--dry-run", "--json"]
+    )
+
+    report = json.loads(capsys.readouterr().out)
+    assert exit_code == 1
+    assert report["status"] == "error"
+    assert "ISO-8601" in report["error"]
+    assert collect_health()["unresolved_partially_delivered_count"] == 1

@@ -5244,7 +5244,15 @@ def run_disposition_partials(
         "error": None,
     }
     if dry_run:
-        matched = partial_deliveries_for_channel(channel, until=until)
+        # The preview is the cautious path, so a mistyped cutoff must come back as the
+        # command's own error report, not as a traceback through a --json invocation.
+        try:
+            matched = partial_deliveries_for_channel(channel, until=until)
+        except (OSError, ValueError) as exc:
+            base["status"] = "error"
+            base["error"] = str(exc)
+            base["next_action"] = "Fix the disposition arguments and re-run."
+            return base
         base["matched_count"] = len(matched)
         base["event_ids"] = list(matched)
         if matched:

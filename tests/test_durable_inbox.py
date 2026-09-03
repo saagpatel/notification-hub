@@ -1508,3 +1508,44 @@ def test_a_channel_awaiting_reconciliation_is_not_a_failure_to_sweep(tmp_path: P
         == ()
     )
     assert collect_health(path=db_path)["unresolved_partially_delivered_count"] == 1
+
+
+def test_an_offset_cutoff_is_converted_to_utc_before_it_is_compared(tmp_path: Path) -> None:
+    """Rows are UTC text: `01:00+05:00` sorts above `00:00+00:00` while being earlier."""
+    db_path = tmp_path / "inbox.sqlite3"
+    after_cutoff = _partial_via_channel("after-offset-cutoff", db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "UPDATE durable_events SET dead_lettered_at = ? WHERE event_id = ?",
+            ("2026-09-03T00:30:00+00:00", after_cutoff),
+        )
+
+    # 01:00+05:00 is 20:00 UTC the previous day, so this event is after the cutoff.
+    resolved = disposition_partial_deliveries_for_channel(
+        "push", "push_outage", "operator:test", until="2026-09-03T01:00:00+05:00", path=db_path
+    )
+
+    assert resolved == ()
+    assert collect_health(path=db_path)["unresolved_partially_delivered_count"] == 1
+
+
+def test_one_failure_after_an_idle_stretch_is_not_a_sustained_outage(tmp_path: Path) -> None:
+    """A stale acceptance plus a fresh failure is a transient failure, not silence."""
+    db_path = tmp_path / "inbox.sqlite3"
+    _partial_via_channel("idle-then-failed", db_path)
+    stale = (datetime.now(UTC) - timedelta(days=3)).isoformat()
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "UPDATE channel_deliveries SET accepted_at = ?, updated_at = ? "
+            "WHERE channel = 'slack' AND state = 'accepted'",
+            (stale, stale),
+        )
+        conn.execute(
+            "UPDATE channel_deliveries SET accepted_at = ?, updated_at = ?, state = 'accepted' "
+            "WHERE channel = 'push' AND event_id = 'idle-then-failed'",
+            (stale, stale),
+        )
+    # Push accepted three days ago and has just failed once on a new event.
+    _partial_via_channel("fresh-failure", db_path)
+
+    assert [outage["channel"] for outage in channel_outage_summary(path=db_path)] == []
