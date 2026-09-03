@@ -11,6 +11,7 @@ from httpx import ASGITransport, AsyncClient
 
 import notification_hub.config as config_mod
 import notification_hub.server as server_mod
+from notification_hub.runtime_generation import _launcher_source
 
 
 def _review_package_report() -> dict[str, object]:
@@ -32,8 +33,12 @@ def test_runtime_and_launchagent_bind_review_service_to_loopback() -> None:
     )
     root = ElementTree.parse(template).getroot()
     strings = [element.text for element in root.iter("string")]
-    host_flag = strings.index("--host")
-    assert strings[host_flag + 1] == "127.0.0.1"
+    assert any(
+        value is not None and value.endswith("/current/bin/notification-hub-daemon")
+        for value in strings
+    )
+    launcher = _launcher_source(Path(__file__).resolve())
+    assert '"--host", "127.0.0.1", "--port", "9199"' in launcher
 
 
 @pytest.mark.anyio
