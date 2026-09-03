@@ -28,6 +28,7 @@ from notification_hub.config import (
     get_slack_webhook_url,
     live_smoke_authorized,
     load_policy_config_file,
+    preserve_history_enabled,
 )
 from notification_hub.models import BRIDGE_SOURCE_ALIASES, SOURCE_IDS
 
@@ -38,6 +39,17 @@ def fresh_cache(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("NOTIFICATION_HUB_TEST_ALLOW_KEYCHAIN", "1")
     clear_webhook_cache()
     clear_policy_cache()
+
+
+def test_preserve_history_requires_explicit_truthy_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("NOTIFICATION_HUB_PRESERVE_HISTORY", raising=False)
+    assert preserve_history_enabled() is False
+    monkeypatch.setenv("NOTIFICATION_HUB_PRESERVE_HISTORY", "1")
+    assert preserve_history_enabled() is True
+    monkeypatch.setenv("NOTIFICATION_HUB_PRESERVE_HISTORY", "false")
+    assert preserve_history_enabled() is False
 
 
 class TestKeychainWebhook:

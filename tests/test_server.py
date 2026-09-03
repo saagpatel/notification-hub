@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import AsyncIterator
 from contextlib import contextmanager
@@ -856,3 +857,59 @@ def test_run_retention_once_updates_runtime_status(monkeypatch: pytest.MonkeyPat
         "last_rotated": True,
         "last_archive_path": "/tmp/archive.jsonl",
     }
+
+
+async def test_durable_worker_preserve_history_never_prunes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NOTIFICATION_HUB_PRESERVE_HISTORY", "1")
+    monkeypatch.setattr(server_mod, "claim_next_due_event", lambda: None)
+    prune_calls = 0
+
+    def _prune() -> None:
+        nonlocal prune_calls
+        prune_calls += 1
+
+    async def _stop_after_first_idle(_seconds: float) -> None:
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(server_mod, "prune_retained_events", _prune)
+    monkeypatch.setattr(server_mod.asyncio, "sleep", _stop_after_first_idle)
+
+    with pytest.raises(asyncio.CancelledError):
+        await server_mod._durable_inbox_loop()
+
+    assert prune_calls == 0
+
+
+async def test_lifespan_preserve_history_skips_startup_and_periodic_retention(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NOTIFICATION_HUB_PRESERVE_HISTORY", "1")
+    monkeypatch.setattr(server_mod, "bridge_cursor_enabled", lambda: True)
+    monkeypatch.setattr(server_mod, "init_durable_inbox_schema", lambda: None)
+    monkeypatch.setattr(
+        server_mod,
+        "recent_channel_acceptance_times",
+        lambda: {"push": [], "slack": []},
+    )
+    monkeypatch.setattr(server_mod, "reclaim_stale_processing", lambda: 0)
+    prune_calls = 0
+
+    def _prune() -> None:
+        nonlocal prune_calls
+        prune_calls += 1
+
+    async def _idle_forever() -> None:
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(server_mod, "prune_retained_events", _prune)
+    monkeypatch.setattr(server_mod, "_bridge_cursor_loop", _idle_forever)
+    monkeypatch.setattr(server_mod, "_durable_inbox_loop", _idle_forever)
+
+    async with server_mod.lifespan(server_mod.app):
+        assert server_mod._retention_task is None
+        assert server_mod.get_retention_runtime_status()["last_status"] == "preserve_history"
+        assert prune_calls == 0
+
+    assert prune_calls == 0

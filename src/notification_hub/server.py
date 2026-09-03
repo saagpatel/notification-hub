@@ -25,6 +25,7 @@ from notification_hub.config import (
     PORT,
     bridge_cursor_enabled,
     get_policy_config,
+    preserve_history_enabled,
 )
 from notification_hub.diagnostics import collect_runtime_readiness
 from notification_hub.durable_inbox import (
@@ -95,6 +96,7 @@ from notification_hub.pipeline import (
     process_stored_event_with_result,
     required_destinations_for_event,
 )
+from notification_hub.private_storage import ensure_runtime_storage_roots
 from notification_hub.producer_auth import (
     ProducerAuthenticationError,
     ProducerPolicyError,
@@ -219,13 +221,14 @@ def get_latest_review_package_path() -> str | None:
 def _configure_retention_status() -> None:
     global _retention_status
     policy = get_policy_config().retention
+    preserve_history = preserve_history_enabled()
     _retention_status = {
-        "enabled": policy.enabled,
+        "enabled": policy.enabled and not preserve_history,
         "interval_minutes": policy.interval_minutes,
         "max_events": policy.max_events,
         "keep_archives": policy.keep_archives,
         "last_checked_at": None,
-        "last_status": None,
+        "last_status": "preserve_history" if preserve_history else None,
         "last_rotated": False,
         "last_archive_path": None,
     }
@@ -308,7 +311,7 @@ async def _durable_inbox_loop() -> None:
         record = await asyncio.to_thread(claim_next_due_event)
         if record is None:
             now = time.monotonic()
-            if now - last_pruned_at > 3600:
+            if not preserve_history_enabled() and now - last_pruned_at > 3600:
                 await asyncio.to_thread(prune_retained_events)
                 last_pruned_at = now
             await asyncio.sleep(0.5)
@@ -496,6 +499,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     """Start bridge watcher on startup, stop on shutdown."""
     global _start_time, _observer, _retention_task, _durable_inbox_task, _bridge_cursor_task
     _start_time = time.monotonic()
+    ensure_runtime_storage_roots()
     _configure_retention_status()
     await asyncio.to_thread(init_durable_inbox_schema)
     recent_acceptances = await asyncio.to_thread(recent_channel_acceptance_times)
@@ -511,7 +515,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     reclaimed = await asyncio.to_thread(reclaim_stale_processing)
     if reclaimed:
         logger.warning("Reclaimed %d stale durable inbox processing lease(s)", reclaimed)
-    await asyncio.to_thread(prune_retained_events)
+    if preserve_history_enabled():
+        logger.info("Preserve-history mode active; automatic durable and JSONL retention disabled")
+    else:
+        await asyncio.to_thread(prune_retained_events)
 
     if bridge_cursor_enabled():
         _bridge_cursor_task = asyncio.create_task(_bridge_cursor_loop())
@@ -522,7 +529,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     else:
         logger.warning("Bridge file directory not found, watcher disabled")
 
-    _retention_task = asyncio.create_task(_retention_loop())
+    if not preserve_history_enabled():
+        _retention_task = asyncio.create_task(_retention_loop())
     _durable_inbox_task = asyncio.create_task(_durable_inbox_loop())
 
     yield
@@ -548,13 +556,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     _durable_inbox_task = None
 
     retention_task = _retention_task
-    assert retention_task is not None
-    retention_task.cancel()
-    try:
-        await retention_task
-    except asyncio.CancelledError:
-        pass
-    logger.info("Retention loop stopped")
+    if retention_task is not None:
+        retention_task.cancel()
+        try:
+            await retention_task
+        except asyncio.CancelledError:
+            pass
+        logger.info("Retention loop stopped")
     _retention_task = None
 
     if _observer is not None:

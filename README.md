@@ -433,7 +433,10 @@ The bootstrap command copies the repo sample policy file into `~/.config/notific
 without overwriting an existing config unless you pass `--force`.
 The retention command archives older log entries into `~/.local/share/notification-hub/archive/`.
 The daemon now also performs the same retention check automatically on a schedule, while the manual
-command remains available when you want to force a run immediately.
+command remains available when you want to force a run immediately. Set
+`NOTIFICATION_HUB_PRESERVE_HISTORY=1` on a runtime that must not perform automatic retention:
+startup and the durable worker will not prune terminal rows, and the scheduled JSONL retention loop
+will not start. Manual retention remains a separate explicit operator action.
 
 ## Event Contract
 

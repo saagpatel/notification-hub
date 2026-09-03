@@ -55,6 +55,15 @@ def bridge_cursor_enabled() -> bool:
     }
 
 
+def preserve_history_enabled() -> bool:
+    """Return whether all automatic retention must stay observation-only."""
+    return os.environ.get("NOTIFICATION_HUB_PRESERVE_HISTORY", "").lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+
+
 def test_mode_enabled() -> bool:
     """Return whether all live credentials and destinations must fail closed."""
     return os.environ.get("NOTIFICATION_HUB_TEST_MODE", "").lower() in {"1", "true", "yes"}
