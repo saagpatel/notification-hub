@@ -31,6 +31,7 @@ from notification_hub.cli_reports import (
     print_operator_handoff_drill_report,
     print_operator_review_session_report,
     print_operator_review_session_retention_report,
+    print_partial_disposition_report,
     print_personal_ops_action_export_report,
     print_personal_ops_import_report,
     print_personal_ops_outcome_sync_reminder_report,
@@ -69,6 +70,7 @@ from notification_hub.operations import (
     run_coordination_readiness,
     run_coordination_snapshot,
     run_delivery_check,
+    run_disposition_partials,
     run_inbox,
     run_logs,
     run_operator_daily_state,
@@ -169,9 +171,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 verify_push=args.push,
                 apply=args.apply,
                 envelope_path=Path(args.envelope) if args.envelope else None,
-                claim_state_dir=(
-                    Path(args.claim_state_dir) if args.claim_state_dir else None
-                ),
+                claim_state_dir=(Path(args.claim_state_dir) if args.claim_state_dir else None),
             )
         except (OSError, ValueError) as exc:
             print(f"delivery-check failed: {exc}", file=sys.stderr)
@@ -322,9 +322,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 readback_result=readback,
                 database_path=Path(args.db_path),
                 receipt_state_dir=(
-                    Path(args.claim_state_dir)
-                    if args.claim_state_dir is not None
-                    else None
+                    Path(args.claim_state_dir) if args.claim_state_dir is not None else None
                 ),
             )
             if args.apply:
@@ -658,6 +656,18 @@ def main(argv: Sequence[str] | None = None) -> int:
             json_output=args.json,
             print_report=print_explain_report,
             success_status=None,
+        )
+
+    if args.command == "disposition-partials":
+        report = run_disposition_partials(
+            channel=args.channel,
+            disposition=args.disposition,
+            disposition_ref=args.ref,
+            until=args.until,
+            dry_run=args.dry_run,
+        )
+        return _emit_report(
+            report, json_output=args.json, print_report=print_partial_disposition_report
         )
 
     if args.command == "bootstrap-config":

@@ -9,6 +9,14 @@ from unittest.mock import patch
 from _pytest.capture import CaptureFixture
 
 from notification_hub.cli import main
+from notification_hub.durable_inbox import (
+    claim_next_due_event,
+    collect_health,
+    enqueue_event,
+    record_channel_state,
+    record_processing_failure,
+)
+from notification_hub.models import StoredEvent
 from tests.cli_report_fixtures import (
     burn_in_report,
     coordination_console_report,
@@ -1178,3 +1186,94 @@ def test_cli_bootstrap_json_output(capsys: CaptureFixture[str]) -> None:
     captured = capsys.readouterr()
     assert exit_code == 0
     assert '"copied": true' in captured.out
+
+
+def _seed_push_outage_partial(event_id: str) -> str:
+    """Drive one event to `partially_delivered` in the isolated test database."""
+    enqueue_event(
+        StoredEvent(
+            event_id=event_id,
+            source="codex",
+            level="info",
+            title="CLI disposition test",
+            body="Slack took it, push did not.",
+            project="notification-hub",
+            classified_level="info",
+            producer="fixture-producer",
+            required_destinations=["log"],
+        ),
+        max_attempts=1,
+    )
+    claimed = claim_next_due_event()
+    assert claimed is not None
+    record_channel_state(claimed.event_id, "slack", "accepted")
+    record_channel_state(claimed.event_id, "push", "failed")
+    record_processing_failure(claimed, RuntimeError("push refused"))
+    return claimed.event_id
+
+
+def test_cli_disposition_partials_dry_run_changes_nothing(capsys: CaptureFixture[str]) -> None:
+    event_id = _seed_push_outage_partial("cli-dry-run")
+
+    exit_code = main(["disposition-partials", "--channel", "push", "--dry-run", "--json"])
+
+    report = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert report["matched_count"] == 1
+    assert report["resolved_count"] == 0
+    assert report["event_ids"] == [event_id]
+    assert collect_health()["unresolved_partially_delivered_count"] == 1
+
+
+def test_cli_disposition_partials_resolves_the_outage(capsys: CaptureFixture[str]) -> None:
+    _seed_push_outage_partial("cli-resolve-a")
+    _seed_push_outage_partial("cli-resolve-b")
+
+    exit_code = main(
+        [
+            "disposition-partials",
+            "--channel",
+            "push",
+            "--disposition",
+            "push_outage_slack_delivered",
+            "--ref",
+            "operator:test",
+            "--json",
+        ]
+    )
+
+    report = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert report["resolved_count"] == 2
+    assert collect_health()["unresolved_partially_delivered_count"] == 0
+
+
+def test_cli_disposition_partials_refuses_a_write_without_a_reason(
+    capsys: CaptureFixture[str],
+) -> None:
+    """Resolving evidence still requires an operator reason; only --dry-run is exempt."""
+    _seed_push_outage_partial("cli-no-reason")
+
+    exit_code = main(["disposition-partials", "--channel", "push", "--json"])
+
+    report = json.loads(capsys.readouterr().out)
+    assert exit_code == 1
+    assert report["status"] == "error"
+    assert collect_health()["unresolved_partially_delivered_count"] == 1
+
+
+def test_cli_disposition_partials_dry_run_reports_a_bad_cutoff_as_an_error(
+    capsys: CaptureFixture[str],
+) -> None:
+    """The preview is the cautious path; a typo must not surface as a traceback."""
+    _seed_push_outage_partial("cli-dry-run-bad-cutoff")
+
+    exit_code = main(
+        ["disposition-partials", "--channel", "push", "--until", "yesterday", "--dry-run", "--json"]
+    )
+
+    report = json.loads(capsys.readouterr().out)
+    assert exit_code == 1
+    assert report["status"] == "error"
+    assert "ISO-8601" in report["error"]
+    assert collect_health()["unresolved_partially_delivered_count"] == 1

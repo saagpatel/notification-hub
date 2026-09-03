@@ -38,6 +38,20 @@ class DeliveryCheckState(TypedDict):
     last_push_event_id: str | None
 
 
+class PartialDispositionReport(TypedDict):
+    status: str
+    channel: str
+    dry_run: bool
+    disposition: str | None
+    disposition_ref: str | None
+    until: str | None
+    matched_count: int
+    resolved_count: int
+    event_ids: list[str]
+    next_action: str
+    error: str | None
+
+
 class RetentionReport(TypedDict):
     status: str
     rotated: bool

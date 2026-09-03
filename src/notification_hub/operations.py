@@ -38,6 +38,10 @@ from notification_hub.delivery_check import (
 )
 from notification_hub.diagnostics import collect_doctor_report
 from notification_hub.durable_inbox import collect_health as collect_durable_inbox_health
+from notification_hub.durable_inbox import (
+    disposition_partial_deliveries_for_channel,
+    partial_deliveries_for_channel,
+)
 from notification_hub.models import Event, StoredEvent
 from notification_hub.operations_actions import (
     action_evidence_quality as _action_evidence_quality,
@@ -256,6 +260,9 @@ from notification_hub.operations_types import (
 )
 from notification_hub.operations_types import (
     OperatorReviewSessionRetentionReport as OperatorReviewSessionRetentionReport,
+)
+from notification_hub.operations_types import (
+    PartialDispositionReport as PartialDispositionReport,
 )
 from notification_hub.operations_types import (
     PersonalOpsActionExportReport as PersonalOpsActionExportReport,
@@ -5212,3 +5219,73 @@ def run_operator_handoff_drill(
         "next_action": next_action,
         "applied": False,
     }
+
+
+def run_disposition_partials(
+    *,
+    channel: str,
+    disposition: str | None,
+    disposition_ref: str | None,
+    until: str | None = None,
+    dry_run: bool = False,
+) -> PartialDispositionReport:
+    """Resolve, in one operator action, the partial deliveries one channel outage produced."""
+    base: PartialDispositionReport = {
+        "status": "ok",
+        "channel": channel,
+        "dry_run": dry_run,
+        "disposition": disposition,
+        "disposition_ref": disposition_ref,
+        "until": until,
+        "matched_count": 0,
+        "resolved_count": 0,
+        "event_ids": [],
+        "next_action": "No unresolved partial delivery is attributable to this channel alone.",
+        "error": None,
+    }
+    if dry_run:
+        # The preview is the cautious path, so a mistyped cutoff must come back as the
+        # command's own error report, not as a traceback through a --json invocation.
+        try:
+            matched = partial_deliveries_for_channel(channel, until=until)
+        except (OSError, ValueError) as exc:
+            base["status"] = "error"
+            base["error"] = str(exc)
+            base["next_action"] = "Fix the disposition arguments and re-run."
+            return base
+        base["matched_count"] = len(matched)
+        base["event_ids"] = list(matched)
+        if matched:
+            base["next_action"] = (
+                f"Re-run without --dry-run to resolve {len(matched)} partial deliveries."
+            )
+        return base
+
+    if not (disposition or "").strip() or not (disposition_ref or "").strip():
+        base["status"] = "error"
+        base["error"] = "a disposition and a reference are required unless --dry-run is passed"
+        base["next_action"] = "Supply --disposition and --ref, or pass --dry-run to preview."
+        return base
+
+    try:
+        resolved = disposition_partial_deliveries_for_channel(
+            channel,
+            cast(str, disposition),
+            cast(str, disposition_ref),
+            until=until,
+        )
+    except (OSError, ValueError) as exc:
+        base["status"] = "error"
+        base["error"] = str(exc)
+        base["next_action"] = "Fix the disposition arguments and re-run."
+        return base
+
+    base["matched_count"] = len(resolved)
+    base["resolved_count"] = len(resolved)
+    base["event_ids"] = list(resolved)
+    if resolved:
+        base["next_action"] = (
+            f"Resolved {len(resolved)} partial deliveries; "
+            f"confirm {channel} is accepting again before the next outage."
+        )
+    return base
