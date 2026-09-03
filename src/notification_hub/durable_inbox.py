@@ -1366,10 +1366,14 @@ def prune_retained_events(
             """,
             (processed_cutoff, processed_retention_rows),
         ).rowcount
+        # Both terminal statuses answer to one retention rule. Neither can actually be
+        # deleted while it owns a channel receipt (ADR 0003), and a partially delivered
+        # event owns one by definition, so this branch will not fire for it today; the
+        # status set is symmetric so the two cannot drift if that guard ever changes.
         deleted_dead = conn.execute(
             """
             DELETE FROM durable_events
-            WHERE status = 'dead_lettered'
+            WHERE status IN ('dead_lettered', 'partially_delivered')
               AND dead_lettered_at IS NOT NULL
               AND dead_lettered_at < ?
               AND dead_letter_disposition IS NOT NULL
