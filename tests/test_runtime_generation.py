@@ -6,7 +6,11 @@ import subprocess
 import sys
 from pathlib import Path
 
-from notification_hub.runtime_generation import _launcher_source, tree_digest
+from notification_hub.runtime_generation import (
+    _launcher_source,
+    _rewrite_venv_script_interpreters,
+    tree_digest,
+)
 
 
 def test_tree_digest_changes_with_content_and_mode(tmp_path: Path) -> None:
@@ -21,6 +25,40 @@ def test_tree_digest_changes_with_content_and_mode(tmp_path: Path) -> None:
     third = tree_digest(app)
     assert first != second
     assert second != third
+
+
+def test_rewrite_venv_script_interpreters_binds_executable_console_scripts(
+    tmp_path: Path,
+) -> None:
+    staged = tmp_path / "staging" / "app" / ".venv" / "bin" / "python"
+    installed = tmp_path / "releases" / "generation" / "app" / ".venv" / "bin" / "python"
+    bin_dir = staged.parent
+    bin_dir.mkdir(parents=True)
+    console_script = bin_dir / "notification-hub"
+    console_script.write_bytes(f"#!{staged}\nprint('fixture')\n".encode())
+    console_script.chmod(0o755)
+    shell_wrapper = bin_dir / "notification-hub-status"
+    shell_wrapper.write_bytes(
+        f"#!/bin/sh\n'''exec' '{staged}' \"$0\" \"$@\"\n' '''\n".encode()
+    )
+    shell_wrapper.chmod(0o755)
+    unrelated = bin_dir / "activate"
+    unrelated.write_text(f"VIRTUAL_ENV='{staged.parent.parent}'\n", encoding="utf-8")
+    symlink = bin_dir / "python3"
+    symlink.symlink_to(staged)
+
+    rewritten = _rewrite_venv_script_interpreters(
+        bin_dir,
+        staged_interpreter=staged,
+        installed_interpreter=installed,
+    )
+
+    assert rewritten == 2
+    assert console_script.read_bytes() == f"#!{installed}\nprint('fixture')\n".encode()
+    assert str(installed).encode() in shell_wrapper.read_bytes()
+    assert str(staged).encode() not in shell_wrapper.read_bytes()
+    assert unrelated.read_text(encoding="utf-8") == f"VIRTUAL_ENV='{staged.parent.parent}'\n"
+    assert symlink.is_symlink()
 
 
 def test_generated_launcher_verifies_installed_tree_and_detects_tamper(tmp_path: Path) -> None:

@@ -12,7 +12,7 @@ from unittest.mock import patch
 import pytest
 
 import notification_hub.channels as channels_mod
-from notification_hub.channels import ChannelDeliveryResult
+from notification_hub.channels import ChannelDeliveryResult, PushNotifierReadiness
 from notification_hub.config import PolicyConfig, RoutingPolicy, RoutingRule, SuppressionPolicy
 from notification_hub.models import Event, Level, Source
 from notification_hub.pipeline import (
@@ -791,6 +791,41 @@ class TestRateLimiting:
 
 
 class TestPushFailureResilience:
+    def test_durable_denied_push_is_deferred_without_provider_attempt(
+        self, tmp_log: Path
+    ) -> None:
+        event = build_stored_event(
+            _event(
+                body="Approval needed",
+                project="ink",
+                required_destinations=["log", "push"],
+            )
+        )
+        states: list[tuple[str, str, str | None]] = []
+
+        with (
+            patch(
+                "notification_hub.pipeline.get_push_notifier_readiness",
+                return_value=PushNotifierReadiness(True, "denied"),
+            ),
+            patch("notification_hub.pipeline.send_push_with_result") as send_push,
+            _patch_daytime(),
+            pytest.raises(DeliveryDeferred) as deferred,
+        ):
+            process_stored_event_with_result(
+                event,
+                raise_on_delivery_failure=True,
+                durable_mode=True,
+                channel_state_recorder=lambda channel, state, evidence: states.append(
+                    (channel, state, evidence)
+                ),
+            )
+
+        send_push.assert_not_called()
+        assert deferred.value.channel == "push"
+        assert states == [("push", "buffered", "push_authorization_denied")]
+        assert not tmp_log.exists()
+
     def test_provider_acceptance_with_failed_receipt_write_becomes_outcome_unknown(
         self, tmp_log: Path
     ) -> None:

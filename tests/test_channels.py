@@ -15,9 +15,11 @@ import pytest
 import notification_hub.channels as channels_mod
 from notification_hub.channels import (
     ChannelDeliveryResult,
+    PushNotifierReadiness,
     escape_slack_mrkdwn,
     format_slack_digest,
     format_slack_message,
+    get_push_notifier_readiness,
     read_jsonl,
     redact_for_external_delivery,
     send_push,
@@ -138,6 +140,64 @@ class TestPushNotifierDiscovery:
             patch("notification_hub.channels.Path.exists", return_value=True),
         ):
             assert channels_mod.find_push_notifier() == "/opt/homebrew/bin/terminal-notifier"
+
+    @pytest.mark.parametrize(
+        ("completed", "expected"),
+        [
+            (
+                subprocess.CompletedProcess(
+                    ["/usr/bin/tn", "-diagnose"],
+                    0,
+                    stdout="Notifications authorization: Authorized\n",
+                    stderr="",
+                ),
+                PushNotifierReadiness(True, "authorized"),
+            ),
+            (
+                subprocess.CompletedProcess(
+                    ["/usr/bin/tn", "-diagnose"],
+                    3,
+                    stdout="Notifications authorization: Denied\n",
+                    stderr="",
+                ),
+                PushNotifierReadiness(True, "denied"),
+            ),
+            (
+                subprocess.CompletedProcess(
+                    ["/usr/bin/tn", "-diagnose"], 2, stdout="", stderr="unsupported"
+                ),
+                PushNotifierReadiness(True, "unknown"),
+            ),
+        ],
+    )
+    def test_reports_push_authorization_without_sending(
+        self,
+        completed: subprocess.CompletedProcess[str],
+        expected: PushNotifierReadiness,
+    ) -> None:
+        with (
+            patch("notification_hub.channels.find_push_notifier", return_value="/usr/bin/tn"),
+            patch("notification_hub.channels.subprocess.run", return_value=completed) as run,
+        ):
+            assert get_push_notifier_readiness() == expected
+
+        run.assert_called_once_with(
+            ["/usr/bin/tn", "-diagnose"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+
+    def test_reports_push_notifier_unavailable_without_subprocess(self) -> None:
+        with (
+            patch("notification_hub.channels.find_push_notifier", return_value=None),
+            patch("notification_hub.channels.subprocess.run") as run,
+        ):
+            assert get_push_notifier_readiness() == PushNotifierReadiness(
+                False, "unavailable"
+            )
+        run.assert_not_called()
 
 
 class TestSendPush:

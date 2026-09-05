@@ -20,6 +20,7 @@ _XML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 
 class DeliveryStatus(TypedDict):
     push_notifier_available: bool
+    push_notification_authorization: str
     slack_webhook_configured: bool
 
 
@@ -170,8 +171,10 @@ def collect_runtime_wiring() -> RuntimeWiringStatus:
 def collect_runtime_readiness() -> dict[str, object]:
     """Collect local readiness facts without depending on the running HTTP server."""
     policy = config_mod.get_policy_config()
+    push = channels_mod.get_push_notifier_readiness()
     delivery: DeliveryStatus = {
-        "push_notifier_available": channels_mod.has_push_notifier(),
+        "push_notifier_available": push.available,
+        "push_notification_authorization": push.authorization,
         "slack_webhook_configured": config_mod.has_slack_webhook_configured(),
     }
     paths: PathStatus = {
@@ -241,6 +244,8 @@ def collect_doctor_report() -> dict[str, object]:
         "launch_agent_present": bool(paths["launch_agent_exists"]),
         "bridge_file_present": bool(paths["bridge_file_exists"]),
         "push_notifier_available": bool(delivery["push_notifier_available"]),
+        "push_notifications_authorized": delivery.get("push_notification_authorization")
+        == "authorized",
         "slack_configured": bool(delivery["slack_webhook_configured"]),
         "policy_load_ok": config["load_error"] is None,
         "runtime_wiring_current": all(wiring.values()),

@@ -9,6 +9,7 @@ import httpx
 from pytest import MonkeyPatch
 
 import notification_hub.config as config_mod
+from notification_hub.channels import PushNotifierReadiness
 from notification_hub.diagnostics import (
     collect_doctor_report,
     collect_runtime_readiness,
@@ -24,7 +25,10 @@ from notification_hub.models import StoredEvent
 
 def test_collect_runtime_readiness_reports_config_and_paths() -> None:
     with (
-        patch("notification_hub.diagnostics.channels_mod.has_push_notifier", return_value=True),
+        patch(
+            "notification_hub.diagnostics.channels_mod.get_push_notifier_readiness",
+            return_value=PushNotifierReadiness(True, "authorized"),
+        ),
         patch(
             "notification_hub.diagnostics.config_mod.has_slack_webhook_configured",
             return_value=False,
@@ -67,6 +71,7 @@ def test_collect_runtime_readiness_reports_config_and_paths() -> None:
 
     assert data["delivery"] == {
         "push_notifier_available": True,
+        "push_notification_authorization": "authorized",
         "slack_webhook_configured": False,
     }
     assert data["paths"] == {

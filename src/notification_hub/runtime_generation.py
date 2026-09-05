@@ -235,6 +235,26 @@ def _make_read_only(root: Path) -> None:
     os.chmod(root, 0o555)
 
 
+def _rewrite_venv_script_interpreters(
+    bin_dir: Path, *, staged_interpreter: Path, installed_interpreter: Path
+) -> int:
+    """Bind generated executable wrappers to the immutable release path."""
+    staged = str(staged_interpreter).encode()
+    installed = str(installed_interpreter).encode()
+    rewritten = 0
+    for path in sorted(bin_dir.iterdir()):
+        if path.is_symlink() or not path.is_file():
+            continue
+        if not path.stat().st_mode & 0o111:
+            continue
+        payload = path.read_bytes()
+        if staged not in payload:
+            continue
+        path.write_bytes(payload.replace(staged, installed))
+        rewritten += 1
+    return rewritten
+
+
 def _remove_failed_staging(root: Path) -> None:
     """Remove only an installer-owned failed staging directory."""
     for path in sorted(root.rglob("*"), key=lambda item: len(item.parts), reverse=True):
@@ -312,6 +332,11 @@ def install_generation(
                 [str(interpreter), "-c", "import notification_hub"],
                 cwd=app,
                 env=environment,
+            )
+            _rewrite_venv_script_interpreters(
+                interpreter.parent,
+                staged_interpreter=interpreter,
+                installed_interpreter=release / "app" / ".venv" / "bin" / "python",
             )
             _make_read_only(app)
             app_sha = tree_digest(app)

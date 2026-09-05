@@ -168,6 +168,35 @@ class ChannelDeliveryResult:
             raise ValueError("outcome_unknown requires a provider-specific receipt")
 
 
+@dataclass(frozen=True)
+class PushNotifierReadiness:
+    available: bool
+    authorization: str
+
+
+def get_push_notifier_readiness() -> PushNotifierReadiness:
+    """Inspect local notification authorization without sending a notification."""
+    notifier = find_push_notifier()
+    if notifier is None:
+        return PushNotifierReadiness(False, "unavailable")
+    try:
+        result = subprocess.run(
+            [notifier, "-diagnose"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return PushNotifierReadiness(True, "unknown")
+    output = f"{result.stdout}\n{result.stderr}".lower()
+    if "authorization" in output and "denied" in output:
+        return PushNotifierReadiness(True, "denied")
+    if result.returncode == 0:
+        return PushNotifierReadiness(True, "authorized")
+    return PushNotifierReadiness(True, "unknown")
+
+
 def ensure_log_dir() -> None:
     """Create the events log directory with restricted permissions."""
     EVENTS_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)

@@ -8,11 +8,12 @@ import logging
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Literal, cast
 
 from notification_hub.channels import (
     ChannelDeliveryResult,
+    get_push_notifier_readiness,
     send_push,
     send_push_with_result,
     send_slack,
@@ -35,6 +36,7 @@ logger = logging.getLogger(__name__)
 # Module-level singleton — lives for the server's lifetime
 _suppression = SuppressionEngine()
 _slack_unconfigured_logged = False
+PUSH_AUTHORIZATION_RETRY_MINUTES = 15
 
 
 @dataclass(frozen=True)
@@ -546,6 +548,16 @@ def process_stored_event_with_result(
                 _suppression.next_push_rate_available(),
                 "push",
                 "push_rate_limited",
+            )
+        elif durable_mode and get_push_notifier_readiness().authorization == "denied":
+            logger.warning(
+                "Push authorization denied; durable event %s remains pending",
+                stored.event_id,
+            )
+            defer_until(
+                datetime.now(UTC) + timedelta(minutes=PUSH_AUTHORIZATION_RETRY_MINUTES),
+                "push",
+                "push_authorization_denied",
             )
         else:
             delivery_failed = (

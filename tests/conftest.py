@@ -119,6 +119,9 @@ def isolate_runtime_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> It
     monkeypatch.setattr(pipeline_mod, "send_push", lambda _event: False)
     monkeypatch.setattr(pipeline_mod, "send_slack", lambda _event: False)
     monkeypatch.setattr(pipeline_mod, "send_slack_digest", lambda _events: False)
+    authorized_push = channels_mod.PushNotifierReadiness(True, "authorized")
+    monkeypatch.setattr(channels_mod, "get_push_notifier_readiness", lambda: authorized_push)
+    monkeypatch.setattr(pipeline_mod, "get_push_notifier_readiness", lambda: authorized_push)
     monkeypatch.setattr(
         delivery_check_mod,
         "send_push_with_result",
