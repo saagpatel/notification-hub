@@ -1,5 +1,11 @@
 # Notification Hub
 
+> [!IMPORTANT]
+> **LOCAL DEPLOYMENT STATUS (2026-09-07):** `notification-hub` daemon runtime (`127.0.0.1:9199`) and its LaunchAgent (`com.saagar.notification-hub`) are **retired** and persistently disabled on this Mac deployment. Personal Ops actions, autopilots, and scheduled automations are intentionally retired with no parity replacement. Historical Slack notification deliveries are accepted as unknown, abandoned, and will never be replayed. Machine-local alerts use the daemonless Coherent local notification adapter or direct `terminal-notifier`. Standalone BridgeDB, OMO, Engraph, and Conductor standalone are retired. Coherent is the selected ordinary shared-work and sourced-knowledge owner; native Codex and Claude operate independently; KnowledgeCore remains the FINAL encrypted private owner. Software documentation and protocol specifications below are preserved as technical reference.
+> - Verified runtime retirement receipts: [`push-partials-disposition.json`](</Users/d/Library/Application Support/CoherentBackendRuntime/retirement/notification-hub/push-partials-disposition.json>), [`handoff-retirement.json`](</Users/d/Library/Application Support/CoherentBackendRuntime/retirement/personal-ops/handoff-retirement.json>).
+> - Program review: [InfraRefresh review](</Users/d/Documents/Codex/2026-09-07/files-pasted-by-the-user-own/outputs/infrarefresh-review/README.md>).
+
+
 [![CI](https://github.com/saagpatel/notification-hub/actions/workflows/ci.yml/badge.svg)](https://github.com/saagpatel/notification-hub/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
