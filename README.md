@@ -10,8 +10,9 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 `notification-hub` is a small local daemon that turns AI-tool events into routed notifications.
-It accepts structured events over HTTP, watches the shared bridge file for appended activity,
-classifies urgency with deterministic rules, and then delivers each event to the right channel.
+It accepts structured events over HTTP, consumes BridgeDB activity when the durable cursor is enabled
+(otherwise watching the shared bridge file), classifies urgency with deterministic rules, and then
+delivers each event to the right channel.
 
 ## Is this for you?
 
@@ -21,14 +22,16 @@ localhost daemon that routes structured AI-tool events to push and Slack — but
 general-purpose notification library and has no stability guarantees for external users.
 
 If you want to run it yourself, expect to substitute your own home directory, rename the LaunchAgent
-label to your reverse-domain prefix, wire up your own bridge file path, and adapt the policy config
+label to your reverse-domain prefix (also updating `src/notification_hub/config.py`), wire up your own
+bridge file path, and adapt the policy config
 to your workflow. The Operator Commands and Policy Config sections document everything that is
 configurable.
 
 ## What It Does
 
 - Accepts authenticated `POST /events` requests on `127.0.0.1:9199`
-- Watches the Claude bridge file for new activity lines
+- Watches the Claude bridge file for new activity lines when the durable BridgeDB cursor is disabled;
+  otherwise consumes BridgeDB activity
 - Classifies events as `urgent`, `normal`, or `info`
 - Persists accepted events to a local SQLite durable inbox before acknowledging producers
 - Writes processed non-burst events to a local JSONL audit log
@@ -103,7 +106,7 @@ not the browser security boundary by itself, so every mutating `/review` request
 also requires a per-process capability token issued only in the uncached local
 review page. The page sends that token in
 `X-Notification-Hub-Review-Token`; missing or invalid tokens fail before the
-route can write local state. Requests carrying a browser `Origin` header are
+route can write local state. Mutating `/review` requests carrying a browser `Origin` header are
 accepted only from `http://127.0.0.1:9199` or `http://localhost:9199`.
 
 The capability rotates whenever the daemon restarts. Refresh an already-open
@@ -685,7 +688,20 @@ project under `mcp_server/`, so they are run with `uv run --directory mcp_server
 locally and in CI.
 The committed `uv.lock` file keeps local installs and CI in sync.
 
-Runtime diagnostics:
+For a focused fixture check, use `uv run --frozen pytest tests/test_review_security.py`
+or select the relevant root test file. Both uv projects require Python 3.12+ and uv;
+`uv sync --frozen --group dev` prepares the root development environment.
+The tests and MCP smoke above use isolated state and fake transports.
+
+### Optional runtime and operator actions
+
+The examples below are **not a source-verification checklist**. They mix reads with
+queue/dismissal changes, saved reports, imports, and destructive retention `--apply`
+actions. Mutating review examples require `REVIEW_TOKEN` to contain the capability from the current
+local review page. Run an action only for an explicitly selected operational purpose and
+approved disposable or operator-owned state. Do not reactivate this Mac's retired
+daemon, hooks, or LaunchAgent to validate source changes. The fixture/static gates
+above remain the source-check lane.
 
 ```bash
 curl http://127.0.0.1:9199/health
@@ -728,7 +744,7 @@ curl http://127.0.0.1:9199/review
 curl http://127.0.0.1:9199/review/packages
 curl http://127.0.0.1:9199/review/package/personal-ops-actions-YYYYMMDD-HHMMSS.json
 curl http://127.0.0.1:9199/review/operator-review-session-retention
-curl -X POST http://127.0.0.1:9199/review/package/personal-ops-actions-YYYYMMDD-HHMMSS.json/queue
+curl -X POST http://127.0.0.1:9199/review/package/personal-ops-actions-YYYYMMDD-HHMMSS.json/queue -H "X-Notification-Hub-Review-Token: $REVIEW_TOKEN"
 curl http://127.0.0.1:9199/review/import-queue
 curl http://127.0.0.1:9199/review/import-queue-review
 curl http://127.0.0.1:9199/review/coordination-readiness
@@ -737,23 +753,23 @@ curl http://127.0.0.1:9199/review/noise-candidates
 curl http://127.0.0.1:9199/review/policy-check
 curl http://127.0.0.1:9199/review/outcome-sync-reminder
 curl http://127.0.0.1:9199/review/action-proposal-dismissals
-curl -X POST http://127.0.0.1:9199/review/action-proposal/DISMISSAL_KEY/dismiss \
+curl -X POST http://127.0.0.1:9199/review/action-proposal/DISMISSAL_KEY/dismiss -H "X-Notification-Hub-Review-Token: $REVIEW_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"reason":"known repeated test signal"}'
-curl -X POST http://127.0.0.1:9199/review/action-proposal/DISMISSAL_KEY/undismiss \
+curl -X POST http://127.0.0.1:9199/review/action-proposal/DISMISSAL_KEY/undismiss -H "X-Notification-Hub-Review-Token: $REVIEW_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"reason":"signal is useful again"}'
 curl http://127.0.0.1:9199/review/operator-daily-state
-curl -X POST http://127.0.0.1:9199/review/operator-daily-state/report
+curl -X POST http://127.0.0.1:9199/review/operator-daily-state/report -H "X-Notification-Hub-Review-Token: $REVIEW_TOKEN"
 curl http://127.0.0.1:9199/review/operator-review-session
-curl -X POST http://127.0.0.1:9199/review/operator-review-session/report
+curl -X POST http://127.0.0.1:9199/review/operator-review-session/report -H "X-Notification-Hub-Review-Token: $REVIEW_TOKEN"
 curl http://127.0.0.1:9199/review/operator-review-session-reports
 curl http://127.0.0.1:9199/review/operator-review-session-report/operator-review-session-YYYYMMDD-HHMMSS.json
-curl -X POST http://127.0.0.1:9199/review/operator-handoff-drill
-curl -X PATCH http://127.0.0.1:9199/review/import-queue/QUEUE_ID \
+curl -X POST http://127.0.0.1:9199/review/operator-handoff-drill -H "X-Notification-Hub-Review-Token: $REVIEW_TOKEN"
+curl -X PATCH http://127.0.0.1:9199/review/import-queue/QUEUE_ID -H "X-Notification-Hub-Review-Token: $REVIEW_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"status":"reviewed","reason":"evidence checked"}'
-curl -X DELETE http://127.0.0.1:9199/review/package/personal-ops-actions-YYYYMMDD-HHMMSS.json
+curl -X DELETE http://127.0.0.1:9199/review/package/personal-ops-actions-YYYYMMDD-HHMMSS.json -H "X-Notification-Hub-Review-Token: $REVIEW_TOKEN"
 uv run --frozen notification-hub verify-runtime
 uv run --frozen notification-hub delivery-check --slack
 uv run --frozen notification-hub policy-check
@@ -795,10 +811,11 @@ Runtime change checklist:
   without spamming repeated Slack-failure warnings.
 - If a Slack webhook is added later, the daemon will retry Keychain lookup automatically within
   about a minute, so a manual restart is usually not required.
-- LaunchAgent support lives at `~/Library/LaunchAgents/com.yourname.notification-hub.plist`.
+- LaunchAgent support uses the installed plist path defined in `src/notification_hub/config.py`.
   The template at `ops/launchagents/com.saagar.notification-hub.plist` uses `__HOME__` tokens and
-  a `com.yourname` label placeholder — substitute your home directory and rename the label to your
-  own reverse-domain prefix before installing.
+  the project-owned label shown in its `Label` field — substitute your home directory before
+  installing. Changing that label or installed path also requires updating the hardcoded runtime
+  diagnostics in `src/notification_hub/config.py`.
 - Repo-owned runtime templates live under `ops/`: the LaunchAgent template, both hook templates,
   and the durable producer helper are the source of truth for machine-local wiring. Failed hook
   posts remain queued in `~/.local/share/notification-hub/producer-outbox.sqlite3` and retry on a
@@ -815,17 +832,18 @@ Runtime change checklist:
 Refresh local runtime wiring from repo templates:
 
 ```bash
-# Substitute your home dir and rename the label to your reverse-domain prefix first:
-sed 's|__HOME__|'"$HOME"'|g; s|com\.yourname|com.yourname|g' \
+# Substitute your home directory; keep the template label for the current diagnostics:
+hub_label=$(/usr/libexec/PlistBuddy -c 'Print :Label' ops/launchagents/com.saagar.notification-hub.plist)
+sed 's|__HOME__|'"$HOME"'|g' \
   ops/launchagents/com.saagar.notification-hub.plist \
-  > ~/Library/LaunchAgents/com.yourname.notification-hub.plist
+  > ~/Library/LaunchAgents/"$hub_label".plist
 install -m 755 ops/hooks/claude-notify.sh ~/.claude/hooks/notify.sh
 install -m 755 ops/hooks/codex-notify-local.py ~/.codex/hooks/notify_local.py
 install -m 755 ops/hooks/notification-hub-producer.py ~/.claude/hooks/notification-hub-producer.py
 install -m 755 ops/hooks/notification-hub-producer.py ~/.codex/hooks/notification-hub-producer.py
-launchctl bootout "gui/$(id -u)" ~/Library/LaunchAgents/com.yourname.notification-hub.plist 2>/dev/null || true
-launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.yourname.notification-hub.plist
-launchctl kickstart -k "gui/$(id -u)/com.yourname.notification-hub"
+launchctl bootout "gui/$(id -u)" ~/Library/LaunchAgents/"$hub_label".plist 2>/dev/null || true
+launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/"$hub_label".plist
+launchctl kickstart -k "gui/$(id -u)/$hub_label"
 ```
 
 ## Docs
