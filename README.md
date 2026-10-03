@@ -685,7 +685,19 @@ project under `mcp_server/`, so they are run with `uv run --directory mcp_server
 locally and in CI.
 The committed `uv.lock` file keeps local installs and CI in sync.
 
-Runtime diagnostics:
+For a focused fixture check, use `uv run --frozen pytest tests/test_review_security.py`
+or select the relevant root test file. Both uv projects require Python 3.12+ and uv;
+`uv sync --frozen --group dev` prepares the root development environment.
+The tests and MCP smoke above use isolated state and fake transports.
+
+### Optional runtime and operator actions
+
+The examples below are **not a source-verification checklist**. They mix reads with
+queue/dismissal changes, saved reports, imports, and destructive retention `--apply`
+actions. Run an action only for an explicitly selected operational purpose and
+approved disposable or operator-owned state. Do not reactivate this Mac's retired
+daemon, hooks, or LaunchAgent to validate source changes. The fixture/static gates
+above remain the source-check lane.
 
 ```bash
 curl http://127.0.0.1:9199/health
