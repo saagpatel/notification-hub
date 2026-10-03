@@ -32,7 +32,8 @@ Prerequisites:
 - Python 3.12+
 - uv
 - FastMCP 4.x (the version resolved in `uv.lock`)
-- A producer grant named `notification-hub-mcp` and its raw token in the
+- Provision a grant whose name matches `NOTIFICATION_HUB_MCP_PRODUCER`
+  (default `notification-hub-mcp`) and its raw token in the
   `NOTIFICATION_HUB_PRODUCER_TOKEN` environment variable
 
 Install and test:
