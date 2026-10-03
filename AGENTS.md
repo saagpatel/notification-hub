@@ -16,7 +16,6 @@ notification-hub is a localhost-only notification daemon for Claude Code, Codex,
 
 - `README.md` for setup, commands, and runtime behavior.
 - `docs/CURRENT-STATE.md` for the resume-ready current state.
-- `CLAUDE.md` for maintainer notes and portfolio context.
 - `ops/` for LaunchAgent and hook templates.
 
 ## Core Rules

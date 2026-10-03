@@ -301,7 +301,8 @@ Current source-of-truth map:
 ## Durable Inbox Implementation Update (2026-06-20)
 
 Catalog #11 is implemented in the source tree. `POST /events` now validates and commits the event
-to SQLite before returning 201; delivery is handled by a background worker and is at-least-once.
+to SQLite before returning 201; delivery is handled by a background worker with per-channel evidence
+and quarantine of ambiguous external outcomes.
 The durability layer is `~/.local/share/notification-hub/inbox.sqlite3`. JSONL remains
 processed-event audit history, not the acceptance boundary.
 
@@ -313,11 +314,12 @@ Implemented source-tree behavior:
 - Server intake and bridge watcher callbacks enqueue durable `StoredEvent` rows instead of running
   the delivery pipeline inline.
 - The lifespan worker claims due rows, runs the existing pipeline, marks `processed` or
-  `suppressed`, retries transient failures with capped backoff, and moves exhausted rows to
-  `dead_lettered`.
-- Startup reclaims expired `processing` leases to `retry_scheduled`.
+  `suppressed`, retries failures known to have no provider effect with capped backoff, and moves
+  exhausted rows to `partially_delivered` when a channel has positive evidence, otherwise `dead_lettered`.
+- Startup reclaims expired `processing` leases to `retry_scheduled` unless an interrupted external
+  attempt requires quarantine as `reconciliation_required`.
 - `/health/details`, `doctor`, `status`, `logs`, `burn-in`, `verify-runtime`, and `/review` expose
-  durable inbox status. Dead letters, stale processing leases, and old queued backlog degrade health.
+  durable inbox status. Unresolved dead letters, stale processing leases, and old queued backlog degrade health.
 - `notification-hub smoke` now waits briefly for the async worker to write the JSONL audit row.
 
 Live adoption after merge on 2026-06-20:
@@ -918,7 +920,7 @@ The original "rich 0/0 resolved" outcome-quality gap was investigated and split 
   design; promotion is reserved for a real handoff that will actually be acted on downstream.
   The wiring is now empirically validated end-to-end: real producer → real event → rich score →
   rollup → proposal → save → queue → reviewed closeout.
-- **Rollup-of-2 constraint**: `_build_inbox_rollups` (operations.py:1484) requires at least 2
+- **Rollup-of-2 constraint**: `_build_inbox_rollups` (implementation in `src/notification_hub/operations_inbox.py`) requires at least 2
   events of the same `(source, project, intent, level, title, body)` signature before a rollup
   is emitted. Single events never reach the proposal pipeline. This is intentional repeat-noise
   detection, but it does mean that the first signal of a kind is invisible until a second one
@@ -1110,7 +1112,8 @@ tuning pass.
 - Routing rules now support exact and prefix/text matchers instead of only exact source/project matching.
 - Routing rules can now also opt into `continue_matching` so multiple matching rules can compose.
 - Routing rules can now also use explicit `priority`, so higher-priority rules run before lower-priority ones.
-- Event-log retention now runs automatically on the daemon’s schedule, not just as a manual command.
+- Event-log retention runs automatically on the daemon’s schedule when preserve-history mode is disabled;
+  manual retention remains available separately.
 - Slack delivery is hardened so transport setup failures degrade quietly instead of escaping event
   intake.
 - Quiet hours now support overnight, same-day, and disabled windows.
@@ -1301,21 +1304,22 @@ uv run --frozen notification-hub operator-review-session --save-report
 uv run --frozen notification-hub operator-review-session-retention --keep 20
 uv run --frozen notification-hub operator-review-session-retention --keep 20 --apply
 uv run --frozen notification-hub logs
+# Mutating review requests require REVIEW_TOKEN from the current local review page.
 curl http://127.0.0.1:9199/review
 curl http://127.0.0.1:9199/review/packages
 curl http://127.0.0.1:9199/review/operator-review-session-retention
 curl http://127.0.0.1:9199/review/package/personal-ops-actions-YYYYMMDD-HHMMSS.json
-curl -X POST http://127.0.0.1:9199/review/package/personal-ops-actions-YYYYMMDD-HHMMSS.json/queue
+curl -X POST http://127.0.0.1:9199/review/package/personal-ops-actions-YYYYMMDD-HHMMSS.json/queue -H "X-Notification-Hub-Review-Token: $REVIEW_TOKEN"
 curl http://127.0.0.1:9199/review/import-queue
 curl http://127.0.0.1:9199/review/outcome-sync-reminder
-curl -X POST http://127.0.0.1:9199/review/operator-daily-state/report
+curl -X POST http://127.0.0.1:9199/review/operator-daily-state/report -H "X-Notification-Hub-Review-Token: $REVIEW_TOKEN"
 curl http://127.0.0.1:9199/review/operator-review-session
-curl -X POST http://127.0.0.1:9199/review/operator-review-session/report
+curl -X POST http://127.0.0.1:9199/review/operator-review-session/report -H "X-Notification-Hub-Review-Token: $REVIEW_TOKEN"
 curl http://127.0.0.1:9199/review/operator-review-session-reports
 curl http://127.0.0.1:9199/review/operator-review-session-report/operator-review-session-YYYYMMDD-HHMMSS.json
-curl -X POST http://127.0.0.1:9199/review/action-proposal/DISMISSAL_KEY/dismiss -H 'Content-Type: application/json' -d '{"reason":"known repeated test signal"}'
-curl -X PATCH http://127.0.0.1:9199/review/import-queue/QUEUE_ID -H 'Content-Type: application/json' -d '{"status":"reviewed","reason":"evidence checked"}'
-curl -X DELETE http://127.0.0.1:9199/review/package/personal-ops-actions-YYYYMMDD-HHMMSS.json
+curl -X POST http://127.0.0.1:9199/review/action-proposal/DISMISSAL_KEY/dismiss -H 'Content-Type: application/json' -d '{"reason":"known repeated test signal"}' -H "X-Notification-Hub-Review-Token: $REVIEW_TOKEN"
+curl -X PATCH http://127.0.0.1:9199/review/import-queue/QUEUE_ID -H 'Content-Type: application/json' -d '{"status":"reviewed","reason":"evidence checked"}' -H "X-Notification-Hub-Review-Token: $REVIEW_TOKEN"
+curl -X DELETE http://127.0.0.1:9199/review/package/personal-ops-actions-YYYYMMDD-HHMMSS.json -H "X-Notification-Hub-Review-Token: $REVIEW_TOKEN"
 uv run --frozen notification-hub burn-in --minutes 10
 uv run --frozen notification-hub verify-runtime
 uv run --frozen notification-hub delivery-check --slack
@@ -1460,8 +1464,8 @@ Additional behavioral baseline:
   preserve file order
 - Routing rules still stop at the first match by default, but a rule can opt into
   `continue_matching = true` when later rules should keep refining delivery
-- Retention now runs automatically with the daemon’s configured interval and still supports the
-  manual `notification-hub retention` command for an immediate operator-triggered pass
+- Retention runs automatically with the daemon’s configured interval when preserve-history mode
+  is disabled and still supports the manual `notification-hub retention` command for an immediate operator-triggered pass
 - `notification-hub bootstrap-config` copies that sample into `~/.config/notification-hub/config.toml`
   and preserves an existing config unless `--force` is used
 - `notification-hub policy-check` is available as a non-mutating ruleset audit tool with suggested

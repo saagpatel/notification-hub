@@ -26,11 +26,17 @@ through:
 - `processed`
 - `suppressed`
 - `dead_lettered`
+- `partially_delivered`
+- `reconciliation_required`
+- `reconciled_succeeded`
+- `reconciled_absent`
 
-Delivery is at-least-once. The background worker claims due rows, runs the existing pipeline, writes
-JSONL only for processed non-burst events, and then marks terminal state. Transient failures retry up
-to 5 attempts with exponential backoff capped around 10 minutes. Exhausted events move to the
-dead-letter state.
+Delivery tracks per-channel evidence. The background worker claims due rows, runs the existing
+pipeline, writes JSONL only for processed non-burst events, and then marks terminal state.
+Failures known to have no provider effect retry up
+to 5 attempts with exponential backoff capped around 10 minutes. Exhausted events become
+`partially_delivered` when a channel has positive evidence, otherwise `dead_lettered`.
+Ambiguous external outcomes are quarantined as `reconciliation_required`.
 
 Local channel throttling is a deferral, not a delivery failure. Rate-limited rows return to
 `retry_scheduled` at the next available channel slot without consuming the event failure budget or
@@ -38,16 +44,20 @@ recording a transport attempt. Per-channel acceptance remains monotonic, so a re
 channel that already supplied an acceptance receipt. If another channel has a real transport
 failure in the same pass, that failure still consumes one attempt and retains its own backoff.
 
-On startup, expired `processing` leases are reclaimed to `retry_scheduled`, so a restart during
-delivery becomes retryable backlog instead of silent loss.
+On startup, expired `processing` leases are reclaimed to `retry_scheduled` unless an external
+channel is `attempted` or `outcome_unknown`; those events become `reconciliation_required`
+instead of replaying an ambiguous delivery.
 
-Processed and suppressed rows are retained for 30 days while preserving at least the newest 10,000
-terminal rows. Dead-letter rows are retained for 90 days. Manual redrive is intentionally deferred.
+Processed and suppressed rows without channel evidence are pruned after 30 days while preserving
+the newest 10,000 processed/suppressed rows. Processed and suppressed rows with channel evidence
+are pruned after 180 days, except immutable unknown-outcome and reconciliation evidence.
+Dead-letter pruning after 90 days requires a disposition and no channel evidence. Automatic
+pruning is disabled in preserve-history mode. Manual redrive is intentionally deferred.
 
 ## Health Contract
 
 `/health/details`, `notification-hub status`, `logs`, `burn-in`, `verify-runtime`, and `/review`
-surface durable inbox status. Dead letters, stale processing leases, and old queued backlog degrade
+surface durable inbox status. Unresolved dead letters, stale processing leases, and old queued backlog degrade
 operator health. A `retry_scheduled` row with a future `next_attempt_at` is a healthy deferral, even
 when the event itself is old; it degrades health only after its scheduled retry has been overdue
 beyond the backlog threshold. The JSONL event log remains processed-event audit history and
